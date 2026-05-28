@@ -33,7 +33,10 @@ import packaging.version
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from huggingface_hub.errors import RevisionNotFoundError
+try:
+    from huggingface_hub.errors import RevisionNotFoundError
+except ImportError:
+    from huggingface_hub.utils import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 

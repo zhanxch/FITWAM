@@ -216,6 +216,43 @@ python experiments/robotwin/run_robotwin_manager.py \
   MULTIRUN.num_gpus=8
 ```
 
+Optional: open-loop RoboTwin evaluation on the downloaded LeRobot training data, replacing simulator rollouts with dataset ground truth:
+
+```bash
+python experiments/robotwin/run_robotwin_openloop.py \
+  task=robotwin_uncond_3cam_384_1e-4 \
+  ckpt=./checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt \
+  OPENLOOP.dataset_stats_path=./checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json \
+  OPENLOOP.max_samples=100
+```
+
+This writes per-sample and summary action errors under `evaluate_results/robotwin_openloop/`.
+By default it runs on the train split with action-only inference, matching normal evaluation.
+Use `OPENLOOP.split=val` for the held-out split. To also predict images and record video PSNR/SSIM/L1/MSE, enable:
+
+```bash
+python experiments/robotwin/run_robotwin_openloop.py \
+  task=robotwin_uncond_3cam_384_1e-4 \
+  ckpt=./checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt \
+  OPENLOOP.dataset_stats_path=./checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json \
+  OPENLOOP.predict_video=true \
+  OPENLOOP.save_video_samples=4
+```
+
+For a quick single-trajectory smoke test, use the episode entrypoint. It evaluates one
+episode from the selected split, samples frames every `OPENLOOP.frame_stride` steps,
+and caps the run with `OPENLOOP.max_samples`:
+
+```bash
+python experiments/robotwin/run_robotwin_openloop_episode.py \
+  task=robotwin_uncond_3cam_384_1e-4 \
+  ckpt=./checkpoints/fastwam_release/robotwin_uncond_3cam_384.pt \
+  OPENLOOP.dataset_stats_path=./checkpoints/fastwam_release/robotwin_uncond_3cam_384_dataset_stats.json \
+  OPENLOOP.episode_index=0 \
+  OPENLOOP.frame_stride=50 \
+  OPENLOOP.max_samples=8
+```
+
 For faster RoboTwin evaluation, we have enabled `EVALUATION.skip_get_obs_within_replan=true` in [`configs/sim_robotwin.yaml`](./configs/sim_robotwin.yaml).
 This skips RGB rendering while consecutively executing an action chunk within one replan window, which speeds up evaluation but makes the saved video look very low-FPS.
 Set it to `false` if you want to save a fully rendered video.
@@ -254,6 +291,19 @@ bash scripts/train_zero1.sh 8 task=libero_uncond_2cam224_1e-4
 
 # RoboTwin
 bash scripts/train_zero1.sh 8 task=robotwin_uncond_3cam_384_1e-4
+
+# egovla
+CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_zero1.sh 2 \
+  task=ego_vla_short_uncond_1cam_384_1e-4 \
+  batch_size=2 \
+  gradient_accumulation_steps=8
+
+CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_zero1.sh 2 \
+  task=ego_vla_short_uncond_1cam_384_1e-4 \
+  batch_size=4 \
+  gradient_accumulation_steps=4 \
+  data.train.pretrained_norm_stats=./runs/ego_vla_short_uncond_1cam_384_1e-4/2026-05-21_10-03-12/dataset_stats.json \
+  data.val.pretrained_norm_stats=./runs/ego_vla_short_uncond_1cam_384_1e-4/2026-05-21_10-03-12/dataset_stats.json
 ```
 
 For LIBERO, we train on a single node with 8 GPUs. For RoboTwin, we use 64 GPUs to accelerate training. You can try reducing the GPU count or training epochs.

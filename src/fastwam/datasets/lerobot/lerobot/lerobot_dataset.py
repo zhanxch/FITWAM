@@ -30,7 +30,10 @@ import pyarrow.parquet as pq
 from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
-from huggingface_hub.errors import RevisionNotFoundError
+try:
+    from huggingface_hub.errors import RevisionNotFoundError
+except ImportError:
+    from huggingface_hub.utils import RevisionNotFoundError
 
 # adapte to own path
 from ..constants import HF_LEROBOT_HOME

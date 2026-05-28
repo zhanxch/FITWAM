@@ -181,13 +181,24 @@ def main(cfg: DictConfig):
         )
 
     overwrite = _to_bool(cfg.get("overwrite", True))
-    model_cfg = cfg.model
+    # Use .get(): with defaults `model: null` / `data: null`, struct mode has no `model`/`data` keys
+    # until a task override composes them; attribute access would raise ConfigAttributeError.
+    model_cfg = cfg.get("model")
     if model_cfg is None:
-        raise ValueError("`cfg.model` is required.")
-    if cfg.data is None:
-        raise ValueError("`cfg.data` is required.")
+        raise ValueError(
+            "`model` config is missing. Run with a task that sets data and model, for example: "
+            "`python scripts/precompute_text_embeds.py task=libero_uncond_2cam224_1e-4` "
+            "or `task=robotwin_uncond_3cam_384_1e-4`."
+        )
+    data_cfg = cfg.get("data")
+    if data_cfg is None:
+        raise ValueError(
+            "`data` config is missing. Run with a task that sets data and model, for example: "
+            "`python scripts/precompute_text_embeds.py task=libero_uncond_2cam224_1e-4` "
+            "or `task=robotwin_uncond_3cam_384_1e-4`."
+        )
 
-    dataset_dirs, cache_dirs, context_lens = _collect_dataset_settings(cfg.data)
+    dataset_dirs, cache_dirs, context_lens = _collect_dataset_settings(data_cfg)
     if not cache_dirs:
         raise ValueError("No `text_embedding_cache_dir` found under `cfg.data`.")
 

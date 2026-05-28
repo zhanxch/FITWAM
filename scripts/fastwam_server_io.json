@@ -1,0 +1,170 @@
+{
+  "name": "FastWAMPolicyServer",
+  "description": "Machine-readable I/O contract for scripts/run_fastwam_server.py.",
+  "transport": {
+    "protocol": "ZeroMQ REQ/REP",
+    "serialization": "msgpack",
+    "default_host": "0.0.0.0",
+    "default_port": 5560,
+    "request_envelope": {
+      "endpoint": "string",
+      "data": "object; required for endpoints that need input",
+      "api_token": "string; optional, required only when server is launched with --api-token"
+    },
+    "ndarray_encoding": {
+      "__ndarray__": true,
+      "data": "raw bytes",
+      "dtype": "numpy dtype string, for example float32 or bool",
+      "shape": "array of integer dimensions"
+    }
+  },
+  "server_startup": {
+    "script": "scripts/run_fastwam_server.py",
+    "required_arguments_without_mock": {
+      "run_dir": "Training run directory containing config.yaml and, by default, dataset_stats.json.",
+      "checkpoint": "FastWAM checkpoint path loaded via model.load_checkpoint()."
+    },
+    "optional_arguments": {
+      "dataset_stats_path": "Explicit dataset stats JSON. If omitted, server uses ${run_dir}/dataset_stats.json.",
+      "device": "Torch device string. Default: cuda:0; falls back to cpu when CUDA is unavailable.",
+      "action_horizon": "Override predicted action chunk length. Default: cfg.data.train.num_frames - 1.",
+      "num_inference_steps": "Override diffusion inference steps. Default: cfg.eval_num_inference_steps or 10.",
+      "host": "Bind host. Default: 0.0.0.0.",
+      "port": "Bind port. Default: 5560.",
+      "api_token": "Optional shared token checked on every request.",
+      "mock": "Start a zero-action mock policy without loading model weights."
+    },
+    "fastwam_config_sources": {
+      "model": "${run_dir}/config.yaml: cfg.model",
+      "processor": "${run_dir}/config.yaml: cfg.data.train.processor",
+      "num_video_frames": "${run_dir}/config.yaml: cfg.data.train.num_frames",
+      "action_horizon_default": "${run_dir}/config.yaml: cfg.data.train.num_frames - 1",
+      "eval_defaults": "${run_dir}/config.yaml: cfg.EVALUATION when present"
+    },
+    "example": "python scripts/run_fastwam_server.py --run-dir runs/ego_vla_short_uncond_1cam_384_1e-4/2026-05-21_19-59-24 --checkpoint runs/ego_vla_short_uncond_1cam_384_1e-4/2026-05-21_19-59-24/step_006445.pt --device cuda:0 --host 0.0.0.0 --port 5560"
+  },
+  "endpoints": {
+    "ping": {
+      "requires_input": false,
+      "request": {
+        "endpoint": "ping"
+      },
+      "response": {
+        "status": "ok",
+        "message": "Server is running"
+      }
+    },
+    "reset": {
+      "requires_input": true,
+      "request": {
+        "endpoint": "reset",
+        "data": {
+          "options": "object or null"
+        }
+      },
+      "response": {
+        "episode": "integer; incremented server-side episode counter"
+      }
+    },
+    "get_modality_config": {
+      "requires_input": false,
+      "request": {
+        "endpoint": "get_modality_config"
+      },
+      "response": {
+        "shape_meta": "FastWAM processor shape_meta loaded from the training config"
+      }
+    },
+    "get_action": {
+      "requires_input": true,
+      "request": {
+        "endpoint": "get_action",
+        "data": {
+          "observation": {
+            "input_image": {
+              "required": true,
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "float32 preferred; server casts to model dtype",
+              "shape": "[1, 3, H, W] or [3, H, W]",
+              "range": "[-1, 1]",
+              "notes": "H and W must match the FastWAM training processor image size and be multiples of 16. A shape_meta-keyed dict is also accepted, for example {\"camera_0\": ndarray}; the server selects cfg.data.train.shape_meta.images[0].key."
+            },
+            "proprio": {
+              "required": false,
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "float32",
+              "shape": "[D] or [1, D]",
+              "notes": "For Ego Humanoid configs D is 50. A shape_meta-keyed dict is also accepted, for example {\"default\": ndarray}; the server normalizes this through processor.action_state_transform and processor.normalizer."
+            },
+            "prompt": {
+              "required": "required when context/context_mask are not provided",
+              "type": "string",
+              "notes": "Use only when the loaded FastWAM model has a text encoder available."
+            },
+            "context": {
+              "required": "required with context_mask when prompt is not provided",
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "float32",
+              "shape": "[L, C] or [1, L, C]",
+              "notes": "Cached text embeddings. For Wan2.2 TI2V FastWAM configs C is typically 4096 and L is cfg.data.train.context_len."
+            },
+            "context_mask": {
+              "required": "required with context when prompt is not provided",
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "bool",
+              "shape": "[L] or [1, L]"
+            }
+          },
+          "options": "object or null; currently ignored by FastWAMPolicy.get_action"
+        }
+      },
+      "mutual_exclusion": [
+        "Send either prompt or context/context_mask, not both."
+      ],
+      "forbidden_observation_keys": [
+        "rgb",
+        "video",
+        "state",
+        "language",
+        "instruction"
+      ],
+      "response": {
+        "type": "object",
+        "action": {
+          "type": "numpy.ndarray",
+          "dtype": "float32",
+          "shape": "[action_horizon, action_dim]",
+          "notes": "Action is denormalized back to dataset/action space before returning."
+        },
+        "action_horizon": "integer"
+      }
+    },
+    "kill": {
+      "requires_input": false,
+      "request": {
+        "endpoint": "kill"
+      },
+      "response": {
+        "status": "ok"
+      }
+    }
+  },
+  "error_response": {
+    "error": "string",
+    "traceback": "string",
+    "endpoint": "string or null",
+    "request_id": "integer"
+  },
+  "minimal_get_action_request_example": {
+    "endpoint": "get_action",
+    "data": {
+      "observation": {
+        "input_image": "float32 ndarray shaped [1,3,384,384] in [-1,1]",
+        "proprio": "float32 ndarray shaped [50]",
+        "context": "float32 ndarray shaped [128,4096]",
+        "context_mask": "bool ndarray shaped [128]"
+      },
+      "options": null
+    }
+  }
+}
