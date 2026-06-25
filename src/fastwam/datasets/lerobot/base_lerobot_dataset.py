@@ -33,6 +33,8 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
 
         # sampling
         global_sample_stride: int = 1,
+        tolerance_s: float = 1e-4,
+        video_backend: Optional[str] = None,
     ):
         assert len(dataset_dirs) > 0, "At least one dataset directory is required"
         assert past_action_size == 0
@@ -101,10 +103,13 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
                 else:
                     episodes.update({meta.repo_id: [episode_indices[i] for i in range(split_idx, meta.total_episodes)]})
 
+        tolerances_s = {ds_dir: tolerance_s for ds_dir in self.dataset_dirs}
         self.multi_dataset = MultiLeRobotDataset(
             dataset_dirs=self.dataset_dirs,
             episodes=episodes,
             delta_timestamps=delta_timestamps,
+            tolerances_s=tolerances_s,
+            video_backend=video_backend,
         )
         
         # HACK: lerobot 3.0 will fix this

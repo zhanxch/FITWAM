@@ -10,7 +10,7 @@ import time
 import numpy as np
 import torch
 from accelerate import Accelerator
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from torch.optim.lr_scheduler import ConstantLR, CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
@@ -48,6 +48,11 @@ class Wan22Trainer:
         self.seed = int(cfg.seed)
         
         self.resume = cfg.resume
+        resume_experts = cfg.get("resume_experts", None)
+        if resume_experts is None:
+            self.resume_experts = None
+        else:
+            self.resume_experts = list(OmegaConf.to_container(resume_experts, resolve=True))
         self.mixed_precision = str(cfg.mixed_precision).strip().lower()
         if self.mixed_precision not in {"no", "fp16", "bf16"}:
             raise ValueError(
@@ -138,17 +143,36 @@ class Wan22Trainer:
                 "wandb logging is enabled in config (`wandb.enabled=true`) but wandb is not installed."
             ) from e
 
-        self.wandb_run = wandb.init(
-            entity=self.cfg.wandb.workspace,
-            project=self.cfg.wandb.project,
-            name=self.cfg.wandb.name,
-            group=None if self.cfg.wandb.group in (None, "null", "") else str(self.cfg.wandb.group),
-            mode=self.cfg.wandb.mode,
-            dir=self.output_dir,
-        )
+        wandb_config = OmegaConf.to_container(self.cfg, resolve=True)
+        workspace = self.cfg.wandb.workspace
+        wandb_entity = None if workspace in (None, "null", "") else str(workspace)
+
+        init_kwargs = {
+            "project": self.cfg.wandb.project,
+            "name": self.cfg.wandb.name,
+            "group": None if self.cfg.wandb.group in (None, "null", "") else str(self.cfg.wandb.group),
+            "mode": self.cfg.wandb.mode,
+            "dir": self.output_dir,
+            "config": wandb_config,
+        }
+        if wandb_entity is not None:
+            init_kwargs["entity"] = wandb_entity
+
+        # When workspace is unset in config, ignore a stale WANDB_ENTITY env var and
+        # fall back to the account used by `wandb login`.
+        saved_entity_env = None
+        if wandb_entity is None:
+            saved_entity_env = os.environ.pop("WANDB_ENTITY", None)
+
+        try:
+            self.wandb_run = wandb.init(**init_kwargs)
+        finally:
+            if saved_entity_env is not None:
+                os.environ["WANDB_ENTITY"] = saved_entity_env
+
         logger.info(
             "Initialized wandb run: workspace=%s project=%s name=%s",
-            self.cfg.wandb.workspace,
+            wandb_entity or "(default)",
             self.cfg.wandb.project,
             self.cfg.wandb.name,
         )
@@ -274,7 +298,11 @@ class Wan22Trainer:
         if not resume_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
         logger.info("Loading weight checkpoint only: %s", resume)
-        self.accelerator.unwrap_model(self.model).load_checkpoint(str(resume_path), optimizer=None)
+        self.accelerator.unwrap_model(self.model).load_checkpoint(
+            str(resume_path),
+            optimizer=None,
+            experts=self.resume_experts,
+        )
         logger.warning("Loaded .pt weights only; optimizer/scheduler/step were not restored under ZeRO2.")
 
     def _set_dit_only_train_mode(self):
@@ -718,6 +746,7 @@ class Wan22Trainer:
                             "train/loss": global_loss,
                             "train/grad_norm": global_grad_norm,
                             "train/lr": current_lr,
+                            "train/epoch": self.epoch,
                             "performance/steps_per_sec": steps_per_sec,
                             "performance/samples_per_sec": steps_per_sec * self.batch_size * self.accelerator.num_processes,
                         }

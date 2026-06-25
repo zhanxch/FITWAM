@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DexJoCo Subtask Annotator</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #171a22;
+      --border: #2a3140;
+      --text: #e8ecf4;
+      --muted: #9aa6bd;
+      --accent: #4f8cff;
+      --accent-2: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --left: #38bdf8;
+      --right: #f472b6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex-wrap: wrap;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      margin-right: auto;
+    }
+    select, button, input[type="number"] {
+      background: #222733;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.success {
+      background: var(--accent-2);
+      border-color: var(--accent-2);
+      color: #fff;
+    }
+    button.danger {
+      background: transparent;
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+    main {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 16px;
+      padding: 16px;
+    }
+    @media (max-width: 1100px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .video-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      aspect-ratio: 1 / 1;
+      max-height: 70vh;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+    .camera-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .camera-tabs button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .frame-info {
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      min-width: 140px;
+    }
+    .timeline-wrap {
+      margin-top: 14px;
+    }
+    .timeline-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .timeline {
+      position: relative;
+      height: 48px;
+      background: #10141d;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: crosshair;
+      overflow: hidden;
+    }
+    .timeline-seg {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      opacity: 0.85;
+    }
+    .timeline-seg.selected {
+      outline: 2px solid #fff;
+      outline-offset: -2px;
+      z-index: 2;
+    }
+    .timeline-seg.unlabeled {
+      background: rgba(245, 158, 11, 0.35) !important;
+    }
+    .split-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--warn);
+      z-index: 4;
+      pointer-events: none;
+    }
+    .side-panel h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+    .task-box {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--muted);
+      background: #11151d;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 12px;
+    }
+    .quick-assign {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .quick-assign h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .quick-assign.left h3 { color: var(--left); }
+    .quick-assign.right h3 { color: var(--right); }
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #1d2330;
+      cursor: pointer;
+    }
+    .chip:hover { border-color: var(--accent); }
+    .chip.active-left {
+      background: rgba(56, 189, 248, 0.18);
+      border-color: var(--left);
+      color: #bae6fd;
+    }
+    .chip.active-right {
+      background: rgba(244, 114, 182, 0.18);
+      border-color: var(--right);
+      color: #fbcfe8;
+    }
+    .segments {
+      max-height: 48vh;
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    tr.selected { background: rgba(79, 140, 255, 0.12); }
+    tr:hover { background: rgba(255,255,255,0.03); }
+    select.compact {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+    .status.ok { color: var(--accent-2); }
+    .status.err { color: var(--danger); }
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .legend span::before {
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 4px;
+      vertical-align: -1px;
+    }
+    .legend .l::before { background: var(--left); }
+    .legend .r::before { background: var(--right); }
+    .legend .u::before { background: rgba(245, 158, 11, 0.8); }
+    kbd {
+      background: #222733;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DexJoCo Subtask Annotator</h1>
+    <button id="prev-ep">← Prev</button>
+    <select id="episode-select"></select>
+    <button id="next-ep">Next →</button>
+    <button id="save-btn" class="success">Save Episode</button>
+    <span id="save-indicator" class="status"></span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="camera-tabs" id="camera-tabs"></div>
+      <div class="video-wrap">
+        <video id="video" preload="metadata"></video>
+      </div>
+      <div class="controls">
+        <button id="play-btn">Play</button>
+        <button id="frame-prev">◀ Frame</button>
+        <button id="frame-next">Frame ▶</button>
+        <button id="add-split" class="primary">Add Split Here</button>
+        <button id="remove-split" class="danger">Remove Nearest Split</button>
+        <span class="frame-info" id="frame-info">frame 0 / 0</span>
+      </div>
+      <div class="timeline-wrap">
+        <div class="timeline-label">
+          <span>Timeline (click to seek, segments between splits)</span>
+          <span id="seg-count">0 segments</span>
+        </div>
+        <div class="timeline" id="timeline"></div>
+        <div class="legend">
+          <span class="l">Left subtask set</span>
+          <span class="r">Right subtask set</span>
+          <span class="u">Missing label</span>
+        </div>
+      </div>
+      <div class="status">
+        Shortcuts:
+        <kbd>Space</kbd> play/pause,
+        <kbd>←</kbd>/<kbd>→</kbd> step frame,
+        <kbd>S</kbd> add split,
+        <kbd>Backspace</kbd> remove split,
+        <kbd>Ctrl+S</kbd> save,
+        <kbd>[</kbd>/<kbd>]</kbd> prev/next episode
+      </div>
+    </section>
+
+    <aside class="panel side-panel">
+      <h2>Selected Segment</h2>
+      <div class="task-box" id="task-box"></div>
+      <div id="selected-range" class="status"></div>
+
+      <div class="quick-assign left">
+        <h3>Left subtask</h3>
+        <div class="chip-row" id="left-chips"></div>
+      </div>
+      <div class="quick-assign right">
+        <h3>Right subtask</h3>
+        <div class="chip-row" id="right-chips"></div>
+      </div>
+
+      <h2>All Segments</h2>
+      <div class="segments">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Frames</th>
+              <th>Left</th>
+              <th>Right</th>
+            </tr>
+          </thead>
+          <tbody id="segments-body"></tbody>
+        </table>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const LEFT_SUBTASKS = {{ left_subtasks | tojson }};
+    const RIGHT_SUBTASKS = {{ right_subtasks | tojson }};
+    const CAMERAS = {{ cameras | tojson }};
+    const FPS = {{ fps }};
+
+    let episodes = [];
+    let episodeIndex = 0;
+    let episodeLength = 0;
+    let taskText = "";
+    let camera = CAMERAS[0];
+    let splits = [];
+    let segments = [];
+    let selectedSeg = 0;
+
+    const video = document.getElementById("video");
+    const timeline = document.getElementById("timeline");
+    const episodeSelect = document.getElementById("episode-select");
+    const saveIndicator = document.getElementById("save-indicator");
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    function currentFrame() {
+      return clamp(Math.round(video.currentTime * FPS), 0, Math.max(episodeLength - 1, 0));
+    }
+
+    function frameToTime(frame) {
+      return frame / FPS;
+    }
+
+    function setStatus(msg, kind = "") {
+      saveIndicator.textContent = msg;
+      saveIndicator.className = "status " + kind;
+    }
+
+    function buildSegmentsFromSplits() {
+      const points = [0, ...splits.filter(s => s > 0 && s < episodeLength), episodeLength];
+      const uniq = [...new Set(points)].sort((a, b) => a - b);
+      const old = segments;
+      segments = [];
+      for (let i = 0; i < uniq.length - 1; i++) {
+        const start = uniq[i];
+        const end = uniq[i + 1] - 1;
+        const prev = old.find(s => s.start_frame === start && s.end_frame === end);
+        segments.push({
+          start_frame: start,
+          end_frame: end,
+          left_subtask: prev ? prev.left_subtask : "",
+          right_subtask: prev ? prev.right_subtask : "",
+        });
+      }
+      if (selectedSeg >= segments.length) selectedSeg = Math.max(segments.length - 1, 0);
+    }
+
+    function segColor(seg) {
+      const hasL = !!seg.left_subtask;
+      const hasR = !!seg.right_subtask;
+      if (!hasL || !hasR) return "rgba(245, 158, 11, 0.35)";
+      const li = LEFT_SUBTASKS.indexOf(seg.left_subtask);
+      const ri = RIGHT_SUBTASKS.indexOf(seg.right_subtask);
+      const l = li >= 0 ? (li + 1) / (LEFT_SUBTASKS.length + 1) : 0.5;
+      const r = ri >= 0 ? (ri + 1) / (RIGHT_SUBTASKS.length + 1) : 0.5;
+      const red = Math.round(56 + l * 80 + r * 40);
+      const green = Math.round(120 + l * 40 + r * 20);
+      const blue = Math.round(180 + l * 30 + r * 60);
+      return `rgba(${red}, ${green}, ${blue}, 0.55)`;
+    }
+
+    function renderTimeline() {
+      timeline.innerHTML = "";
+      if (episodeLength <= 0) return;
+      segments.forEach((seg, idx) => {
+        const leftPct = (seg.start_frame / episodeLength) * 100;
+        const widthPct = ((seg.end_frame - seg.start_frame + 1) / episodeLength) * 100;
+        const el = document.createElement("div");
+        el.className = "timeline-seg" +
+          (idx === selectedSeg ? " selected" : "") +
+          ((!seg.left_subtask || !seg.right_subtask) ? " unlabeled" : "");
+        el.style.left = leftPct + "%";
+        el.style.width = widthPct + "%";
+        el.style.background = segColor(seg);
+        el.title = `#${idx + 1}: [${seg.start_frame}, ${seg.end_frame}]`;
+        el.onclick = (e) => {
+          e.stopPropagation();
+          selectedSeg = idx;
+          video.currentTime = frameToTime(seg.start_frame);
+          renderAll();
+        };
+        timeline.appendChild(el);
+      });
+      splits.forEach((s) => {
+        if (s <= 0 || s >= episodeLength) return;
+        const m = document.createElement("div");
+        m.className = "split-marker";
+        m.style.left = ((s / episodeLength) * 100) + "%";
+        timeline.appendChild(m);
+      });
+      const ph = document.createElement("div");
+      ph.className = "playhead";
+      ph.style.left = ((currentFrame() / episodeLength) * 100) + "%";
+      timeline.appendChild(ph);
+      document.getElementById("seg-count").textContent = `${segments.length} segments`;
+    }
+
+    function renderChips() {
+      const leftWrap = document.getElementById("left-chips");
+      const rightWrap = document.getElementById("right-chips");
+      leftWrap.innerHTML = "";
+      rightWrap.innerHTML = "";
+      const seg = segments[selectedSeg];
+      LEFT_SUBTASKS.forEach((label) => {
+        const b = document.createElement("button");
+        b.className = "chip" + (seg && seg.left_subtask === label ? " active-left" : "");
+        b.textContent = label;
+        b.onclick = () => assignSubtask("left", label);
+        leftWrap.appendChild(b);
+      });
+      RIGHT_SUBTASKS.forEach((label) => {
+        const b = document.createElement("button");
+        b.className = "chip" + (seg && seg.right_subtask === label ? " active-right" : "");
+        b.textContent = label;
+        b.onclick = () => assignSubtask("right", label);
+        rightWrap.appendChild(b);
+      });
+    }
+
+    function renderSegmentsTable() {
+      const body = document.getElementById("segments-body");
+      body.innerHTML = "";
+      segments.forEach((seg, idx) => {
+        const tr = document.createElement("tr");
+        if (idx === selectedSeg) tr.className = "selected";
+        tr.onclick = () => {
+          selectedSeg = idx;
+          video.currentTime = frameToTime(seg.start_frame);
+          renderAll();
+        };
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${seg.start_frame}–${seg.end_frame}</td>
+          <td><select class="compact left-select" data-idx="${idx}">${optionHtml(LEFT_SUBTASKS, seg.left_subtask)}</select></td>
+          <td><select class="compact right-select" data-idx="${idx}">${optionHtml(RIGHT_SUBTASKS, seg.right_subtask)}</select></td>
+        `;
+        body.appendChild(tr);
+      });
+      body.querySelectorAll(".left-select").forEach((sel) => {
+        sel.onchange = (e) => {
+          const i = +e.target.dataset.idx;
+          segments[i].left_subtask = e.target.value;
+          if (i === selectedSeg) renderChips();
+          renderTimeline();
+        };
+      });
+      body.querySelectorAll(".right-select").forEach((sel) => {
+        sel.onchange = (e) => {
+          const i = +e.target.dataset.idx;
+          segments[i].right_subtask = e.target.value;
+          if (i === selectedSeg) renderChips();
+          renderTimeline();
+        };
+      });
+    }
+
+    function optionHtml(options, selected) {
+      const blank = `<option value="">—</option>`;
+      return blank + options.map(o =>
+        `<option value="${o.replace(/"/g, "&quot;")}" ${o === selected ? "selected" : ""}>${o}</option>`
+      ).join("");
+    }
+
+    function renderSelectedInfo() {
+      const seg = segments[selectedSeg];
+      document.getElementById("task-box").textContent = taskText;
+      document.getElementById("selected-range").textContent = seg
+        ? `Segment ${selectedSeg + 1}: frames ${seg.start_frame} – ${seg.end_frame}`
+        : "No segment selected";
+    }
+
+    function renderAll() {
+      renderTimeline();
+      renderChips();
+      renderSegmentsTable();
+      renderSelectedInfo();
+      document.getElementById("frame-info").textContent =
+        `frame ${currentFrame()} / ${Math.max(episodeLength - 1, 0)}`;
+    }
+
+    function assignSubtask(side, label) {
+      if (!segments[selectedSeg]) return;
+      if (side === "left") segments[selectedSeg].left_subtask = label;
+      else segments[selectedSeg].right_subtask = label;
+      renderAll();
+    }
+
+    function addSplitAtCurrentFrame() {
+      const f = currentFrame();
+      if (f <= 0 || f >= episodeLength) return;
+      if (!splits.includes(f)) {
+        splits.push(f);
+        splits.sort((a, b) => a - b);
+        buildSegmentsFromSplits();
+        selectedSeg = segments.findIndex(s => f >= s.start_frame && f <= s.end_frame);
+        if (selectedSeg < 0) selectedSeg = 0;
+        renderAll();
+      }
+    }
+
+    function removeNearestSplit() {
+      const f = currentFrame();
+      if (splits.length === 0) return;
+      let best = splits[0];
+      let bestDist = Math.abs(best - f);
+      for (const s of splits) {
+        const d = Math.abs(s - f);
+        if (d < bestDist) { best = s; bestDist = d; }
+      }
+      splits = splits.filter(s => s !== best);
+      buildSegmentsFromSplits();
+      renderAll();
+    }
+
+    async function loadEpisodes() {
+      const res = await fetch("/api/episodes");
+      episodes = await res.json();
+      episodeSelect.innerHTML = episodes.map(ep =>
+        `<option value="${ep.episode_index}">Episode ${String(ep.episode_index).padStart(6, "0")} (${ep.length} frames)</option>`
+      ).join("");
+    }
+
+    async function loadEpisode(idx) {
+      episodeIndex = idx;
+      episodeSelect.value = String(idx);
+      const res = await fetch(`/api/episode/${idx}`);
+      const data = await res.json();
+      episodeLength = data.length;
+      taskText = data.task;
+      splits = [...(data.splits || [])];
+      segments = (data.segments || []).map(s => ({ ...s }));
+      if (segments.length === 0) {
+        splits = [];
+        buildSegmentsFromSplits();
+      } else if (splits.length === 0) {
+        splits = segments.slice(0, -1).map(s => s.end_frame + 1);
+      }
+      selectedSeg = 0;
+      video.src = `/video/${idx}/${camera}?t=${Date.now()}`;
+      video.currentTime = 0;
+      setStatus("");
+      renderAll();
+    }
+
+    function setupCameraTabs() {
+      const wrap = document.getElementById("camera-tabs");
+      wrap.innerHTML = "";
+      CAMERAS.forEach((cam) => {
+        const b = document.createElement("button");
+        b.textContent = cam.replace("observation.images.", "");
+        b.className = camera === cam ? "active" : "";
+        b.onclick = async () => {
+          camera = cam;
+          setupCameraTabs();
+          const t = currentFrame();
+          video.src = `/video/${episodeIndex}/${encodeURIComponent(camera)}?t=${Date.now()}`;
+          video.onloadedmetadata = () => { video.currentTime = frameToTime(t); renderAll(); };
+        };
+        wrap.appendChild(b);
+      });
+    }
+
+    async function saveEpisode() {
+      const payload = {
+        episode_index: episodeIndex,
+        task: taskText,
+        length: episodeLength,
+        splits,
+        segments: segments.map(s => ({
+          start_frame: s.start_frame,
+          end_frame: s.end_frame,
+          left_subtask: s.left_subtask,
+          right_subtask: s.right_subtask,
+        })),
+      };
+      const res = await fetch(`/api/annotation/${episodeIndex}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const out = await res.json();
+      if (!res.ok) {
+        setStatus(out.error || "Save failed", "err");
+        return;
+      }
+      setStatus(`Saved to ${out.path}`, "ok");
+    }
+
+    document.getElementById("play-btn").onclick = () => {
+      if (video.paused) video.play(); else video.pause();
+    };
+    document.getElementById("frame-prev").onclick = () => {
+      video.pause();
+      video.currentTime = frameToTime(clamp(currentFrame() - 1, 0, episodeLength - 1));
+      renderAll();
+    };
+    document.getElementById("frame-next").onclick = () => {
+      video.pause();
+      video.currentTime = frameToTime(clamp(currentFrame() + 1, 0, episodeLength - 1));
+      renderAll();
+    };
+    document.getElementById("add-split").onclick = addSplitAtCurrentFrame;
+    document.getElementById("remove-split").onclick = removeNearestSplit;
+    document.getElementById("save-btn").onclick = saveEpisode;
+    document.getElementById("prev-ep").onclick = () => {
+      const i = episodes.findIndex(e => e.episode_index === episodeIndex);
+      if (i > 0) loadEpisode(episodes[i - 1].episode_index);
+    };
+    document.getElementById("next-ep").onclick = () => {
+      const i = episodes.findIndex(e => e.episode_index === episodeIndex);
+      if (i >= 0 && i < episodes.length - 1) loadEpisode(episodes[i + 1].episode_index);
+    };
+    episodeSelect.onchange = (e) => loadEpisode(+e.target.value);
+
+    timeline.onclick = (e) => {
+      const rect = timeline.getBoundingClientRect();
+      const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      const f = Math.round(ratio * (episodeLength - 1));
+      video.currentTime = frameToTime(f);
+      selectedSeg = segments.findIndex(s => f >= s.start_frame && f <= s.end_frame);
+      if (selectedSeg < 0) selectedSeg = 0;
+      renderAll();
+    };
+
+    video.ontimeupdate = () => {
+      document.getElementById("frame-info").textContent =
+        `frame ${currentFrame()} / ${Math.max(episodeLength - 1, 0)}`;
+      renderTimeline();
+    };
+    video.onplay = () => { document.getElementById("play-btn").textContent = "Pause"; };
+    video.onpause = () => { document.getElementById("play-btn").textContent = "Play"; };
+
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+      if (e.code === "Space") { e.preventDefault(); document.getElementById("play-btn").click(); }
+      if (e.code === "ArrowLeft") { e.preventDefault(); document.getElementById("frame-prev").click(); }
+      if (e.code === "ArrowRight") { e.preventDefault(); document.getElementById("frame-next").click(); }
+      if (e.key === "s" || e.key === "S") addSplitAtCurrentFrame();
+      if (e.key === "Backspace") { e.preventDefault(); removeNearestSplit(); }
+      if (e.key === "[") document.getElementById("prev-ep").click();
+      if (e.key === "]") document.getElementById("next-ep").click();
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveEpisode(); }
+    });
+
+    (async function init() {
+      setupCameraTabs();
+      await loadEpisodes();
+      if (episodes.length) await loadEpisode(episodes[0].episode_index);
+    })();
+  </script>
+</body>
+</html>

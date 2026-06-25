@@ -30,6 +30,7 @@ seed: 42
 max_grad_norm: 1.0
 weight_decay: 0.0
 resume: null
+resume_experts: null  # e.g. [video] to load only video expert weights from a .pt checkpoint
 
 # wandb
 wandb:

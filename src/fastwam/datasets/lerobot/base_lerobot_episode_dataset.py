@@ -246,43 +246,62 @@ class BaseLerobotEpisodeDataset(torch.utils.data.Dataset):
         dataset, _, global_ep_idx = self._resolve_episode(episode_idx)
         episode_data = self.multi_dataset.get_episode_data(episode_idx)
 
-        state_key = self.state_meta[0]["lerobot_key"]
         action_key = self.action_meta[0]["lerobot_key"]
         image_key = self.image_meta[0]["key"]
 
-        states = episode_data[state_key].float()
+        states_by_key: dict[str, torch.Tensor] = {}
+        for meta in self.state_meta:
+            states = episode_data[meta["lerobot_key"]].float()
+            if states.ndim == 1:
+                states = states.unsqueeze(-1)
+            states_by_key[meta["key"]] = states
+
         actions = episode_data[action_key].float()
-        if states.ndim == 1:
-            states = states.unsqueeze(-1)
         if actions.ndim == 1:
             actions = actions.unsqueeze(-1)
 
-        length = int(states.shape[0])
+        first_state_key = self.state_meta[0]["key"]
+        length = int(states_by_key[first_state_key].shape[0])
+        for key, states in states_by_key.items():
+            if int(states.shape[0]) != length:
+                raise ValueError(
+                    f"Episode {global_ep_idx}: state key {key} length {states.shape[0]} "
+                    f"does not match {first_state_key} length {length}."
+                )
+
         subsample_indices = self._subsample_indices(length)
         if len(subsample_indices) > self.num_frames:
             subsample_indices = subsample_indices[: self.num_frames]
 
-        states_sub = states[subsample_indices]
+        states_sub_by_key = {key: states[subsample_indices] for key, states in states_by_key.items()}
         images = self._decode_episode_video(dataset, global_ep_idx, subsample_indices)
         if images.ndim != 4:
             raise ValueError(
                 f"Episode {global_ep_idx}: expected decoded video [T, C, H, W], got {tuple(images.shape)}."
             )
-        if images.shape[0] != states_sub.shape[0]:
+        if images.shape[0] != states_sub_by_key[first_state_key].shape[0]:
             raise ValueError(
                 f"Episode {global_ep_idx}: decoded video frames ({images.shape[0]}) != "
-                f"subsampled states ({states_sub.shape[0]})."
+                f"subsampled states ({states_sub_by_key[first_state_key].shape[0]})."
             )
 
-        first_state = states[0:1]
+        first_state_by_key = {key: states[0:1] for key, states in states_by_key.items()}
         first_frame = images[0:1]
         episode_actions = actions[: min(actions.shape[0], self.action_horizon)]
 
         if self.left_pad:
             # Left padding: replicate episode first frame for vision/state, zero actions for empty commands.
-            states_padded, state_is_pad = self._left_pad_with_reference(
-                states_sub, self.num_frames, first_state
-            )
+            states_padded_by_key = {}
+            state_is_pad = None
+            for key, states_sub in states_sub_by_key.items():
+                states_padded, cur_state_is_pad = self._left_pad_with_reference(
+                    states_sub, self.num_frames, first_state_by_key[key]
+                )
+                states_padded_by_key[key] = states_padded
+                if state_is_pad is None:
+                    state_is_pad = cur_state_is_pad
+                elif not torch.equal(state_is_pad, cur_state_is_pad):
+                    raise ValueError(f"Episode {global_ep_idx}: inconsistent state padding for key {key}.")
             images_padded, image_is_pad = self._left_pad_with_reference(
                 images, self.num_frames, first_frame
             )
@@ -290,11 +309,21 @@ class BaseLerobotEpisodeDataset(torch.utils.data.Dataset):
                 episode_actions, self.action_horizon
             )
         else:
-            states_padded, state_is_pad = self._right_align_sequence(states_sub, self.num_frames)
+            states_padded_by_key = {}
+            state_is_pad = None
+            for key, states_sub in states_sub_by_key.items():
+                states_padded, cur_state_is_pad = self._right_align_sequence(states_sub, self.num_frames)
+                states_padded_by_key[key] = states_padded
+                if state_is_pad is None:
+                    state_is_pad = cur_state_is_pad
+                elif not torch.equal(state_is_pad, cur_state_is_pad):
+                    raise ValueError(f"Episode {global_ep_idx}: inconsistent state padding for key {key}.")
             images_padded, image_is_pad = self._right_align_sequence(images, self.num_frames)
             actions_padded, action_is_pad = self._right_align_sequence(
                 episode_actions, self.action_horizon
             )
+        if state_is_pad is None:
+            raise ValueError(f"Episode {global_ep_idx}: no state fields were loaded.")
 
         task_idx = int(episode_data["task_index"][0].item())
         task = dataset.meta.tasks[task_idx]
@@ -303,7 +332,7 @@ class BaseLerobotEpisodeDataset(torch.utils.data.Dataset):
             "idx": episode_idx,
             "task": task,
             "action": {self.action_meta[0]["key"]: actions_padded},
-            "state": {self.state_meta[0]["key"]: states_padded},
+            "state": states_padded_by_key,
             "images": {image_key: images_padded},
             "action_is_pad": action_is_pad,
             "state_is_pad": state_is_pad,
@@ -361,7 +390,8 @@ class BaseLerobotEpisodeDataset(torch.utils.data.Dataset):
             episode_data = self.multi_dataset.get_episode_data(episode_idx)
             batch = {
                 "state": {
-                    self.state_meta[0]["key"]: episode_data[self.state_meta[0]["lerobot_key"]].float()
+                    meta["key"]: episode_data[meta["lerobot_key"]].float()
+                    for meta in self.state_meta
                 },
                 "action": {
                     self.action_meta[0]["key"]: episode_data[self.action_meta[0]["lerobot_key"]].float()

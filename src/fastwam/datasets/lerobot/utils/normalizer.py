@@ -1,4 +1,5 @@
 from typing import Literal, Dict, Annotated, Union, Any, List, Tuple, Optional
+import os
 import torch
 import json
 from collections import defaultdict
@@ -147,9 +148,17 @@ def save_dataset_stats_to_json(dataset_stats: dict, file_path: str):
             return str(obj)
     
     serializable_stats = convert_tensor(dataset_stats)
-    
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(serializable_stats, f, ensure_ascii=False, indent=2)
+
+    dir_name = os.path.dirname(os.path.abspath(file_path)) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    tmp_path = f"{file_path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(serializable_stats, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, file_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 def load_dataset_stats_from_json(file_path: str, 
                                  try_convert_tensor: bool = True) -> Dict[str, Any]:

@@ -607,6 +607,111 @@ def _save_stitched_video(
     save_mp4(frames, str(path), fps=fps)
 
 
+def _dataset_index_for_sample(dataloader: DataLoader, sample_i: int, sample: dict[str, Any]) -> int:
+    dataset = dataloader.dataset
+    if isinstance(dataset, Subset):
+        return int(dataset.indices[sample_i])
+    dataset_index = _first_idx(sample)
+    if dataset_index >= 0:
+        return dataset_index
+    return int(sample_i)
+
+
+def _get_openloop_dataset(dataloader: DataLoader) -> Any:
+    dataset = dataloader.dataset
+    if isinstance(dataset, Subset):
+        return dataset.dataset
+    return dataset
+
+
+def _episode_id_for_dataset_index(dataset: Any, dataset_index: int) -> int:
+    episode_data_index = dataset.lerobot_dataset.episode_data_index
+    starts = episode_data_index["from"]
+    ends = episode_data_index["to"]
+    for episode_id in range(int(starts.shape[0])):
+        start = int(starts[episode_id].item())
+        end = int(ends[episode_id].item())
+        if start <= dataset_index < end:
+            return episode_id
+    raise ValueError(f"dataset_index {dataset_index} is not contained in any episode.")
+
+
+def _normalized_gt_video_tensor(gt_video: torch.Tensor) -> torch.Tensor:
+    return ((gt_video.detach().float().cpu().clamp(-1.0, 1.0) + 1.0) * 0.5).contiguous()
+
+
+def _pil_frame_to_input_image(frame: Image.Image, *, device: torch.device | str, dtype: torch.dtype) -> torch.Tensor:
+    arr = np.array(frame.convert("RGB"), dtype=np.float32) / 255.0
+    tensor = torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+    tensor = tensor * 2.0 - 1.0
+    return tensor.unsqueeze(0).to(device=device, dtype=dtype)
+
+
+def _normalize_video_obs_source(value: Any) -> str:
+    key = str(value).strip().lower()
+    if key not in {"gt_window", "autoregressive"}:
+        raise ValueError(
+            f"Unsupported OPENLOOP.video_obs_source={value!r}. Expected one of: ['gt_window', 'autoregressive']."
+        )
+    return key
+
+
+def _normalize_video_action_source(value: Any) -> str:
+    key = str(value).strip().lower()
+    if key not in {"gt", "pred"}:
+        raise ValueError(
+            f"Unsupported OPENLOOP.video_action_source={value!r}. Expected one of: ['gt', 'pred']."
+        )
+    return key
+
+
+def _episode_video_stem(episode_id: int, *, video_obs_source: str, video_action_source: str) -> str:
+    parts = [f"episode_{episode_id:06d}_gt_pred"]
+    if video_obs_source == "autoregressive":
+        parts.append("obs_ar")
+    if video_action_source == "pred":
+        parts.append("act_pred")
+    return "_".join(parts)
+
+
+def _append_rollout_video_frames(
+    accumulated: list[torch.Tensor],
+    chunk: torch.Tensor,
+    *,
+    is_first_chunk: bool,
+    skip_conditioning_frame: bool,
+) -> None:
+    if chunk.ndim != 4:
+        raise ValueError(f"Expected rollout chunk shape [3, T, H, W], got {tuple(chunk.shape)}")
+    start = 0 if is_first_chunk or not skip_conditioning_frame else 1
+    for frame_idx in range(start, chunk.shape[1]):
+        accumulated.append(chunk[:, frame_idx].clone())
+
+
+def _save_episode_gt_pred_video(
+    gt_frames: list[torch.Tensor],
+    pred_frames: list[torch.Tensor],
+    path: Path,
+    fps: int,
+) -> None:
+    if len(gt_frames) == 0 or len(pred_frames) == 0:
+        raise ValueError("Cannot save episode video from empty GT/pred frame lists.")
+    if len(gt_frames) != len(pred_frames):
+        raise ValueError(
+            f"GT/pred episode frame count mismatch: gt={len(gt_frames)} vs pred={len(pred_frames)}"
+        )
+    gt_video = torch.stack(gt_frames, dim=1).contiguous()
+    pred_video = torch.stack(pred_frames, dim=1).contiguous()
+    stitched = torch.cat([gt_video, pred_video], dim=3).contiguous()
+    frames = []
+    for frame_idx in range(stitched.shape[1]):
+        arr = (
+            stitched[:, frame_idx].permute(1, 2, 0).clamp(0.0, 1.0).numpy() * 255.0
+        ).astype(np.uint8)
+        frames.append(Image.fromarray(arr))
+    save_mp4(frames, str(path), fps=fps)
+
+
 def _call_action_infer(model: Any, infer_kwargs: dict[str, Any], num_video_frames: int) -> dict[str, Any]:
     if not hasattr(model, "infer_action"):
         raise AttributeError(f"{type(model).__name__} does not implement infer_action().")
@@ -735,6 +840,15 @@ def run_openloop_evaluation(
     max_samples = _to_optional_int(cfg.OPENLOOP.get("max_samples"))
     predict_video = bool(cfg.OPENLOOP.predict_video)
     save_video_samples = int(cfg.OPENLOOP.save_video_samples)
+    save_episode_video = bool(cfg.OPENLOOP.get("save_episode_video", False))
+    episode_indices = _to_optional_int_list(cfg.OPENLOOP.get("episode_indices"))
+    skip_conditioning_frame = bool(cfg.OPENLOOP.get("episode_video_skip_conditioning_frame", True))
+    if save_episode_video and not predict_video:
+        raise ValueError("OPENLOOP.save_episode_video=true requires OPENLOOP.predict_video=true.")
+    if save_episode_video and episode_indices is None:
+        raise ValueError("OPENLOOP.save_episode_video=true requires OPENLOOP.episode_indices to be set.")
+    video_obs_source = _normalize_video_obs_source(cfg.OPENLOOP.get("video_obs_source", "gt_window"))
+    video_action_source = _normalize_video_action_source(cfg.OPENLOOP.get("video_action_source", "gt"))
 
     rows = []
     action_metric_keys = ["action_l1", "action_mse", "action_rmse", "action_max_abs"]
@@ -743,6 +857,11 @@ def run_openloop_evaluation(
     per_dim_l1_sum = None
     per_dim_mse_sum = None
     per_dim_count = 0
+    episode_gt_frames: dict[int, list[torch.Tensor]] = {}
+    episode_pred_frames: dict[int, list[torch.Tensor]] = {}
+    episode_chunk_count: dict[int, int] = {}
+    episode_next_input_image: dict[int, Optional[torch.Tensor]] = {}
+    openloop_dataset = _get_openloop_dataset(dataloader)
 
     start_time = time.perf_counter()
     for sample_i, sample in enumerate(dataloader):
@@ -752,10 +871,24 @@ def run_openloop_evaluation(
         video = sample["video"][0]  # [3, T_video, H, W], range [-1, 1]
         gt_action_norm = sample["action"][0].detach().to(device="cpu", dtype=torch.float32)
         proprio_norm = sample["proprio"].detach().to(device="cpu", dtype=torch.float32)
-        input_image = video[:, 0].unsqueeze(0).to(device=model.device, dtype=model.torch_dtype)
         proprio0 = sample["proprio"][0, 0].detach().to(device="cpu", dtype=torch.float32)
         num_video_frames = int(video.shape[1])
         action_horizon = int(gt_action_norm.shape[0])
+        episode_id: Optional[int] = None
+        if predict_video and (save_episode_video or video_obs_source == "autoregressive"):
+            dataset_index = _dataset_index_for_sample(dataloader, sample_i, sample)
+            episode_id = _episode_id_for_dataset_index(openloop_dataset, dataset_index)
+
+        if video_obs_source == "autoregressive":
+            if episode_id is None:
+                raise ValueError("OPENLOOP.video_obs_source=autoregressive requires episode_indices to be set.")
+            cached_input = episode_next_input_image.get(episode_id)
+            if cached_input is None:
+                input_image = video[:, 0].unsqueeze(0).to(device=model.device, dtype=model.torch_dtype)
+            else:
+                input_image = cached_input
+        else:
+            input_image = video[:, 0].unsqueeze(0).to(device=model.device, dtype=model.torch_dtype)
 
         infer_kwargs = {
             "prompt": None,
@@ -775,17 +908,35 @@ def run_openloop_evaluation(
             infer_kwargs["prompt"] = _first_prompt(sample)
 
         if predict_video:
+            action_for_video = gt_action_norm
+            if video_action_source == "pred":
+                action_only = _call_action_infer(model, dict(infer_kwargs), num_video_frames=num_video_frames)
+                pred_action_for_video = action_only.get("action")
+                if pred_action_for_video is None:
+                    raise ValueError("infer_action did not return `action` for video_action_source=pred.")
+                if pred_action_for_video.ndim == 2:
+                    pred_action_for_video = pred_action_for_video.unsqueeze(0)
+                action_for_video = pred_action_for_video[0].detach().to(device="cpu", dtype=torch.float32)
+
             joint_kwargs = dict(infer_kwargs)
             joint_kwargs.update(
                 {
                     "num_frames": num_video_frames,
-                    "action": gt_action_norm,
+                    "action": action_for_video,
                     "text_cfg_scale": float(cfg.OPENLOOP.text_cfg_scale),
                     "action_cfg_scale": 1.0,
                     "negative_prompt": str(cfg.OPENLOOP.negative_prompt),
                 }
             )
             pred = model.infer(**joint_kwargs)
+
+            if video_obs_source == "autoregressive":
+                assert episode_id is not None
+                episode_next_input_image[episode_id] = _pil_frame_to_input_image(
+                    pred["video"][-1],
+                    device=model.device,
+                    dtype=model.torch_dtype,
+                )
         else:
             pred = _call_action_infer(model, infer_kwargs, num_video_frames=num_video_frames)
 
@@ -812,7 +963,9 @@ def run_openloop_evaluation(
 
         row = {
             "sample_index": sample_i,
-            "dataset_index": _first_idx(sample),
+            "dataset_index": _dataset_index_for_sample(dataloader, sample_i, sample),
+            "video_obs_source": video_obs_source,
+            "video_action_source": video_action_source,
             **{k: action_metrics[k] for k in action_metric_keys},
             "num_action_steps": action_metrics["num_action_steps"],
         }
@@ -872,6 +1025,27 @@ def run_openloop_evaluation(
                 )
                 row["video_path"] = str(video_path)
 
+            if save_episode_video:
+                if episode_id is None:
+                    dataset_index = _dataset_index_for_sample(dataloader, sample_i, sample)
+                    episode_id = _episode_id_for_dataset_index(openloop_dataset, dataset_index)
+                is_first_chunk = episode_chunk_count.get(episode_id, 0) == 0
+                gt_chunk = _normalized_gt_video_tensor(video)
+                pred_chunk = pil_frames_to_video_tensor(pred["video"])
+                _append_rollout_video_frames(
+                    episode_gt_frames.setdefault(episode_id, []),
+                    gt_chunk,
+                    is_first_chunk=is_first_chunk,
+                    skip_conditioning_frame=skip_conditioning_frame,
+                )
+                _append_rollout_video_frames(
+                    episode_pred_frames.setdefault(episode_id, []),
+                    pred_chunk,
+                    is_first_chunk=is_first_chunk,
+                    skip_conditioning_frame=skip_conditioning_frame,
+                )
+                episode_chunk_count[episode_id] = episode_chunk_count.get(episode_id, 0) + 1
+
         rows.append(row)
         if (sample_i + 1) % int(cfg.OPENLOOP.log_every) == 0:
             elapsed = time.perf_counter() - start_time
@@ -885,14 +1059,37 @@ def run_openloop_evaluation(
     if len(rows) == 0:
         raise RuntimeError("No samples were evaluated.")
 
+    episode_video_paths: dict[int, str] = {}
+    if save_episode_video:
+        for episode_id in sorted(episode_gt_frames.keys()):
+            episode_video_path = output_dir / f"{_episode_video_stem(episode_id, video_obs_source=video_obs_source, video_action_source=video_action_source)}.mp4"
+            _save_episode_gt_pred_video(
+                gt_frames=episode_gt_frames[episode_id],
+                pred_frames=episode_pred_frames[episode_id],
+                path=episode_video_path,
+                fps=int(cfg.OPENLOOP.video_fps),
+            )
+            episode_video_paths[episode_id] = str(episode_video_path)
+            logger.info(
+                "Saved episode rollout video: episode=%d frames=%d path=%s",
+                episode_id,
+                len(episode_gt_frames[episode_id]),
+                episode_video_path,
+            )
+
     summary = {
         "ckpt": str(ckpt_path),
         "split": str(cfg.OPENLOOP.split),
         "num_samples": len(rows),
         "predict_video": predict_video,
+        "save_episode_video": save_episode_video,
+        "video_obs_source": video_obs_source,
+        "video_action_source": video_action_source,
         "metrics": {key: _mean(values) for key, values in aggregate.items() if len(values) > 0},
         "elapsed_sec": float(time.perf_counter() - start_time),
     }
+    if episode_video_paths:
+        summary["episode_video_paths"] = {str(k): v for k, v in episode_video_paths.items()}
     if per_dim_l1_sum is not None and per_dim_mse_sum is not None and per_dim_count > 0:
         summary["metrics"]["action_l1_per_dim"] = _jsonable(per_dim_l1_sum / per_dim_count)
         summary["metrics"]["action_mse_per_dim"] = _jsonable(per_dim_mse_sum / per_dim_count)

@@ -42,6 +42,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         max_padding_retry: int = 3,
         concat_multi_camera: str = "horizontal", # "horizontal", "vertical", "robotwin", or None
         override_instruction: Optional[str] = None, # whether to hardcode a specific instruction for all samples, for debugging
+        tolerance_s: float = 1e-4,
+        video_backend: Optional[str] = "pyav",
     ):
         self.lerobot_dataset = BaseLerobotDataset(
             dataset_dirs=dataset_dirs,
@@ -51,6 +53,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             val_set_proportion=val_set_proportion,
             is_training_set=is_training_set,
             global_sample_stride=global_sample_stride,
+            tolerance_s=tolerance_s,
+            video_backend=video_backend,
         )
     
         self.num_frames = num_frames
@@ -102,9 +106,13 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             else:
                 dataset_stats = load_dataset_stats_from_json(pretrained_norm_stats)
                 logger.info(f"Using dataset stats: {pretrained_norm_stats}")
-                if PartialState().is_main_process:
-                    work_dir = misc.get_work_dir()
-                    save_dataset_stats_to_json(dataset_stats, os.path.join(work_dir, "dataset_stats.json"))
+                work_dir = misc.get_work_dir()
+                dest_path = os.path.join(work_dir, "dataset_stats.json")
+                if (
+                    PartialState().is_main_process
+                    and os.path.abspath(pretrained_norm_stats) != os.path.abspath(dest_path)
+                ):
+                    save_dataset_stats_to_json(dataset_stats, dest_path)
 
             processor.set_normalizer_from_stats(dataset_stats)
             self.lerobot_dataset.set_processor(processor)
@@ -200,7 +208,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         #   action: [num_frames-1, action_dim] # start from t0, except the last frame
         #   proprio: [num_frames, proprio_dim] # start from t0 to the last frame, aligned with video frames
         action = sample["action"] # [T-1, action_dim]
-        proprio = sample["proprio"][:-1, :] # [T-1, state_dim]， to align with action
+        proprio = sample["proprio"] # [T, state_dim], first state is current-condition
+        proprio_is_pad = sample["proprio_is_pad"]
         if video.shape[1] <= 1:
             raise ValueError(f"`video` must have at least 2 frames, got shape {tuple(video.shape)}")
         if action.shape[0] % (video.shape[1] - 1) != 0:
@@ -229,7 +238,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             "context_mask": context_mask,
             "image_is_pad": image_is_pad,
             "action_is_pad": sample["action_is_pad"],
-            "proprio_is_pad": sample["proprio_is_pad"],
+            "proprio_is_pad": proprio_is_pad,
         }
         return data
 

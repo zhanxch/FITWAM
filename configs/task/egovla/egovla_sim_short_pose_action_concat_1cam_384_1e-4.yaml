@@ -1,0 +1,30 @@
+# @package _global_
+
+defaults:
+  - override /data: egovla_sim_short_pose_action_concat
+  - override /model: fastwam
+  - _self_
+
+batch_size: 8
+num_workers: 4
+
+model:
+  mot_checkpoint_mixed_attn: false
+  # Keep this as the basic FastWAM path: state is part of action tokens, not a
+  # separate context token or StateDiT branch.
+  proprio_dim: null
+  state_dit_config: null
+  loss:
+    lambda_action: 1.0
+
+lr_scheduler_type: "cosine"
+learning_rate: 1e-4
+num_epochs: 30
+max_steps: null
+log_every: 10
+save_every: 2500
+eval_every: 500
+
+gradient_accumulation_steps: 2
+weight_decay: 1e-2
+resume: null

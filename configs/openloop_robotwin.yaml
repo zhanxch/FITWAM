@@ -38,6 +38,15 @@ OPENLOOP:
   text_cfg_scale: 1.0
   negative_prompt: ""
   save_video_samples: 0
+  # When true (requires predict_video + episode_indices), stitch rollout chunks into one GT|pred mp4 per episode.
+  save_episode_video: false
+  # Skip the conditioning frame when appending later rollout chunks to avoid duplicate frames.
+  episode_video_skip_conditioning_frame: true
+  # Video conditioning: gt_window = GT first frame every replan (default, optimistic);
+  # autoregressive = only the first replan uses GT image, later replans use the previous chunk's last predicted frame.
+  video_obs_source: gt_window
+  # Video action conditioning: gt = oracle action (default); pred = infer_action output conditions video DiT.
+  video_action_source: gt
   video_fps: 8
   log_every: 10
   # Action side panel when saving videos: none | curves (default, GT vs pred vs state) | 3d (iso projection).

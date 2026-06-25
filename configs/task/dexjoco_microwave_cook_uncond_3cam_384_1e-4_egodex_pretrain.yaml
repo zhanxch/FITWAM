@@ -1,0 +1,11 @@
+# @package _global_
+
+defaults:
+  - dexjoco_microwave_cook_uncond_3cam_384_1e-4
+  - _self_
+
+resume_experts:
+  - video
+
+wandb:
+  name: dexjoco_microwave_cook_uncond_3cam_384_1e-4_egodex30k
