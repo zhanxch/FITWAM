@@ -1,0 +1,37 @@
+# @package _global_
+
+# Baseline B: GR00T-style data processing + FastWAM model.
+# Only the data config differs from baseline A (relative action + min/max + clip).
+# Model config is identical (proprio_dim auto-inherits 58).
+
+defaults:
+  - override /data: spray_water_rot6d_gr00tstyle
+  - override /model: fastwam
+  - _self_
+
+batch_size: 8
+num_workers: 4
+
+model:
+  mot_checkpoint_mixed_attn: false
+  # proprio_dim 自动从数据 config 继承（=58），与基线 A 相同。
+
+lr_scheduler_type: "cosine"
+learning_rate: 1e-4
+num_epochs: 5
+max_steps: null
+log_every: 10
+save_every: 500
+eval_every: 500
+
+gradient_accumulation_steps: 1
+weight_decay: 1e-2
+resume: null
+
+wandb:
+  enabled: true
+  workspace: null
+  project: fast-wam
+  name: spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4
+  group: spray_water_rot6d_gr00tstyle
+  mode: online

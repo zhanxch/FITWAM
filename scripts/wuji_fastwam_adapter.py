@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from dexjoco_fastwam_adapter import (
+from robotwin_camera_utils import (
     DEFAULT_PROMPT,
     concat_robotwin_rgb,
     hwc_rgb_to_input_image_np,
@@ -22,12 +22,50 @@ WUJI_ACTION_KEYS = ("left_eef", "right_eef", "left_hand_joints", "right_hand_joi
 WUJI_VIDEO_KEYS = ("head_view", "left_wrist_view", "right_wrist_view")
 GR00T_LANGUAGE_KEY = "annotation.human.action.task_description"
 
+# Fallback slices (used when no modality.json is available). These mirror the
+# default spray_water 58-dim layout and are overridden by load_modality_slices().
 _WUJI_SLICES = {
     "left_eef": slice(0, 9),
     "right_eef": slice(9, 18),
     "left_hand_joints": slice(18, 38),
     "right_hand_joints": slice(38, 58),
 }
+
+
+def load_modality_slices(modality_json_path: str | None) -> dict[str, slice]:
+    """Load per-key slices from meta/modality.json (GR00T-style).
+
+    Falls back to the hardcoded _WUJI_SLICES when the path is missing or does
+    not contain an 'action' section. Caches the result so repeated calls are
+    cheap. The returned dict maps action modality keys to python slice objects.
+    """
+    global _WUJI_SLICES
+    if modality_json_path is None:
+        return _WUJI_SLICES
+    import json
+    import os
+    from pathlib import Path
+
+    cache_attr = "_modality_slices_cache"
+    cache = globals().get(cache_attr)
+    if cache is not None and cache.get("path") == str(Path(modality_json_path).resolve()):
+        return cache["slices"]
+
+    slices = dict(_WUJI_SLICES)
+    if os.path.exists(modality_json_path):
+        try:
+            with open(modality_json_path, "r") as f:
+                modality = json.load(f)
+            action_meta = modality.get("action", {})
+            for key, info in action_meta.items():
+                if "start" in info and "end" in info:
+                    slices[key] = slice(int(info["start"]), int(info["end"]))
+        except Exception:
+            # Keep fallback on any error.
+            pass
+    globals()[cache_attr] = {"path": str(Path(modality_json_path).resolve()), "slices": slices}
+    _WUJI_SLICES = slices
+    return slices
 
 
 def is_gr00t_observation(observation: dict[str, Any]) -> bool:
@@ -104,8 +142,16 @@ def gr00t_obs_to_policy_obs(
     return policy_obs
 
 
-def merge_wuji_state(state: dict[str, Any]) -> np.ndarray:
-    """Merge GR00T state dict into a single 58-d vector (latest timestep)."""
+def merge_wuji_state(state: dict[str, Any], modality_json_path: str | None = None) -> np.ndarray:
+    """Merge GR00T state dict into a single 58-d vector (latest timestep).
+
+    Args:
+        state: per-key state arrays. Keys must cover the action modality keys
+            listed in modality.json (or the default WUJI_ACTION_KEYS).
+        modality_json_path: optional path to meta/modality.json; when provided,
+            the slice layout is loaded from it (GR00T-aligned).
+    """
+    slices = load_modality_slices(modality_json_path)
     parts: list[np.ndarray] = []
     for key in WUJI_ACTION_KEYS:
         if key not in state:
@@ -125,8 +171,15 @@ def merge_wuji_state(state: dict[str, Any]) -> np.ndarray:
     return merged
 
 
-def split_wuji_action(action: Any) -> dict[str, np.ndarray]:
-    """Split [T,58] action into GR00T-style keys with shape (1, T, dim)."""
+def split_wuji_action(action: Any, modality_json_path: str | None = None) -> dict[str, np.ndarray]:
+    """Split [T,58] action into GR00T-style keys with shape (1, T, dim).
+
+    Args:
+        action: flat action array of shape (T, 58) or (58,).
+        modality_json_path: optional path to meta/modality.json; when provided,
+            the slice layout is loaded from it (GR00T-aligned).
+    """
+    slices = load_modality_slices(modality_json_path)
     action_np = np.asarray(action, dtype=np.float32)
     if action_np.ndim == 1:
         action_np = action_np[np.newaxis, :]
@@ -135,5 +188,5 @@ def split_wuji_action(action: Any) -> dict[str, np.ndarray]:
 
     return {
         key: action_np[:, slc][np.newaxis, ...].astype(np.float32, copy=False)
-        for key, slc in _WUJI_SLICES.items()
+        for key, slc in slices.items()
     }

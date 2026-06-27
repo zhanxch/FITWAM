@@ -10,8 +10,8 @@ num_workers: 4
 
 model:
   mot_checkpoint_mixed_attn: false
-  proprio_dim: null
-  state_dit_config: null
+  # proprio_dim 自动从数据 config 继承（=58），与官方 robotwin 路径一致。
+  # 不显式覆盖，保持官方默认行为。
 
 lr_scheduler_type: "cosine"
 learning_rate: 1e-4

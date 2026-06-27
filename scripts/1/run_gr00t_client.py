@@ -1132,6 +1132,36 @@ def save_observation_images(
     return saved_paths
 
 
+def save_raw_actions(
+    actions: dict[str, Any],
+    observation: dict[str, Any],
+    output_dir: str | Path,
+    *,
+    loop_index: int,
+) -> Path:
+    """B1 diagnostic: save the raw policy-returned action dict (per-arm arrays,
+    before iter_action_steps / interpolation / clip) plus the observation state
+    to an .npz for offline comparison with the server-side dump."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {"loop_index": int(loop_index)}
+    for key, val in actions.items():
+        try:
+            payload[f"action_{key}"] = np.asarray(val, dtype=np.float32)
+        except Exception as exc:
+            payload[f"action_{key}_error"] = str(exc)
+    state = observation.get("state")
+    if isinstance(state, dict):
+        for key, val in state.items():
+            try:
+                payload[f"obs_state_{key}"] = np.asarray(val, dtype=np.float32)
+            except Exception as exc:
+                payload[f"obs_state_{key}_error"] = str(exc)
+    path = output_path / f"raw_actions_loop_{loop_index:06d}.npz"
+    np.savez(path, **payload)
+    return path
+
+
 def parse_args(default_port: int = 5555) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True, help="Policy server host/IP")
@@ -1274,6 +1304,14 @@ def parse_args(default_port: int = 5555) -> argparse.Namespace:
         type=int,
         default=1,
         help="Save observation images every N inference loops when --save-observation-images is set",
+    )
+    parser.add_argument(
+        "--dump-raw-actions",
+        type=str,
+        default=None,
+        help="B1 diagnostic: directory to save the raw policy-returned action dict (before "
+        "iter_action_steps / interpolation / clip) each inference loop, as .npz. Use to "
+        "compare against the server-side dump and isolate whether post-processing breaks the action.",
     )
     parser.add_argument(
         "--fresh-image-timeout-sec",
@@ -1467,6 +1505,16 @@ def run_robot_client(
                         loop_index=loop_count,
                     )
                 actions, info = policy.get_action(observation)
+                if args.dump_raw_actions:
+                    try:
+                        save_raw_actions(
+                            actions,
+                            observation,
+                            args.dump_raw_actions,
+                            loop_index=loop_count,
+                        )
+                    except Exception as exc:
+                        print(f"[dump-raw-actions] failed at loop {loop_count}: {exc}", flush=True)
                 steps = list(iter_action_steps(actions, args.execute_horizon))
                 policy_step = info.get("current_step") if isinstance(info, dict) else None
                 if args.move_to_first and not moved_to_first and steps:

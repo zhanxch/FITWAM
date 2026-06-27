@@ -40,6 +40,20 @@ class FastWAMProcessor(BaseProcessor):
 
         tokenizer: Optional[Any] = None,
         delta_action_dim_mask: Optional[Dict[str, List[bool]]] = None,
+        # H2 fix: per-key list of dim indices to leave UN-normalized (identity).
+        # e.g. {"action": {"default": [3,4,5,6,7,8,12,13,14,15,16,17]}} skips rot6d.
+        norm_skip_dims: Optional[Dict[str, Dict[str, List[int]]]] = None,
+        # GR00T-style per-dim-mode normalization on a single merged key.
+        # e.g. {"action": {"default": {"min/max": [0,1,2,...,17,38,...,57]}}}
+        # gives EEF+hand dims min/max while the global default_mode covers the rest.
+        norm_per_dim_modes: Optional[Dict[str, Dict[str, Dict[str, List[int]]]]] = None,
+        # GR00T clips normalized values to [-1, 1] (clip_outliers=True).
+        norm_clip_to_unit: bool = False,
+        # GR00T-alignment: when "meta", load stats from meta/stats.json + modality.json
+        # instead of computing from episodes. Requires norm_stats_meta_dir.
+        norm_stats_source: str = "compute",
+        norm_stats_meta_dir: Optional[str] = None,
+        norm_relative_action_keys: Optional[List[str]] = None,
     ):
         self.shape_meta = shape_meta
         self.num_obs_steps = num_obs_steps
@@ -63,6 +77,12 @@ class FastWAMProcessor(BaseProcessor):
         self.use_stepwise_action_norm = use_stepwise_action_norm
         self.norm_default_mode = norm_default_mode
         self.norm_exception_mode = norm_exception_mode
+        self.norm_skip_dims = norm_skip_dims
+        self.norm_per_dim_modes = norm_per_dim_modes
+        self.norm_clip_to_unit = norm_clip_to_unit
+        self.norm_stats_source = norm_stats_source
+        self.norm_stats_meta_dir = norm_stats_meta_dir
+        self.norm_relative_action_keys = norm_relative_action_keys or []
         self._normalizer = None
 
         self.tokenizer = tokenizer
@@ -115,7 +135,39 @@ class FastWAMProcessor(BaseProcessor):
             default_mode=self.norm_default_mode,
             exception_mode=self.norm_exception_mode,
             stats=dataset_stats,
+            skip_dims=self.norm_skip_dims,
+            per_dim_modes=self.norm_per_dim_modes,
+            clip_to_unit=self.norm_clip_to_unit,
         )
+
+    def set_normalizer_from_modality_stats(self):
+        """Build normalizer from meta/stats.json + meta/modality.json (GR00T-style)."""
+        import json as _json
+        import os as _os
+
+        meta_dir = self.norm_stats_meta_dir
+        stats_path = _os.path.join(meta_dir, "stats.json")
+        modality_path = _os.path.join(meta_dir, "modality.json")
+        rel_stats_path = _os.path.join(meta_dir, "relative_stats.json")
+        with open(modality_path, "r") as f:
+            modality_meta = _json.load(f)
+        self._normalizer = LinearNormalizer.from_modality_stats(
+            shape_meta=self.shape_meta,
+            modality_meta=modality_meta,
+            stats_json_path=stats_path,
+            relative_stats_json_path=rel_stats_path if _os.path.exists(rel_stats_path) else None,
+            use_stepwise_action_norm=self.use_stepwise_action_norm,
+            default_mode=self.norm_default_mode,
+            exception_mode=self.norm_exception_mode,
+            skip_dims=self.norm_skip_dims,
+            per_dim_modes=self.norm_per_dim_modes,
+            clip_to_unit=self.norm_clip_to_unit,
+            relative_action_keys=self.norm_relative_action_keys,
+        )
+
+    @property
+    def wants_modality_stats(self) -> bool:
+        return self.norm_stats_source == "meta" and self.norm_stats_meta_dir is not None
 
     def augment_instruction(self, data: Dict[str, str] | List[str]) -> List[str]:
         """

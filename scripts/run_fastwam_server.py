@@ -103,6 +103,43 @@ class FastWAMPolicy:
             f"expected one of training keys {preferred_keys}."
         )
 
+    def _slice_proprio_to_state_keys(self, proprio: torch.Tensor) -> dict:
+        """Split a merged proprio tensor into per-state-key sub-tensors.
+
+        When the dataset uses a single 'default' state key, the proprio is
+        returned as-is under that key. When multiple state keys exist (GR00T
+        modality.json alignment), proprio is sliced per key using the
+        modality_slice stored on each state meta entry by BaseLerobotDataset.
+        """
+        state_meta = self.processor.shape_meta["state"]
+        state_batch = {}
+        for meta in state_meta:
+            key = meta["key"]
+            sl = meta.get("modality_slice")
+            if sl is not None:
+                state_batch[key] = proprio[..., sl[0]:sl[1]]
+            else:
+                state_batch[key] = proprio
+        return state_batch
+
+    def _merge_state_keys_to_proprio(self, state_batch: dict) -> torch.Tensor:
+        """Concatenate per-state-key tensors back into a merged proprio (left-aligned)."""
+        merger = self.processor.action_state_merger
+        # merger.forward expects {"state": {key: [T, D]}} and returns {"state": [T, D_total]}.
+        out = merger.forward({"state": state_batch})
+        return out["state"]
+
+    def _normalize_proprio(self, proprio: torch.Tensor) -> torch.Tensor:
+        """Apply state transforms + normalization, mirroring the training pipeline.
+
+        Handles both single-key (default) and multi-key (modality.json) layouts.
+        """
+        state_batch = {"state": self._slice_proprio_to_state_keys(proprio)}
+        state_batch = self.processor.action_state_transform(state_batch)
+        state_batch = self.processor.normalizer.forward(state_batch)
+        # Re-merge into the single proprio tensor the model expects.
+        return self._merge_state_keys_to_proprio(state_batch["state"])
+
     def _normalize_observation(self, observation: dict) -> dict:
         """Accept both direct tensors and shape_meta-keyed modality dicts."""
         normalized = dict(observation)
@@ -132,12 +169,10 @@ class FastWAMPolicy:
 
         proprio = tensors.get(KEY_PROPRIO)
         if proprio is not None:
-            state_meta = self.processor.shape_meta["state"]
-            state_key = state_meta[0]["key"]
-            state_batch = {"state": {state_key: proprio}}
-            state_batch = self.processor.action_state_transform(state_batch)
-            state_batch = self.processor.normalizer.forward(state_batch)
-            proprio = state_batch["state"][state_key]
+            proprio = self._normalize_proprio(proprio)
+            # Cache the normalized proprio on CPU so the action denormalizer can
+            # use the last obs frame as the relative->absolute reference state.
+            self._last_normalized_proprio = proprio.detach().to(dtype=torch.float32, device="cpu")
 
         infer_kwargs: dict[str, Any] = {
             KEY_INPUT_IMAGE: tensors[KEY_INPUT_IMAGE],
@@ -172,13 +207,59 @@ class FastWAMPolicy:
             raise
 
         action_tensor = pred[KEY_ACTION]
-        action_meta = self.processor.shape_meta["action"]
-        action_key = action_meta[0]["key"]
         if action_tensor.ndim == 2:
             action_tensor = action_tensor.unsqueeze(0)
-        normalizer = self.processor.normalizer.normalizers["action"][action_key]
-        action_np = normalizer.backward(action_tensor.to(dtype=torch.float32, device="cpu")).numpy()
-        return {KEY_ACTION: action_np[0], "action_horizon": self.action_horizon}
+        action_np = self._denormalize_action(action_tensor)
+        return {KEY_ACTION: action_np, "action_horizon": self.action_horizon}
+
+    def _denormalize_action(self, action_tensor: torch.Tensor) -> np.ndarray:
+        """Reverse normalization + relative->absolute transform for a predicted action.
+
+        Uses the full processor.postprocess() chain (merger.backward ->
+        normalizer.backward -> transforms.backward) so that multi-key modality
+        layouts and relative-action transforms are correctly inverted, matching
+        the training pipeline. Falls back to the legacy single-key normalizer
+        path when there are no action_state_transforms.
+        """
+        action_meta = self.processor.shape_meta["action"]
+        has_transforms = self.processor.action_state_transforms is not None
+        action_tensor = action_tensor.to(dtype=torch.float32, device="cpu")
+        if len(action_meta) == 1 and not has_transforms:
+            action_key = action_meta[0]["key"]
+            normalizer = self.processor.normalizer.normalizers["action"][action_key]
+            return normalizer.backward(action_tensor).numpy()[0]
+
+        # Multi-key / relative-transform path: build a postprocess input with the
+        # predicted action and the LAST proprio frame as the reference state.
+        # proprio was already normalized for the model; for postprocess we need the
+        # normalized state at the last obs step as the relative reference frame.
+        # The processor.postprocess expects {"action": (B, T, D), "proprio": (B, T_obs, D)}.
+        # We reconstruct a minimal proprio from the cached last normalized proprio.
+        proprio = getattr(self, "_last_normalized_proprio", None)
+        if proprio is None:
+            # No proprio available (e.g. proprio-less policy); skip state-dependent
+            # transforms by providing a zero reference of the right dim.
+            proprio = torch.zeros(
+                1, self.processor.num_obs_steps, action_tensor.shape[-1],
+                dtype=action_tensor.dtype, device=action_tensor.device,
+            )
+        if proprio.ndim == 2:
+            proprio = proprio.unsqueeze(0)
+        data = {"action": action_tensor, "proprio": proprio}
+        # Run the reverse chain manually (mirrors processor.postprocess but WITHOUT
+        # the obs-overlap slice, since deploy predictions contain only future
+        # action steps, not the observation-aligned prefix).
+        data["state"] = data.pop("proprio")
+        data = self.processor.action_state_merger.backward(data)
+        data = self.processor.normalizer.backward(data)
+        if self.processor.action_state_transforms is not None:
+            for trans in reversed(self.processor.action_state_transforms):
+                data = trans.backward(data)
+        # data["action"] is now a per-key dict of 3D tensors; re-merge to flat.
+        action_flat = torch.cat(
+            [data["action"][m["key"]] for m in action_meta], dim=-1
+        )
+        return action_flat[0].numpy()
 
 
 def _resolve_stats_path(run_dir: Path, dataset_stats_path: str | None) -> Path:
@@ -275,7 +356,13 @@ def _build_policy_from_run(
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
     stats_path = _resolve_stats_path(run_dir, dataset_stats_path)
-    processor.set_normalizer_from_stats(load_dataset_stats_from_json(str(stats_path)))
+    if processor.wants_modality_stats:
+        # GR00T-aligned path: rebuild normalizer from meta/stats.json + modality.json.
+        processor.set_normalizer_from_modality_stats()
+        print(f"  Modality stats (GR00T-style) from: {processor.norm_stats_meta_dir}", flush=True)
+    else:
+        processor.set_normalizer_from_stats(load_dataset_stats_from_json(str(stats_path)))
+        print(f"  Dataset stats: {stats_path}", flush=True)
 
     if action_horizon is None:
         action_horizon = int(cfg.data.train.num_frames) - 1

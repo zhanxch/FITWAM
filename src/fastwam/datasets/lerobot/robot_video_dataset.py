@@ -89,10 +89,27 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         if processor is not None:
             if isinstance(processor, DictConfig):
                 processor = instantiate(processor)
-            if not pretrained_norm_stats:
+            if processor.wants_modality_stats:
+                # GR00T-alignment path: build normalizer from meta/stats.json +
+                # modality.json on every process. The meta files live on shared
+                # disk and reading them is cheap and deterministic, so there is
+                # no need for a main-process-only load + broadcast (unlike the
+                # compute-stats-from-episodes branch below). The previous
+                # broadcast round-trip also broke non-main ranks: they hit
+                # `processor.normalizer.get_stats()` before the normalizer was
+                # set, and the stats format returned by get_stats() (unprefixed
+                # min/max/...) did not match the global_*-prefixed format that
+                # set_normalizer_from_stats() expects.
+                if PartialState().is_main_process:
+                    logger.info(
+                        "Loading modality stats from %s (GR00T-style).",
+                        processor.norm_stats_meta_dir,
+                    )
+                processor.set_normalizer_from_modality_stats()
+            elif not pretrained_norm_stats:
                 if not is_training_set:
                     raise ValueError("pretrained_norm_stats must be provided for validation/test sets since we don't want to calculate stats on them.")
-                if PartialState().is_main_process:
+                if PartialState().is_main_process():
                     logger.info("Calculating dataset stats for normalization...")
                     dataset_stats = self.lerobot_dataset.get_dataset_stats(processor)
                     work_dir = misc.get_work_dir()
@@ -103,6 +120,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
                     obj_list = [dataset_stats]
                     torch.distributed.broadcast_object_list(obj_list, src=0)
                     dataset_stats = obj_list[0]
+                processor.set_normalizer_from_stats(dataset_stats)
             else:
                 dataset_stats = load_dataset_stats_from_json(pretrained_norm_stats)
                 logger.info(f"Using dataset stats: {pretrained_norm_stats}")
@@ -113,8 +131,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
                     and os.path.abspath(pretrained_norm_stats) != os.path.abspath(dest_path)
                 ):
                     save_dataset_stats_to_json(dataset_stats, dest_path)
+                processor.set_normalizer_from_stats(dataset_stats)
 
-            processor.set_normalizer_from_stats(dataset_stats)
             self.lerobot_dataset.set_processor(processor)
         
     def __len__(self):
@@ -208,8 +226,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         #   action: [num_frames-1, action_dim] # start from t0, except the last frame
         #   proprio: [num_frames, proprio_dim] # start from t0 to the last frame, aligned with video frames
         action = sample["action"] # [T-1, action_dim]
-        proprio = sample["proprio"] # [T, state_dim], first state is current-condition
-        proprio_is_pad = sample["proprio_is_pad"]
+        proprio = sample["proprio"][:-1, :] # [T-1, state_dim]， to align with action
         if video.shape[1] <= 1:
             raise ValueError(f"`video` must have at least 2 frames, got shape {tuple(video.shape)}")
         if action.shape[0] % (video.shape[1] - 1) != 0:
@@ -238,8 +255,10 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             "context_mask": context_mask,
             "image_is_pad": image_is_pad,
             "action_is_pad": sample["action_is_pad"],
-            "proprio_is_pad": proprio_is_pad,
+            "proprio_is_pad": sample["proprio_is_pad"],
         }
+        if "gt_action" in sample:
+            data["gt_action"] = sample["gt_action"]
         return data
 
     def _get_cached_text_context(self, prompt: str):

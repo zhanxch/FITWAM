@@ -1,0 +1,14 @@
+# @package _global_
+
+defaults:
+  - openloop
+  - _self_
+
+OPENLOOP:
+  # 0-indexed within the selected split after the train/val split is applied.
+  episode_index: 0
+  episode_indices: null
+  frame_stride: 50
+  max_samples: 8
+  save_episode_action_dim_plots: true
+  output_dir: ./evaluate_results/openloop_episode/${hydra:runtime.choices.task}/${now:%Y%m%d_%H%M%S}

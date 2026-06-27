@@ -1,70 +1,93 @@
 # Scripts
 
-## Sim inference (three processes)
+This repo is aligned with the official FastWAM pipeline
+(`third_party/FastWAM`). The active scripts cover the official training path
+plus the real-robot deploy stack for the spray_water experiment. Unrelated
+experiments (DexJoCo / EgoDex / EgoVLA / G1) and the custom open-loop eval flow
+have been archived under `archive/`.
 
-```
-fastwam_sim_agent  --TCP-->  sim_server.py (Isaac, :5570)
-                 --ZMQ-->  run_fastwam_server.py (GPU, :5560)
-```
-
-### Modules
+## Official-aligned training path
 
 | File | Role |
 |------|------|
-| `policy_io.py` | **Fixed** policy-server observation contract (training-aligned) |
-| `run_fastwam_server.py` | Load checkpoint; ZMQ server; only accepts `policy_io` format |
-| `fastwam_policy_server.py` | ZMQ transport |
-| `sim_adapter.py` | **Sim-only** obs/action conversion (Ego Humanoid 50-dim, text cache) |
-| `fastwam_sim_agent.py` | Closed-loop client; uses `sim_adapter` |
-| `sim_server.py` | Isaac env RPC; env ops on **main thread** via `MainThreadRpcBridge` |
-| `sim_protocol.py` | TCP JSON + main-thread bridge |
-| `launch_fastwam_sim_eval.sh` | Launcher |
+| `train.py` | Hydra training entrypoint |
+| `train_zero1.sh` / `train_zero2.sh` | ZeRO-1 / ZeRO-2 launchers via `accelerate` |
+| `precompute_text_embeds.py` | Precompute T5 text-embedding caches for a task |
+| `preprocess_action_dit_backbone.py` | Prepare ActionDiT backbone checkpoint |
 
-### Policy observation (do not change for sim)
-
-Sent to `get_action` after `EgoHumanoidSimAdapter.sim_obs_to_policy_obs`:
-
-- `input_image`: `[1, 3, H, W]` float in `[-1, 1]`
-- `proprio`: `[50]` float (raw qpos; server normalizes like training)
-- `prompt` **or** `context` + `context_mask`
-
-### Sim server (Isaac machine)
+Standard flow (mirrors the official README):
 
 ```bash
-${ISAACLAB_PATH}/isaaclab.sh -p scripts/sim_server.py \
-  --task Humanoid-Stack-Can-v0 --enable_cameras --camera-key rgb \
-  --host 0.0.0.0 --port 5570
+# 1. precompute text embeds for the task
+python scripts/precompute_text_embeds.py \
+  task=spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4
+
+# 2. train (baseline, no proprio)
+bash scripts/train_spray_water_rot6d.sh
 ```
+
+spray_water variants (diagnostics from `scripts/diagnose/`):
+
+| Script | Task config | Purpose |
+|--------|-------------|---------|
+| `train_spray_water_rot6d.sh` | `..._uncond_3cam_384_1e-4` | Baseline (proprio_dim=null) |
+| `train_spray_water_rot6d_proprio58.sh` | `..._uncond_3cam_384_1e-4_proprio58` | B3: proprio_dim=58 (H1 fix) |
+| `train_spray_water_rot6d_skip_rot6d.sh` | `..._uncond_3cam_384_1e-4_skip_rot6d` | C3: skip rot6d normalization (H2 fix, forked normalizer patch) |
+
+## Real-robot deploy (Wuji/Astribot) — `scripts/1/`
+
+Official FastWAM deploys in-process via `experiments/robotwin/fastwam_policy/deploy_policy.py`
+(for RoboTwin sim). The real Wuji robot uses a ZMQ server/client split instead:
+
+```
+run_fastwam_client.py (robot)  --ZMQ-->  run_fastwam_server.py (GPU, :5560)
+```
+
+| File | Role |
+|------|------|
+| `1/run_fastwam_server.py` | Load checkpoint; ZMQ server; GR00T obs via `wuji_fastwam_adapter` |
+| `1/run_fastwam_client.py` | Real Wuji robot client loop |
+| `1/run_gr00t_client.py` | GR00T-server baseline client (for A/B comparison in B1) |
+| `1/*_with_env.sh` | Launchers that source the ROS/Astribot environment first |
+| `1/run_fastwam_client_diagnostic.sh` | B2: deploy with post-processing disabled (execute-horizon=1, no clip/filter) |
+| `wuji_fastwam_adapter.py` | GR00T obs <-> FastWAM policy obs; 58-dim action split |
+| `robotwin_camera_utils.py` | Shared 3-cam mosaic + image helpers (robotwin concat layout) |
+| `fastwam_policy_server.py` | ZMQ transport (server) |
+| `policy_io.py` | Training-aligned policy-server observation contract |
+| `fastwam_server_io.json` | Machine-readable API spec for the server |
 
 ### Policy server (GPU machine)
 
 ```bash
-python scripts/run_fastwam_server.py \
-  --run-dir runs/ego_vla_short_uncond_1cam_384_1e-4/2026-05-21_19-59-24 \
-  --checkpoint runs/.../step_006445.pt \
+bash scripts/1/run_fastwam_server_with_env.sh \
+  --run-dir runs/spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4/<run_id> \
+  --checkpoint runs/.../step_XXXX.pt \
   --device cuda:0 --host 0.0.0.0 --port 5560
 ```
 
-### Agent
+### Client (robot)
 
 ```bash
-python scripts/fastwam_sim_agent.py \
-  --policy-host 127.0.0.1 --policy-port 5560 \
-  --sim-host <sim-ip> --sim-port 5570 \
-  --save-video
+bash scripts/1/run_fastwam_client_with_env.sh \
+  --policy-host <gpu-ip> --policy-port 5560
 ```
 
-With `--save-video`, ego RGB is written to `logs/fastwam_sim_eval/<timestamp>/episode_001_success0.mp4`.
+The server prints `Use proprio: True` when the task config sets `proprio_dim: 58`,
+and feeds the 58-dim robot state as a proprio context token to the action expert.
 
-Agent exits **without** stopping the policy server (no re-load). Use `--kill-policy-on-exit` only if you want to shut the server down.
+## Diagnostics — `scripts/diagnose/`
 
-Policy server returns `{"error": ...}` on failed requests and **keeps listening** for the next call.
+See `scripts/diagnose/README.md` for the full sim-vs-real gap diagnosis
+(A1-A3, B1-B3, C1-C3) and the spray_water data-pipeline documentation.
 
-Copy `sim_server.py`, `sim_protocol.py` to the Benchmark repo on the sim machine when deploying there.
+## Archived experiments — `archive/`
 
-If you see `'StackCanEnv' object has no attribute 'scene'`, the sim machine is on an old
-`sim_server.py` or the Kit app is not ticking (`simulation_app.update()` in the main loop).
+| Path | Contents |
+|------|----------|
+| `archive/dexjoco/` | DexJoCo sim data prep, eval, async server, annotation tools, manual (`手册.md`) |
+| `archive/egodex/` | EgoDex video-pretrain data prep + fps/resize utilities |
+| `archive/egovla/` | EgoVLA sim HDF5->LeRobot converter (`src/fastwam/datasets/egovla_sim/`) + configs |
+| `archive/g1/` | G1 Unihand data prep + configs |
+| `archive/openloop/` | Custom open-loop eval (`run_robotwin_openloop*.py`) — not in official FastWAM |
 
-## Training & data
-
-`train.py`, `prepare_*.py`, `precompute_text_embeds.py`, `train_zero*.sh`, etc.
+These are kept for reference but are not part of the active spray_water pipeline.

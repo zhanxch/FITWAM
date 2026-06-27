@@ -1,0 +1,57 @@
+# @package _global_
+#
+# C3 diagnostic: spray_water with rot6d dims UN-normalized (H2 fix validation).
+#
+# Baseline: configs/task/spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4.yaml
+#   (data: spray_water_rot6d_rosbag_ts_filter, all 58 dims min/max normalized)
+#
+# This config swaps in the data variant
+#   data: spray_water_rot6d_rosbag_ts_filter_skip_rot6d
+# which sets `norm_skip_dims` to leave the rot6d dimensions (left 3:9, right
+# 12:18) IDENTITY while keeping min/max for xyz and hand joints. This preserves
+# the SO(3) orthonormality of rot6d in the space the model learns on, fixing
+# the H2 root cause identified in A2.
+#
+# Everything else (model, LR, schedule) is identical to the baseline so the
+# comparison is controlled. proprio_dim auto-inherits 58 from the data config
+# (official default), so both baseline and C3 train WITH proprio — C3 isolates
+# the H2 (rot6d normalization) fix.
+#
+# Usage:
+#   bash scripts/train_spray_water_rot6d_skip_rot6d.sh
+#   # or directly:
+#   bash scripts/train_zero1.sh <ngpus> \
+#     task=spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4_skip_rot6d
+
+defaults:
+  - override /data: spray_water_rot6d_rosbag_ts_filter_skip_rot6d
+  - override /model: fastwam
+  - _self_
+
+batch_size: 8
+num_workers: 4
+
+model:
+  mot_checkpoint_mixed_attn: false
+  # proprio_dim 自动从数据 config 继承（=58），与官方默认一致。
+  # C3 只改归一化（norm_skip_dims），与基线对照只测 H2 修复。
+
+lr_scheduler_type: "cosine"
+learning_rate: 1e-4
+num_epochs: 5
+max_steps: null
+log_every: 10
+save_every: 500
+eval_every: 500
+
+gradient_accumulation_steps: 1
+weight_decay: 1e-2
+resume: null
+
+wandb:
+  enabled: true
+  workspace: null
+  project: fast-wam
+  name: spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4_skip_rot6d
+  group: spray_water_rot6d_rosbag_ts_filter
+  mode: online

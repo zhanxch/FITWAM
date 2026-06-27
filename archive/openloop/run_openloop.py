@@ -14,16 +14,13 @@ if str(SRC_ROOT) not in sys.path:
 
 from fastwam.utils.config_resolvers import register_default_resolvers
 
-from experiments.robotwin.run_robotwin_openloop import run_openloop
+from archive.openloop.openloop_eval import run_openloop
 
 register_default_resolvers()
 
 
-@hydra.main(version_base="1.3", config_path="../../configs", config_name="openloop_robotwin_episode.yaml")
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="openloop.yaml")
 def main(cfg: DictConfig) -> None:
-    episode_indices = cfg.OPENLOOP.get("episode_indices")
-    if episode_indices is None:
-        cfg.OPENLOOP.episode_indices = [int(cfg.OPENLOOP.episode_index)]
     run_openloop(cfg)
 
 

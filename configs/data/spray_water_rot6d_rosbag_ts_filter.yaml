@@ -43,7 +43,7 @@ train:
 
     action_state_transforms: null
     use_stepwise_action_norm: false
-    norm_default_mode: "min/max"
+    norm_default_mode: "z-score"
     norm_exception_mode: null
 
     action_state_merger:
@@ -105,7 +105,7 @@ val:
 
     action_state_transforms: null
     use_stepwise_action_norm: false
-    norm_default_mode: "min/max"
+    norm_default_mode: "z-score"
     norm_exception_mode: null
 
     action_state_merger:

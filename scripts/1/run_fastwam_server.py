@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,7 @@ for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT, SCRIPT_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from dexjoco_fastwam_adapter import DEFAULT_PROMPT
+from robotwin_camera_utils import DEFAULT_PROMPT
 from fastwam_policy_server import DEFAULT_SERVER_PORT, PolicyServer
 from policy_io import KEY_ACTION, KEY_CONTEXT, KEY_CONTEXT_MASK, KEY_INPUT_IMAGE, KEY_PROMPT, KEY_PROPRIO
 from policy_io import to_inference_tensors, validate_policy_observation
@@ -81,6 +83,12 @@ class FastWAMPolicy:
         self.rand_device = str(rand_device)
         self.tiled = bool(tiled)
         self._episode = 0
+        # B1 diagnostic dump: when dump_dir is set, every get_action call writes
+        # the input image, proprio (to confirm H1), and predicted action (both
+        # raw normalized and denormalized) to an .npz file for offline comparison
+        # against GR00T on the same observation.
+        self.dump_dir: Path | None = None
+        self._dump_step = 0
 
     def get_modality_config(self) -> dict:
         return {
@@ -143,7 +151,8 @@ class FastWAMPolicy:
             dtype=self.model.torch_dtype,
         )
 
-        proprio = self._normalized_proprio(tensors.get(KEY_PROPRIO))
+        raw_proprio = tensors.get(KEY_PROPRIO)
+        proprio = self._normalized_proprio(raw_proprio)
         infer_kwargs: dict[str, Any] = {
             KEY_INPUT_IMAGE: tensors[KEY_INPUT_IMAGE],
             "action_horizon": self.action_horizon,
@@ -173,8 +182,95 @@ class FastWAMPolicy:
                 torch.cuda.empty_cache()
             raise
 
+        raw_action_tensor = pred[KEY_ACTION].detach().to(device="cpu", dtype=torch.float32)
         action_np = self._denormalize_action(pred[KEY_ACTION])
+
+        # B1 diagnostic dump
+        self._dump_get_action(
+            input_image=tensors[KEY_INPUT_IMAGE],
+            raw_proprio=raw_proprio,
+            normalized_proprio=proprio,
+            raw_action_normalized=raw_action_tensor,
+            action_denorm=action_np,
+            prompt=infer_kwargs.get(KEY_PROMPT),
+        )
+
         return split_wuji_action(action_np), {"action_horizon": self.action_horizon}
+
+    def set_dump_dir(self, dump_dir: Path | str | None) -> None:
+        if dump_dir is None or str(dump_dir) == "":
+            self.dump_dir = None
+            return
+        self.dump_dir = Path(dump_dir).expanduser().resolve()
+        self.dump_dir.mkdir(parents=True, exist_ok=True)
+        self._dump_step = 0
+        print(f"[dump] writing per-step diagnostics to {self.dump_dir}", flush=True)
+
+    def _dump_get_action(
+        self,
+        input_image: Any,
+        raw_proprio: Any,
+        normalized_proprio: Any,
+        raw_action_normalized: torch.Tensor,
+        action_denorm: np.ndarray,
+        prompt: str | None,
+    ) -> None:
+        if self.dump_dir is None:
+            return
+        step = self._dump_step
+        self._dump_step += 1
+        path = self.dump_dir / f"step_{step:05d}.npz"
+        payload: dict[str, Any] = {
+            "step": step,
+            "wall_time": time.time(),
+            "use_proprio": bool(self.use_proprio),
+            "action_horizon": int(self.action_horizon),
+            "num_inference_steps": int(self.num_inference_steps),
+        }
+        # input_image: [1,3,H,W] in [-1,1] -> save as uint8 [H,W,3] for inspection
+        try:
+            img = input_image
+            if hasattr(img, "detach"):
+                img = img.detach().to(device="cpu", dtype=torch.float32)
+            img_np = img.numpy() if isinstance(img, torch.Tensor) else np.asarray(img)
+            if img_np.ndim == 4 and img_np.shape[0] == 1:
+                img_np = img_np[0]
+            payload["input_image_chw"] = img_np
+            payload["input_image_hwc_uint8"] = (
+                ((img_np.transpose(1, 2, 0) * 0.5 + 0.5) * 255.0).clip(0, 255).astype(np.uint8)
+            )
+        except Exception as exc:
+            payload["input_image_error"] = str(exc)
+        # proprio: confirm whether proprio is actually fed (H1 check)
+        for name, val in (("raw_proprio", raw_proprio), ("normalized_proprio", normalized_proprio)):
+            if val is None:
+                payload[name] = None
+                payload[f"{name}_is_none"] = True
+            else:
+                payload[f"{name}_is_none"] = False
+                try:
+                    arr = val.detach().to(device="cpu", dtype=torch.float32) if hasattr(val, "detach") else np.asarray(val, dtype=np.float32)
+                    payload[name] = arr.numpy() if isinstance(arr, torch.Tensor) else arr
+                except Exception as exc:
+                    payload[f"{name}_error"] = str(exc)
+        # raw model output (normalized space, before denorm) -- reveals H2 warp
+        try:
+            payload["raw_action_normalized"] = raw_action_normalized.numpy() if isinstance(raw_action_tensor, torch.Tensor) else np.asarray(raw_action_normalized, dtype=np.float32)
+        except Exception as exc:
+            payload["raw_action_normalized_error"] = str(exc)
+        # denormalized action (what the robot receives before split/rot6d->quat)
+        payload["action_denorm"] = np.asarray(action_denorm, dtype=np.float32)
+        # split per-arm for quick inspection
+        payload["left_eef_denorm"] = action_denorm[:, 0:9] if action_denorm.ndim == 2 else action_denorm[0:9]
+        payload["right_eef_denorm"] = action_denorm[:, 9:18] if action_denorm.ndim == 2 else action_denorm[9:18]
+        payload["left_hand_denorm"] = action_denorm[:, 18:38] if action_denorm.ndim == 2 else action_denorm[18:38]
+        payload["right_hand_denorm"] = action_denorm[:, 38:58] if action_denorm.ndim == 2 else action_denorm[38:58]
+        if prompt is not None:
+            payload["prompt"] = str(prompt)
+        try:
+            np.savez(path, **payload)
+        except Exception as exc:
+            print(f"[dump] failed to write {path}: {exc}", flush=True)
 
 
 def _resolve_stats_path(run_dir: Path, dataset_stats_path: str | None) -> Path:
@@ -317,6 +413,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT)
     parser.add_argument("--api-token", type=str, default=None)
+    parser.add_argument(
+        "--dump-dir",
+        type=str,
+        default=None,
+        help="B1 diagnostic: directory to save per-step input image / proprio / raw+denorm action .npz. "
+        "Disabled by default. Use to compare FastWAM raw action output against GR00T on the same obs.",
+    )
     return parser.parse_args()
 
 
@@ -338,6 +441,9 @@ def main() -> None:
             num_inference_steps=args.num_inference_steps,
             load_text_encoder=args.load_text_encoder,
         )
+
+    if hasattr(policy, "set_dump_dir"):
+        policy.set_dump_dir(args.dump_dir)
 
     server = PolicyServer(policy=policy, host=args.host, port=args.port, api_token=args.api_token)
     print(f"\nServer ready: tcp://{args.host}:{args.port}\n", flush=True)

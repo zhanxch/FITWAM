@@ -1,13 +1,9 @@
 # @package _global_
+# Deprecated historical name. Use `openloop_episode.yaml` for new runs.
 
 defaults:
-  - openloop_robotwin
+  - openloop_episode
   - _self_
 
 OPENLOOP:
-  # 0-indexed within the selected split after the train/val split is applied.
-  episode_index: 0
-  episode_indices: null
-  frame_stride: 50
-  max_samples: 8
   output_dir: ./evaluate_results/robotwin_openloop_episode/${hydra:runtime.choices.task}/${now:%Y%m%d_%H%M%S}
