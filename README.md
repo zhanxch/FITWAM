@@ -29,7 +29,17 @@ Success → Deploy → Failure → Retrain
 
 ## 实验设计
 
-（待补充）
+**推进顺序**（与上文贡献编号无关）：**Failure 数据 → 触觉 → Event 数据构造**。
+
+当前先围绕 Failure 开展设计，首要验证：**在 Success demo 基线上加入 failure 轨迹训练，是否带来可测提升**（如子任务成功率、同类失败复现率；真机与仿真分别做）。
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| 1 | Failure 数据：采集、入库、Success+Failure 训练对比 | 设计中 |
+| 2 | 触觉：接触期模态与预测链路 | 未开始 |
+| 3 | Event 数据构造：交互边界切分与评估 | 未开始 |
+
+触觉与 Event 改动建立在 Failure 管线跑通之后；Event 切分与 metadata 主要服务更细粒度的 failure 分析与采样，后置实现。
 
 ---
 
@@ -42,18 +52,18 @@ Success → Deploy → Failure → Retrain
 | 方向 | 状态 |
 |------|------|
 | FastWAM 基线（训练、deploy、开环） | 进行中 |
-| Event 数据构造 | 未开始 |
+| Failure 闭环 | 设计中 |
 | 触觉 | 未开始 |
-| Failure 闭环 | 未开始 |
+| Event 数据构造 | 未开始 |
 
 ### 仿真（DexJoCo）
 
 | 方向 | 状态 |
 |------|------|
 | FastWAM 基线 | - |
-| Event 数据构造 | 未开始 |
-| 触觉 | 未开始 |
 | Failure 闭环 | 未开始 |
+| 触觉 | 未开始 |
+| Event 数据构造 | 未开始 |
 
 ---
 
