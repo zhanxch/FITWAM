@@ -2,184 +2,223 @@
 
 基于 [FastWAM](https://arxiv.org/abs/2603.16666) 的 fork：**从 clip 级世界想象，走向以交互事件为中心的世界行动模型**。
 
-[![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./README.md)
-[![上游 FastWAM](https://img.shields.io/badge/Upstream-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
+[![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
 > **当前基线：** `spray_water` 真机（156 demos + `filtered_out` holdout）、MoT 架构、ZMQ 部署（`scripts/1/`）。  
-> **上游安装 / LIBERO / RoboTwin 训练：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · **本仓库脚本：** [`scripts/README.md`](./scripts/README.md) · **诊断：** [`scripts/diagnose/README.md`](./scripts/diagnose/README.md)
+> **上游安装 / LIBERO / RoboTwin：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · **脚本：** [`scripts/README.md`](./scripts/README.md) · **诊断：** [`scripts/diagnose/README.md`](./scripts/diagnose/README.md)
 
 ## 目录
 
-- [1. 核心思路](#1-核心思路一句话)
-- [2. 问题：FastWAM 哪里不够用？](#2-问题fastwam-哪里不够用)
-- [3. 三层设计](#3-三层设计)
-- [4. 研究阶段](#4-研究阶段phases)
-- [5. 实验设计](#5-实验设计experiment-matrix)
-- [6. Schedule](#6-schedule2026-q3-草案)
-- [7. 代码地图](#7-仓库内代码地图)
-- [8. 致谢与引用](#8-致谢与引用)
+- [我们在验证什么](#我们在验证什么)
+- [当前进展](#当前进展)
+- [出发点：FastWAM 哪里不够用](#出发点fastwam-哪里不够用)
+- [研究路线图](#研究路线图)
+- [代码地图](#代码地图)
+- [致谢与引用](#致谢与引用)
 
 ---
 
-## 1. 核心思路（一句话）
+## 我们在验证什么
 
-WAM learns from state transitions, while physical understanding emerges from interaction transitions.
+本项目不是按周交付的工程排期，而是在真机任务上逐条检验科学假设。合作时优先对齐四件事：
+
+1. **核心假设是什么？**
+2. **为验证它要做哪些实验？**
+3. **每个实验能推翻或支持什么结论？**
+4. **当前做到哪一步？**
+
+| 假设 | 一句话 | 关键对比 | 主指标 |
+|------|--------|----------|--------|
+| **H1** 交互中心表征 | 交互事件是比固定 clip 更好的建模单元 | 均匀 `frame_stride` vs 事件切分 | per-event / contact-phase L1 |
+| **H2** 触觉中心预测 | 触觉让模型在接触期「看得更准」 | 仅 RGB+proprio vs +tactile | 接触段 L1、滑移/力峰值误差 |
+| **H3** 失败即监督 | 失败轨迹能提升世界模型，而非应丢弃 | 仅成功 demo vs +failure 微调 | 子任务成功率、失败复现率 |
+| **H4** 闭环持续学习 | 部署—采集—再训练能形成稳定改进环 | 单次训练 vs 多轮闭环 | 成功率曲线、failure 占比趋势 |
+
+**核心命题（一句话）：** 世界行动模型应从状态转移中学习，而物理理解来自**交互转移**——接触、施力、失败与恢复，而不是均匀时间窗内的像素平均。
 
 ---
 
-## 2. 问题：FastWAM 哪里不够用？
+## 当前进展
 
-| 维度 | FastWAM 默认设定 | spray_water 真机暴露的问题 |
-|------|------------------|---------------------------|
-| **时间切分** | 统一 `num_frames=33`、`frame_stride` 滑窗 | 按压、喷水等接触阶段短且关键，均匀 clip 边界与物理事件不对齐 |
-| **模态** | RGB + proprio；视频想象是核心 | 接触瞬间力/触觉变化快，RGB 滞后；开环各 ckpt pred 高度相关（~0.97），对 GT 仍偏差大 |
-| **数据闭环** | 成功 demo 训练为主 | `filtered_out` 已有 5 条 holdout，但缺少结构化 failure 标签与再训练流程 |
-| **推理** | 固定 replan 间隔 | 空闲段可稀疏 replan，接触段需加密；deploy 不跑 video diffusion（C1 已确认） |
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| FastWAM + `spray_water` 基线 | ✅ 进行中 | 数据管线 A/B、训练、ZMQ 真机部署 |
+| 开环评估协议 | ✅ 可用 | `scripts/openloop/`，结果见 `evaluate_results/openloop_episode_gr00tstyle/` |
+| 事件 metadata & 切分 | 🔲 未开始 | `events.jsonl`、标注工具、event dataloader |
+| 触觉模态 | 🔲 未开始 | 对齐、encoder、进 LeRobot |
+| Failure 闭环 | 🔲 未开始 | `failure/` 目录、`outcomes.jsonl`、再训练流程 |
+| 自适应推理 | 🔲 未开始 | 空闲稀疏 / 接触密集 replan |
 
-**Interaction-centric WAM 不是否定 FastWAM**，而是在其 MoT（video + action expert）之上，改数据原子、加触觉、解耦时间窗、闭环吃失败。
+### 已完成基线实验（E0）
+
+| ID | 实验 | 对比 | 结论摘要 |
+|----|------|------|----------|
+| **E0a** | 数据处理 A | 绝对 action + z-score | 基线对照 |
+| **E0b** | 数据处理 B | GR00T 相对 + min/max + clip | 当前主基线 |
+| **E0c** | ckpt 5k–30k | 同 episode 开环 | pred 互相关 ~0.97；5k→30k episode L1 ↓约 26%，但曲线形态仍相似 |
+
+**E0c 启示：** 仅靠 episode 级 L1 不足以判断接触段是否变好；**H1 的事件级指标**是下一步必做项。
 
 ---
 
-## 3. 三层设计
+## 出发点：FastWAM 哪里不够用
 
-### 3.1 数据层
+| 维度 | FastWAM 默认 | `spray_water` 真机暴露的问题 |
+|------|--------------|------------------------------|
+| **时间切分** | `num_frames=33`、均匀滑窗 | 按压、喷水等阶段短且关键，clip 边界与物理事件不对齐 |
+| **模态** | RGB + proprio，视频想象为核心 | 接触力变化快于 RGB；开环各 ckpt 预测高度相关，对 GT 仍有明显偏差 |
+| **数据闭环** | 以成功 demo 为主 | 有 `filtered_out` holdout，但缺结构化 failure 与再训练流程 |
+| **推理** | 固定 replan 间隔 | 空闲可稀疏、接触需加密；deploy 侧不跑 video diffusion（已确认） |
+
+Interaction-centric WAM **不是否定 FastWAM**，而是在其 MoT（video + action expert）之上：改数据原子、加触觉、解耦时间窗、把失败纳入训练闭环。
 
 ```text
          ┌─────────────────────────────────────────┐
-         │              metadata 层                 │
-         │  events.jsonl / outcomes.jsonl / modality │
+         │  metadata：events / outcomes / modality │
          └─────────────────┬───────────────────────┘
-                           │ 索引 & 切分
-     ┌─────────────────────┼─────────────────────┐
-     ▼                     ▼                     ▼
-  RGB (慢/长上下文)    tactile (快/接触真值)    proprio + action
-     │                     │                     │
-     └──────────► interaction event 片段 ◄────────┘
-                  （替代均匀 clip）
+                           │
+     RGB (慢·长上下文)   tactile (快·接触)   proprio + action
+                           │
+              interaction event 片段（替代均匀 clip）
 ```
 
-| 组件 | 作用 | 与 clip 方案的区别 |
-|------|------|-------------------|
-| **触觉** | 腕部/指尖力、接触布尔、滑移特征 | 接触期主信号；与 RGB 不同采样率 |
-| **Interaction event** | 子任务边界：approach → grasp → pump → spray → release | 训练样本按事件切，而非 `global_sample_stride` 均匀扫 |
-| **Failure data** | 真机失败 rollout、超时、子任务未完成 | 单独目录 + `outcomes.jsonl`；再训练时过采样 |
-| **Metadata** | 阶段标签、事件类型、成败、对齐质量、机器人版本 | 驱动 event dataloader、分阶段 eval、failure-aware 采样 |
+`spray_water` 初版事件类型：`approach_bottle` · `grasp` · `pump` · `aim_spray` · `spray` · `release`
 
-**目标目录布局：**
+---
+
+## 研究路线图
+
+以下每条假设对应**可独立认领**的实验模块。认领时请标明：假设编号、实验 ID、预期交付物、成功/失败判据。
+
+---
+
+### 假设 H1 — 交互中心表征
+
+**要回答的问题：** 交互事件是否比固定长度 clip 更适合作为训练与评估的基本单元？
+
+| 实验 | 验证什么 | 变量 | 成功判据 |
+|------|----------|------|----------|
+| **E1** 事件切分 | clip vs event | `frame_stride=32` vs `events.jsonl` 切分 | contact-phase L1 显著优于 clip 基线 |
+| **E6** 事件条件 | phase 是否提供有效归纳偏置 | 无 phase token vs +phase embedding | per-event L1 分层下降 |
+
+**任务清单**
+
+- [ ] 定义交互事件边界与标注规范
+- [ ] 事件切分与 `events.jsonl` 生成
+- [ ] Event dataloader（替代均匀滑窗采样）
+- [ ] 事件级开环评估（扩展 `scripts/openloop/`）
+- [ ] Clip 预测 vs 事件预测对比实验
+
+**依赖：** E0 基线完成 ✅ · 需 P1 metadata 工具
+
+---
+
+### 假设 H2 — 触觉中心预测
+
+**要回答的问题：** 在接触密集阶段，触觉能否补足 RGB 的时滞，并改善 action / 未来交互预测？
+
+| 实验 | 验证什么 | 变量 | 成功判据 |
+|------|----------|------|----------|
+| **E2** 触觉消融 | 接触期是否需要触觉 | 无 tactile vs +tactile encoder | 接触段 L1 ↓；力峰值/滑移对齐改善 |
+| **E3** 时间窗解耦 | 长视觉 + 短 action 是否更合理 | 统一 horizon vs `T_v > H_a` | contact L1 不降或下降，且推理延迟可控 |
+
+**任务清单**
+
+- [ ] 触觉数据对齐与 LeRobot 字段扩展
+- [ ] Tactile encoder v0（1D conv / MLP → token）
+- [ ] 未来 RGB / 触觉 / 交互状态预测（训练侧）
+- [ ] 仅视觉 vs 视觉+触觉开环与闭环比对
+- [ ] Video–Action horizon 解耦 config
+
+**架构草图**
 
 ```text
-data/<task>/
-├── meta/
-│   ├── modality.json
-│   ├── events.jsonl
-│   ├── outcomes.jsonl
-│   ├── stats.json
-│   └── relative_stats.json
-├── videos/
-├── tactile/
-├── data/
-├── filtered_out/
-└── failure/
+  RGB [T_v] ──────► Video DiT ──► 短时未来（deploy 可关）
+  tactile [T_t] ──► Tactile enc ─┐
+  proprio [T_s] ──► proprio tok ─┼──► Action DiT ──► action [H_a]
+  phase / event ──► context tok ─┘
 ```
 
-**spray_water 事件类型（初版）：** `approach_bottle` · `grasp` · `pump` · `aim_spray` · `spray` · `release`
+**远期（与 H2 衔接，非当前阻塞项）**
 
-### 3.2 架构层
+- [ ] 场景理解 + CoT 规划：何时需要未来预测？
+- [ ] 触觉参与规划 vs 仅参与 action 生成
+
+---
+
+### 假设 H3 — 失败改善世界模型
+
+**要回答的问题：** 失败轨迹能否作为有效监督，降低真机重复失败率？
+
+| 实验 | 验证什么 | 变量 | 成功判据 |
+|------|----------|------|----------|
+| **E4** 失败再训练 | failure 是否有边际收益 | base vs +failure FT | 子任务成功率 ↑；同类失败复现 ↓ |
+
+**任务清单**
+
+- [ ] 真机 failure 采集协议与 `failure/` 目录结构
+- [ ] 自动 / 半自动 failure 标注 → `outcomes.jsonl`
+- [ ] Failure replay 数据集与过采样策略
+- [ ] Failure-aware 微调流程
+- [ ] 消融：仅成功 / 成功+失败 / 不同 failure 比例
+
+---
+
+### 假设 H4 — 闭环持续学习
+
+**要回答的问题：** 训练 → 部署 → 采集 → 再训练能否形成可重复的改进闭环，而非一次性离线模型？
+
+| 实验 | 验证什么 | 变量 | 成功判据 |
+|------|----------|------|----------|
+| **E5** 自适应推理 | 接触期加密 replan 是否更优 | 固定 stride vs adaptive | 成功率 ↑ 或 replan 次数 ↓ |
+| **E4′** 多轮闭环 | 迭代再训练是否累积收益 | 单轮 vs k 轮闭环 | 跨轮次成功率单调或阶梯上升 |
+
+**任务清单**
+
+- [ ] Deploy 状态机：`IDLE` 稀疏 replan → `CONTACT` 密集 replan
+- [ ] 触觉阈值 / event detector 触发 replan
+- [ ] Failure memory 与增量再训练脚本
+- [ ] 长程评估协议（跨版本、跨采集批次）
+- [ ] 开环 vs 闭环比对；在线 action 修正消融
 
 ```text
-  obs: RGB [T_v long] ──────────────► Video DiT ──► 事件尺度短时未来（deploy 可关）
-  obs: tactile [T_t short] ──► Tactile encoder ──┐
-  obs: proprio [T_s]       ──► proprio token  ──┼──► Action DiT ──► action [H_a short]
-  meta: phase / event id   ──► context token  ──┘
-        ▲
-        └── T_v > T_t ≈ H_a  （解耦时间窗）
+  训练 v_k → 真机部署 → 日志 + failure → 整理入库 → 微调 v_{k+1}
 ```
 
-| 模块 | 设计要点 | 里程碑 |
-|------|----------|--------|
-| **触觉模块** | 1D conv / MLP → token，拼入 context 或 action cross-attn | M1: 触觉+proprio 预测接触期 action |
-| **Video–Action 解耦** | `num_obs_steps_video` ≠ `action_horizon` | M2: 长 RGB + 短 action chunk |
-| **事件条件** | phase embedding 注入 context | M3: 分 phase 开环 L1 下降 |
+---
 
-### 3.3 推理与训练闭环
+### 实验认领速查
 
-```text
-  训练 v_k → 真机测试 → 日志+failure → 数据整理 → 微调/重训 v_{k+1}
-```
+| 实验 | 假设 | 难度 | 前置 | 可交付 |
+|------|------|------|------|--------|
+| E1 | H1 | 中 | E0、事件标注 | event dataloader + 对比报告 |
+| E2 | H2 | 中高 | 触觉硬件对齐 | tactile encoder + 接触段指标 |
+| E3 | H2 | 中 | E0 | 解耦 config + 延迟 profile |
+| E4 | H3 | 中 | failure 采集 | FT 脚本 + 成功率对比 |
+| E5 | H4 | 中 | deploy 稳定 | adaptive replan + A/B |
+| E6 | H1 | 低中 | E1 部分 | phase token 消融 |
 
-| 机制 | 说明 |
-|------|------|
-| **Adaptive inference** | `IDLE` 稀疏 replan → `CONTACT` 密集 replan；触觉阈值或 event detector 触发 |
-| **Train–test–failure retrain** | 真机 batch → `failure/` + `outcomes.jsonl` → failure 过采样微调 |
-| **评估** | episode L1 + **per-event** / **per-phase** / **failure 子集**（`scripts/openloop/`） |
+**建议顺序：** E0（已完成）→ **E1** → E2 / E3 → E4 与 E5 并行 → 多轮 H4 验收。
 
 ---
 
-## 4. 研究阶段（Phases）
+### 更远方向（暂无排期）
 
-| Phase | 名称 | 状态 | 交付物 |
-|-------|------|------|--------|
-| **P0** | FastWAM + spray_water 基线 | ✅ 进行中 | 数据 A/B、open-loop（`evaluate_results/openloop_episode_gr00tstyle/`）、ZMQ deploy |
-| **P1** | Event metadata & 切分 | 🔲 计划 | `events.jsonl`、标注工具、event dataloader POC |
-| **P2** | Failure 数据闭环 | 🔲 计划 | failure 日志、`failure/`、outcome 标注 |
-| **P3** | 触觉模态 | 🔲 计划 | 触觉对齐、Tactile encoder v0 |
-| **P4** | Video–Action 解耦 | 🔲 计划 | 独立 horizon config |
-| **P5** | Adaptive inference + 再训练 | 🔲 计划 | deploy 状态机、failure-aware FT |
+- 触觉基础模型与跨物体迁移
+- VLM 失败推理与交互感知规划
+- 视觉–触觉统一世界模型
+- 人机协同纠错与交互感知 benchmark
 
 ---
 
-## 5. 实验设计（Experiment Matrix）
-
-### 5.1 已完成 / 进行中
-
-| ID | 实验 | 对比 | 指标 | 结果位置 |
-|----|------|------|------|----------|
-| **E0a** | 数据处理基线 A | 绝对 action + z-score | open-loop L1 | `spray_water_rot6d_rosbag_ts_filter_*` |
-| **E0b** | 数据处理基线 B | GR00T 相对 + min/max + clip | open-loop L1 | `evaluate_results/openloop_episode_gr00tstyle/` |
-| **E0c** | ckpt 缩放律 | step 5k–30k | pred 互相关 ~0.97；5k→30k L1 ↓26% | `step_*/gt_window/.../episode_000000_raw_action_series.npz` |
-
-**E0c 结论：** 训练有改善，但各 ckpt 预测曲线视觉相似——需 **事件级指标**（E1）才能看出接触段是否真在变好。
-
-### 5.2 计划实验
-
-| ID | 假设 | 变量 | 主指标 | Phase |
-|----|------|------|--------|-------|
-| **E1** | 事件切分优于均匀 clip | `event` vs `frame_stride=32` | contact-phase L1 | P1 |
-| **E2** | 触觉降低接触期误差 | +tactile vs 无 | contact 内 L1 | P3 |
-| **E3** | 解耦时间窗更准更省 | `T_v=65, H_a=8` vs 33 | contact L1 + 延迟 | P4 |
-| **E4** | 失败再训练降失败率 | base vs +failure FT | 子任务成功率 | P2+P5 |
-| **E5** | 自适应 replan 更优 | adaptive vs stride=32 | 成功率 vs replan 次数 | P5 |
-| **E6** | 事件条件 context | +phase token vs 无 | per-event L1 | P1+P4 |
-
-**消融顺序：** E0 → **E1** → E2 → E3；E4/E5 与 P2/P5 并行。
-
----
-
-## 6. Schedule（2026 Q3 草案）
-
-| 周次 | 日期（约） | 里程碑 | 实验 |
-|------|------------|--------|------|
-| W1 | 06/30 – 07/06 | P0 收尾：B 基线 ckpt 30k、open-loop 协议 | E0 结题 |
-| W2 | 07/07 – 07/13 | P1：`events.jsonl` + 标注工具 | — |
-| W3 | 07/14 – 07/20 | P1：event dataloader + **E1** | E1 |
-| W4 | 07/21 – 07/27 | P2：真机 failure 日志首批 | — |
-| W5 | 07/28 – 08/03 | P2 outcomes；P3 触觉对齐脚本 | — |
-| W6 | 08/04 – 08/10 | P3：触觉进 LeRobot + encoder v0 | **E2** |
-| W7 | 08/11 – 08/17 | P4：解耦 config | **E3** |
-| W8 | 08/18 – 08/24 | P5：adaptive replan 原型 | **E5** |
-| W9 | 08/25 – 08/31 | P5：failure-aware FT | **E4** |
-| W10 | 09/01 – 09/07 | 组合验收 + 阶段报告 | E1–E6 |
-
----
-
-## 7. 仓库内代码地图
+## 代码地图
 
 ```text
 FastWAM/
-├── README.md                 # 本文件（研究规划）
-├── docs/FASTWAM_UPSTREAM.md  # 上游官方安装 / LIBERO / RoboTwin
+├── README.md                 # 本文件
+├── docs/FASTWAM_UPSTREAM.md  # 上游安装 / LIBERO / RoboTwin
 ├── configs/                  # Hydra 配置
-├── src/fastwam/              # 核心模型（将扩展触觉、解耦 horizon）
+├── src/fastwam/              # 核心模型
 ├── scripts/
 │   ├── train.py              # 训练入口
 │   ├── 1/                    # 真机 ZMQ 部署
@@ -187,20 +226,19 @@ FastWAM/
 │   └── diagnose/             # sim–real 诊断
 ├── data/                     # 数据集
 ├── runs/                     # 训练输出
-└── evaluate_results/         # 开环与评估结果
+└── evaluate_results/         # 评估结果
 ```
 
 | 路径 | 角色 |
 |------|------|
-| `src/fastwam/` | 模型；未来 + tactile encoder、解耦 horizon |
 | `configs/data/` | 数据管线；未来 `*_events.yaml`、`*_tactile.yaml` |
+| `scripts/openloop/` | 开环评估入口 |
 | `scripts/1/` | 真机 deploy；未来 adaptive replan + failure dump |
-| `scripts/openloop/` | 开环评估（E0/E1） |
 | `evaluate_results/openloop_episode_gr00tstyle/` | gr00tstyle 开环结果 |
 
 ---
 
-## 8. 致谢与引用
+## 致谢与引用
 
 本仓库基于 **[Fast-WAM](https://arxiv.org/abs/2603.16666)**（Yuan et al., 2026）与 [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin) 评估代码。
 
@@ -215,4 +253,5 @@ FastWAM/
 
 | 日期 | 修订 |
 |------|------|
-| 2026-06-29 | 研究规划作为主 README；开环评估迁至 `scripts/openloop/`；`archive/`、`paper/` 不再纳入 git |
+| 2026-06-29 | 研究规划作为主 README；开环迁至 `scripts/openloop/` |
+| 2026-06-29 | 按假设 H1–H4 重组路线图，去掉周次排期，突出可认领实验 |
