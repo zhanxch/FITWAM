@@ -6,6 +6,10 @@ plus the real-robot deploy stack for the spray_water experiment. Unrelated
 experiments (DexJoCo / EgoDex / EgoVLA / G1) and the custom open-loop eval flow
 have been archived under `archive/`.
 
+**Research direction:** see root [`README.md`](../README.md) (Interaction-centric WAM).  
+**Upstream FastWAM setup:** [`docs/FASTWAM_UPSTREAM.md`](../docs/FASTWAM_UPSTREAM.md).  
+**Archive:** [`archive/README.md`](../archive/README.md).
+
 ## Official-aligned training path
 
 | File | Role |
