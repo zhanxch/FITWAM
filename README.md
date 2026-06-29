@@ -95,6 +95,7 @@ src/fastwam/      模型
 scripts/train.py  训练
 scripts/1/        真机 deploy
 scripts/openloop/ 开环评估
+scripts/dexjoco_async/ DexJoCo async/LPF 历史消融（结果样本在 results/dexjoco_async_microwave/）
 data/  runs/  evaluate_results/
 ```
 

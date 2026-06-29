@@ -1,0 +1,2 @@
+run_id,out_root,run_dir,tasks,episodes,seed,conditions
+dexjoco_20260619_100810,ORIGINAL_RESULT_ROOT/phase3_20ep_primary_v5,CHECKPOINT_ROOT,bimanual_microwave_cook,20,0,"sync_stride24,blocking,24,none,5570 sync_stride24_lpf,blocking,24,0.5,5571 overlap_stride8_lpf,overlap,8,0.5,5572 overlap_stride32_lpf,overlap,32,0.5,5573"

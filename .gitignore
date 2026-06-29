@@ -70,6 +70,10 @@ lib/
 lib64/
 parts/
 results/
+!results/
+results/*
+!results/dexjoco_async_microwave/
+!results/dexjoco_async_microwave/**
 sdist/
 var/
 wheels/

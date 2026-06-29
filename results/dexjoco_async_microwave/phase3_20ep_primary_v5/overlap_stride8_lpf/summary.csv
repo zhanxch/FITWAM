@@ -1,0 +1,2 @@
+label,control_mode,replan_steps,overlap_steps,low_pass_alpha,env_name,episodes,successes,success_rate,inference_latency_mean_s,inference_latency_p95_s,action_delta_l2_mean,action_jerk_l2_mean,oscillation_sign_flip_rate,queue_underruns,queue_wait_s,async_replan_delays
+overlap_stride8_lpf,overlap,8,24,0.5,bimanual_microwave_cook,20,7,0.35,1.0537677079552634,1.279090178515762,0.13239074304031784,0.16471688853810437,0.46955466586006844,25.75,6.095026418752968,459.7
