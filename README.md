@@ -1,7 +1,5 @@
 # Interaction-centric WAM
 
-基于 [FastWAM](https://arxiv.org/abs/2603.16666) 的 fork：**从 clip 级世界想象，走向以交互事件为中心的世界行动模型**。
-
 > *WAM learns from state transitions, while physical understanding emerges from interaction transitions.*  
 > 世界行动模型从状态转移中学习；物理理解来自交互转移。
 
@@ -14,15 +12,18 @@
 
 ## 核心贡献
 
-1. **Interaction-centric Event 数据构造** — 用交互事件替代均匀 clip，作为训练与评估的基本单元。  
-2. **触觉（Tactile）** — 在接触期引入触觉，补足 RGB 的时滞。  
-3. **Failure 闭环** — 把部署中的失败当作监督，而非丢弃：
+1. **Interaction-centric Event 数据构造** — 以交互边界划分 event，替代均匀 clip，作为训练与评估的基本单元。  
+2. **触觉（Tactile）** ：
+
+```text
+tactile planning → future tactile prediction → tactile-refined action
+```
+
+3. **Failure 闭环** — 将部署阶段的失败回灌训练，迭代模型：
 
 ```text
 Success → Deploy → Failure → Retrain
 ```
-
-metadata（`events.jsonl`、`outcomes.jsonl` 等）服务于事件构造与 failure 入库，是实现手段，不是独立贡献。
 
 ---
 
@@ -34,9 +35,22 @@ metadata（`events.jsonl`、`outcomes.jsonl` 等）服务于事件构造与 fail
 
 ## 当前进展
 
+三大贡献在方法上通用，但**真机与仿真需分别实现**（数据格式、采集与 deploy 链路不同）。
+
+### 真机（`spray_water`）
+
 | 方向 | 状态 |
 |------|------|
-| FastWAM + `spray_water` 基线 | 进行中（训练、deploy、开环评估） |
+| FastWAM 基线（训练、deploy、开环） | 进行中 |
+| Event 数据构造 | 未开始 |
+| 触觉 | 未开始 |
+| Failure 闭环 | 未开始 |
+
+### 仿真（DexJoCo）
+
+| 方向 | 状态 |
+|------|------|
+| FastWAM 基线 | - |
 | Event 数据构造 | 未开始 |
 | 触觉 | 未开始 |
 | Failure 闭环 | 未开始 |
