@@ -1,6 +1,6 @@
 """Deprecated compatibility entrypoint for historical episode open-loop commands.
 
-Use `archive/openloop/run_openloop.py --config-name=openloop_episode` for new runs.
+Use `scripts/openloop/run_openloop.py --config-name=openloop_episode` for new runs.
 """
 
 import sys
@@ -19,7 +19,11 @@ if str(SRC_ROOT) not in sys.path:
 
 from fastwam.utils.config_resolvers import register_default_resolvers
 
-from archive.openloop.openloop_eval import run_openloop
+OPENLOOP_DIR = Path(__file__).resolve().parent
+if str(OPENLOOP_DIR) not in sys.path:
+    sys.path.insert(0, str(OPENLOOP_DIR))
+
+from openloop_eval import run_openloop
 
 register_default_resolvers()
 

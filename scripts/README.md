@@ -2,13 +2,12 @@
 
 This repo is aligned with the official FastWAM pipeline
 (`third_party/FastWAM`). The active scripts cover the official training path
-plus the real-robot deploy stack for the spray_water experiment. Unrelated
-experiments (DexJoCo / EgoDex / EgoVLA / G1) and the custom open-loop eval flow
-have been archived under `archive/`.
+plus the real-robot deploy stack for the spray_water experiment. Historical
+experiments (DexJoCo / EgoDex / EgoVLA / G1) are kept locally under `archive/`
+but are not tracked in git.
 
 **Research direction:** see root [`README.md`](../README.md) (Interaction-centric WAM).  
-**Upstream FastWAM setup:** [`docs/FASTWAM_UPSTREAM.md`](../docs/FASTWAM_UPSTREAM.md).  
-**Archive:** [`archive/README.md`](../archive/README.md).
+**Upstream FastWAM setup:** [`docs/FASTWAM_UPSTREAM.md`](../docs/FASTWAM_UPSTREAM.md).
 
 ## Official-aligned training path
 
@@ -84,14 +83,15 @@ and feeds the 58-dim robot state as a proprio context token to the action expert
 See `scripts/diagnose/README.md` for the full sim-vs-real gap diagnosis
 (A1-A3, B1-B3, C1-C3) and the spray_water data-pipeline documentation.
 
-## Archived experiments — `archive/`
+## Open-loop evaluation — `scripts/openloop/`
 
-| Path | Contents |
-|------|----------|
-| `archive/dexjoco/` | DexJoCo sim data prep, eval, async server, annotation tools, manual (`手册.md`) |
-| `archive/egodex/` | EgoDex video-pretrain data prep + fps/resize utilities |
-| `archive/egovla/` | EgoVLA sim HDF5->LeRobot converter (`src/fastwam/datasets/egovla_sim/`) + configs |
-| `archive/g1/` | G1 Unihand data prep + configs |
-| `archive/openloop/` | Custom open-loop eval (`run_robotwin_openloop*.py`) — not in official FastWAM |
+Custom open-loop eval (not in official FastWAM). Entry point:
 
-These are kept for reference but are not part of the active spray_water pipeline.
+```bash
+python scripts/openloop/run_openloop.py --config-name=openloop_episode \
+  task=... data=... ckpt=...
+```
+
+Batch helpers: `run_gr00tstyle_openloop_filtered_out.sh`, `run_gr00tstyle_openloop_checkpoints.sh`.
+
+Legacy shims: `run_robotwin_openloop*.py` (deprecated; use `run_openloop.py` + `configs/openloop*.yaml`).

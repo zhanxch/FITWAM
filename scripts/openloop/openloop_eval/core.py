@@ -29,6 +29,8 @@ from fastwam.utils.logging_config import get_logger, setup_logging
 from fastwam.utils.video_io import save_mp4
 from fastwam.utils.video_metrics import pil_frames_to_video_tensor, video_psnr, video_ssim
 
+from .action_filters import action_series_metrics, ema_low_pass, jump_statistics
+
 register_default_resolvers()
 logger = get_logger(__name__)
 
@@ -827,8 +829,10 @@ def _save_episode_action_dimension_plots(
     dim_names: Optional[list[str]] = None,
     width: int = 1280,
     height: int = 360,
+    plot_dir_name: Optional[str] = None,
+    title_suffix: str = "pred",
 ) -> list[str]:
-    plot_dir = output_dir / f"episode_{episode_id:06d}_action_dims"
+    plot_dir = output_dir / (plot_dir_name or f"episode_{episode_id:06d}_action_dims")
     plot_dir.mkdir(parents=True, exist_ok=True)
     action_dim = int(gt_series.shape[1])
     saved_paths: list[str] = []
@@ -861,7 +865,7 @@ def _save_episode_action_dimension_plots(
         draw = ImageDraw.Draw(panel)
         draw.text(
             (12, 6),
-            f"{dim_label}  GT=blue  Pred=red  (absolute robot action, full episode)",
+            f"{dim_label}  GT=blue  Pred=red  ({title_suffix}, absolute robot action)",
             fill=(20, 20, 20),
         )
         draw.rectangle((plot_x0, plot_top, plot_x1, plot_bottom), outline=(210, 210, 210))
@@ -1257,6 +1261,12 @@ def run_openloop_evaluation(
     video_action_source = _normalize_video_action_source(cfg.OPENLOOP.get("video_action_source", "gt"))
     panel_mode = str(cfg.OPENLOOP.get("video_action_panel", "curves")).strip().lower()
     default_mark_stride = _to_optional_int(cfg.OPENLOOP.get("video_action_inference_mark_stride"))
+    action_filter_cfg = cfg.OPENLOOP.get("action_filter") or {}
+    action_filter_enabled = bool(action_filter_cfg.get("enabled", False))
+    action_filter_type = str(action_filter_cfg.get("type", "ema")).strip().lower()
+    action_filter_alpha = float(action_filter_cfg.get("alpha", 0.25))
+    if action_filter_enabled and action_filter_type != "ema":
+        raise ValueError(f"Unsupported OPENLOOP.action_filter.type={action_filter_type!r}; expected 'ema'.")
 
     rows = []
     action_metric_keys = ["action_l1", "action_mse", "action_rmse", "action_max_abs"]
@@ -1535,6 +1545,10 @@ def run_openloop_evaluation(
     episode_action_dim_plot_paths: dict[int, list[str]] = {}
     episode_action_dim_combined_plot_paths: dict[int, str] = {}
     episode_action_npz_paths: dict[int, str] = {}
+    episode_filtered_action_npz_paths: dict[int, str] = {}
+    episode_filtered_action_dim_combined_plot_paths: dict[int, str] = {}
+    filtered_action_metrics_by_episode: dict[int, dict[str, Any]] = {}
+    action_jump_stats_by_episode: dict[int, dict[str, Any]] = {}
     if save_episode_action_dim_plots:
         dim_names = _action_dimension_names(openloop_dataset)
         for episode_id in sorted(episode_action_trajectory.keys()):
@@ -1542,14 +1556,57 @@ def run_openloop_evaluation(
                 episode_action_trajectory[episode_id]
             )
             action_npz_path = output_dir / f"episode_{episode_id:06d}_raw_action_series.npz"
+            replan_frames_np = np.asarray(replan_frames, dtype=np.int64)
+            raw_jump_stats = jump_statistics(pred_series, replan_frames_np)
             np.savez_compressed(
                 action_npz_path,
                 gt_action_raw=gt_series,
                 pred_action_raw=pred_series,
-                replan_frames=np.asarray(replan_frames, dtype=np.int64),
+                replan_frames=replan_frames_np,
                 dim_names=np.asarray(dim_names, dtype=object),
             )
             episode_action_npz_paths[episode_id] = str(action_npz_path)
+            action_jump_stats_by_episode[episode_id] = {"raw_pred": raw_jump_stats}
+            if action_filter_enabled:
+                pred_series_filtered = ema_low_pass(pred_series, alpha=action_filter_alpha)
+                filtered_metrics = action_series_metrics(pred_series_filtered, gt_series)
+                filtered_jump_stats = jump_statistics(pred_series_filtered, replan_frames_np)
+                filtered_action_metrics_by_episode[episode_id] = filtered_metrics
+                action_jump_stats_by_episode[episode_id]["filtered_pred"] = filtered_jump_stats
+                filtered_action_npz_path = output_dir / f"episode_{episode_id:06d}_filtered_action_series.npz"
+                np.savez_compressed(
+                    filtered_action_npz_path,
+                    gt_action_raw=gt_series,
+                    pred_action_raw=pred_series,
+                    pred_action_filtered=pred_series_filtered,
+                    replan_frames=replan_frames_np,
+                    dim_names=np.asarray(dim_names, dtype=object),
+                    filter_type=action_filter_type,
+                    filter_alpha=np.asarray(action_filter_alpha, dtype=np.float32),
+                )
+                episode_filtered_action_npz_paths[episode_id] = str(filtered_action_npz_path)
+                filtered_plot_paths = _save_episode_action_dimension_plots(
+                    output_dir,
+                    episode_id,
+                    gt_series,
+                    pred_series_filtered,
+                    replan_frames=replan_frames,
+                    dim_names=dim_names,
+                    plot_dir_name=f"episode_{episode_id:06d}_action_dims_filtered",
+                    title_suffix=f"filtered pred ({action_filter_type}, alpha={action_filter_alpha:g})",
+                )
+                filtered_combined_plot_path = _combine_episode_action_dimension_plots(
+                    plot_dir=output_dir / f"episode_{episode_id:06d}_action_dims_filtered",
+                    output_path=output_dir / f"episode_{episode_id:06d}_action_dims_filtered_combined.png",
+                )
+                episode_filtered_action_dim_combined_plot_paths[episode_id] = filtered_combined_plot_path
+                logger.info(
+                    "Saved filtered episode action plots: episode=%d dims=%d combined=%s npz=%s",
+                    episode_id,
+                    len(filtered_plot_paths),
+                    filtered_combined_plot_path,
+                    filtered_action_npz_path,
+                )
             plot_paths = _save_episode_action_dimension_plots(
                 output_dir,
                 episode_id,
@@ -1583,6 +1640,11 @@ def run_openloop_evaluation(
         "rollout_mode": rollout_mode,
         "video_obs_source": rollout_mode,
         "video_action_source": video_action_source,
+        "action_filter": {
+            "enabled": action_filter_enabled,
+            "type": action_filter_type,
+            "alpha": action_filter_alpha,
+        },
         "metrics": {key: _mean(values) for key, values in aggregate.items() if len(values) > 0},
         "elapsed_sec": float(time.perf_counter() - start_time),
     }
@@ -1598,6 +1660,20 @@ def run_openloop_evaluation(
         }
     if episode_action_npz_paths:
         summary["episode_action_npz_paths"] = {str(k): v for k, v in episode_action_npz_paths.items()}
+    if episode_filtered_action_npz_paths:
+        summary["episode_filtered_action_npz_paths"] = {str(k): v for k, v in episode_filtered_action_npz_paths.items()}
+    if episode_filtered_action_dim_combined_plot_paths:
+        summary["episode_filtered_action_dim_combined_plot_paths"] = {
+            str(k): v for k, v in episode_filtered_action_dim_combined_plot_paths.items()
+        }
+    if filtered_action_metrics_by_episode:
+        summary["filtered_action_metrics_by_episode"] = {
+            str(k): _jsonable(v) for k, v in filtered_action_metrics_by_episode.items()
+        }
+    if action_jump_stats_by_episode:
+        summary["action_jump_stats_by_episode"] = {
+            str(k): _jsonable(v) for k, v in action_jump_stats_by_episode.items()
+        }
     if per_dim_l1_sum is not None and per_dim_mse_sum is not None and per_dim_count > 0:
         summary["metrics"]["action_l1_per_dim"] = _jsonable(per_dim_l1_sum / per_dim_count)
         summary["metrics"]["action_mse_per_dim"] = _jsonable(per_dim_mse_sum / per_dim_count)

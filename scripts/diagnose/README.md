@@ -5,7 +5,7 @@
 
 > **仓库已对齐官方 FastWAM**（`third_party/FastWAM`）：自定义的
 > `state_dit.py` / episode 数据集 / openloop 评估 / DexJoCo·EgoDex·EgoVLA·G1
-> 实验均已移除或归档到 `archive/`。当前训练/部署流程全部走官方路径，仅保留
+> 历史实验代码保留在本地 `archive/`（不纳入 git）。当前训练/部署流程全部走官方路径，仅保留
 > C3 `skip_dims` 归一化 patch（H2 修复，**已降级为可选验证，见下方"一句话结论"**，
 > 详见 `C3_README.md` 的 FORKED BEHAVIOR 说明）和 Wuji 真机 ZMQ 部署栈
 >（`scripts/1/`）。后续实验需在对齐后的代码上重训基线，再按下方"修订执行

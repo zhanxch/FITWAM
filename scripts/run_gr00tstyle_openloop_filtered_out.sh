@@ -30,7 +30,7 @@ run_one() {
   local out_dir="$2"
   local log="$3"
   echo "=== Running rollout_mode=${mode} -> ${out_dir} ==="
-  conda run -n fastwam --no-capture-output python archive/openloop/run_openloop.py \
+  conda run -n fastwam --no-capture-output python scripts/openloop/run_openloop.py \
     "${COMMON[@]}" \
     "OPENLOOP.rollout_mode=${mode}" \
     "OPENLOOP.output_dir=${out_dir}" \

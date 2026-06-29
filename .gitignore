@@ -1,5 +1,6 @@
-
-# Misc
+# Local-only experiment archives (not tracked in git)
+archive/
+paper/
 outputs/
 checkpoints
 data/*

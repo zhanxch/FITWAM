@@ -17,14 +17,13 @@
 - [5. 实验设计](#5-实验设计experiment-matrix)
 - [6. Schedule](#6-schedule2026-q3-草案)
 - [7. 代码地图](#7-仓库内代码地图)
-- [8. archive/ 是什么？](#8-archive-是什么)
-- [9. 致谢与引用](#9-致谢与引用)
+- [8. 致谢与引用](#8-致谢与引用)
 
 ---
 
 ## 1. 核心思路（一句话）
 
-**把 manipulation 的原子单位从「固定长度 clip」改成「interaction event」；把触觉当作交互的近距离真值；用失败数据与 metadata 驱动闭环迭代；在架构上解耦不同模态的时间尺度，在推理上按接触状态自适应 replan。**
+WAM learns from state transitions, while physical understanding emerges from interaction transitions.
 
 ---
 
@@ -112,7 +111,7 @@ data/<task>/
 |------|------|
 | **Adaptive inference** | `IDLE` 稀疏 replan → `CONTACT` 密集 replan；触觉阈值或 event detector 触发 |
 | **Train–test–failure retrain** | 真机 batch → `failure/` + `outcomes.jsonl` → failure 过采样微调 |
-| **评估** | episode L1 + **per-event** / **per-phase** / **failure 子集**（`archive/openloop/`） |
+| **评估** | episode L1 + **per-event** / **per-phase** / **failure 子集**（`scripts/openloop/`） |
 
 ---
 
@@ -184,9 +183,8 @@ FastWAM/
 ├── scripts/
 │   ├── train.py              # 训练入口
 │   ├── 1/                    # 真机 ZMQ 部署
+│   ├── openloop/             # 开环评估（E0/E1）
 │   └── diagnose/             # sim–real 诊断
-├── archive/                  # 非主线实验归档（见 §8）
-│   └── openloop/             # 开环评估（活跃）
 ├── data/                     # 数据集
 ├── runs/                     # 训练输出
 └── evaluate_results/         # 开环与评估结果
@@ -197,26 +195,12 @@ FastWAM/
 | `src/fastwam/` | 模型；未来 + tactile encoder、解耦 horizon |
 | `configs/data/` | 数据管线；未来 `*_events.yaml`、`*_tactile.yaml` |
 | `scripts/1/` | 真机 deploy；未来 adaptive replan + failure dump |
-| `archive/openloop/` | 开环评估（E0/E1） |
+| `scripts/openloop/` | 开环评估（E0/E1） |
 | `evaluate_results/openloop_episode_gr00tstyle/` | gr00tstyle 开环结果 |
 
 ---
 
-## 8. `archive/` 是什么？
-
-> **从主线移出的历史实验代码** — 保持根目录简洁，同时保留可复用工具。
-
-| 子目录 | 内容 | 是否仍用 |
-|--------|------|----------|
-| `openloop/` | 自定义开环评估 | ✅ 活跃 |
-| `dexjoco/` | 仿真 + 子任务标注器 | 参考 |
-| `egodex/` `egovla/` `g1/` | 其他机器人/数据集 | 存档 |
-
-新功能优先放在 `src/`、`configs/`、`scripts/`。详见 [`archive/README.md`](./archive/README.md)。
-
----
-
-## 9. 致谢与引用
+## 8. 致谢与引用
 
 本仓库基于 **[Fast-WAM](https://arxiv.org/abs/2603.16666)**（Yuan et al., 2026）与 [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin) 评估代码。
 
@@ -231,4 +215,4 @@ FastWAM/
 
 | 日期 | 修订 |
 |------|------|
-| 2026-06-29 | 研究规划作为主 README；上游 FastWAM 文档移至 `docs/FASTWAM_UPSTREAM.md` |
+| 2026-06-29 | 研究规划作为主 README；开环评估迁至 `scripts/openloop/`；`archive/`、`paper/` 不再纳入 git |
