@@ -58,6 +58,13 @@ OPENLOOP:
   # Red dots on GT curve every N steps (GR00T-style). Default: full action horizon for this sample.
   video_action_inference_mark_stride: null
 
+  # Optional post-hoc action smoothing for analysis only. This does not affect model inference
+  # or the raw action plots; it adds filtered action plots/npz/metrics alongside raw outputs.
+  action_filter:
+    enabled: false
+    type: ema
+    alpha: 0.25
+
 hydra:
   job:
     chdir: false

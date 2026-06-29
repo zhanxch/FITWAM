@@ -5,14 +5,13 @@
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**当前基线：** `spray_water` 真机 · MoT · ZMQ 部署（`scripts/1/`）  
 **文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md)
 
 ---
 
 ## 核心贡献
 
-1. **Interaction-centric Event 数据构造** — 以交互边界划分 event，替代均匀 clip，作为训练与评估的基本单元。  
+1. **Interaction-centric Event 数据构造** — 以交互边界划分 event，替代lerobot格式的固定长度clip 方案
 2. **触觉（Tactile）** ：
 
 ```text
@@ -41,7 +40,7 @@ Success → Deploy → Failure → Retrain
 
 - 三组尽量保持相同模型、数据划分、训练步数、评估脚本、双视角输入与 proprioception 设置。
 - Failure 样本不参与 action loss；action loss 的分母只统计启用 action 监督的 success 样本。
-- Failure 样本仍参与视频生成目标，用来测试失败轨迹中的视觉交互动态是否能改善或至少不破坏后续动作策略。
+- Failure 样本仍参与 video 生成目标，用来测试失败轨迹中的视觉交互动态是否能改善或至少不破坏后续动作策略。
 - 每组完成后先记录闭环成功率、典型失败模式、验证曲线和 checkpoint 选择依据，再继续下一组。
 
 阶段路线：
