@@ -148,7 +148,7 @@ class EveRobotFullEpisodeDataset(torch.utils.data.Dataset):
             if "npz_path" not in ep:
                 raise ValueError(
                     f"Episode {ep.get('episode_index')} missing npz_path. "
-                    "Run scripts/convert_lerobot_to_everobot.py with --extract-arrays."
+                    "Run scripts/water_plant/convert_lerobot_to_everobot.py with --extract-arrays."
                 )
             self._episodes.append(ep)
             self._trims.append(trim)

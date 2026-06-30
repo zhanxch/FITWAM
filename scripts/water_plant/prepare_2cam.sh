@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -11,28 +11,28 @@ export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 TASK=water_plant_uncond_2cam_384_1e-4
 ACTION_DIT=checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 
-echo "[prepare_water_plant_2cam] preparing FastWAM-compatible dataset copy"
-python scripts/fix_lerobot_parquet_metadata.py \
+echo "[prepare_2cam] preparing FastWAM-compatible dataset copy"
+python scripts/water_plant/fix_lerobot_parquet_metadata.py \
   --source-root data/water_plant \
   --output-root data/water_plant_fastwam
 
-echo "[prepare_water_plant_2cam] task=${TASK}"
+echo "[prepare_2cam] task=${TASK}"
 
 if [[ ! -f "${ACTION_DIT}" ]]; then
-  echo "[prepare_water_plant_2cam] generating ActionDiT backbone -> ${ACTION_DIT}"
+  echo "[prepare_2cam] generating ActionDiT backbone -> ${ACTION_DIT}"
   python scripts/preprocess_action_dit_backbone.py \
     --model-config configs/model/fastwam.yaml \
     --output "${ACTION_DIT}" \
     --device cuda \
     --dtype bfloat16
 else
-  echo "[prepare_water_plant_2cam] ActionDiT backbone already exists: ${ACTION_DIT}"
+  echo "[prepare_2cam] ActionDiT backbone already exists: ${ACTION_DIT}"
 fi
 
-echo "[prepare_water_plant_2cam] precomputing T5 text embeddings"
+echo "[prepare_2cam] precomputing T5 text embeddings"
 python scripts/precompute_text_embeds.py "task=${TASK}"
 
-echo "[prepare_water_plant_2cam] validating dataset sample load"
+echo "[prepare_2cam] validating dataset sample load"
 python - <<'PY'
 import hydra
 from omegaconf import DictConfig
@@ -56,9 +56,9 @@ assert "proprio" in sample
 assert sample["proprio"].shape[-1] == 23
 assert sample["video"].shape[-1] == 768
 print(
-    f"[prepare_water_plant_2cam] ok: video={tuple(sample['video'].shape)} "
+    f"[prepare_2cam] ok: video={tuple(sample['video'].shape)} "
     f"action={tuple(sample['action'].shape)} proprio={tuple(sample['proprio'].shape)}"
 )
 PY
 
-echo "[prepare_water_plant_2cam] done. Run: bash scripts/train_water_plant_2cam.sh"
+echo "[prepare_2cam] done. Run: bash scripts/water_plant/train_2cam.sh"

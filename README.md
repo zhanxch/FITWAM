@@ -111,20 +111,20 @@ LoRA 是**与默认全参训练完全解耦**的可选模块，不影响现有 `
 
 ```bash
 # 数据准备（与全参基线相同）
-bash scripts/prepare_water_plant_2cam.sh
+bash scripts/water_plant/prepare_2cam.sh
 python scripts/precompute_text_embeds.py task=water_plant_uncond_2cam_384_1e-4
 
 # 训练：Video LoRA + ActionDiT 全参
-bash scripts/train_water_plant_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
+bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 ```
 
 **EveRobot 整 episode（DiffSynth 风格，可变 T）：**
 
 ```bash
-python scripts/convert_lerobot_to_everobot.py \
+python scripts/water_plant/convert_lerobot_to_everobot.py \
   --dataset-dir data/water_plant_fastwam --video-keys front wrist
 
-bash scripts/train_everobot.sh task=everobot_water_plant_full_lora
+bash scripts/water_plant/train_everobot.sh task=everobot_water_plant_full_lora
 ```
 
 （EveRobot + LoRA 的 task / data 配置说明见 [`scripts/README.md`](./scripts/README.md)。）
@@ -132,7 +132,7 @@ bash scripts/train_everobot.sh task=everobot_water_plant_full_lora
 **DexJoCo 闭环评估（与全参相同脚本，传入 LoRA run 目录即可）：**
 
 ```bash
-python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 0,1,2,3 \
   --run-dir runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id> \
   --checkpoint runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id>/checkpoints/weights/step_XXXXX.pt \
@@ -164,11 +164,10 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 ```text
 configs/          Hydra 配置（model/fastwam.yaml 与 model/fastwam_video_lora.yaml 并行）
 src/fastwam/      模型（video_lora.py 为独立 LoRA 模块）
-scripts/train.py  训练（LeRobot 固定窗口）
-scripts/train_everobot.py  训练（EveRobot 整 episode）
-scripts/wuji/     真机 deploy
-scripts/openloop/ 开环评估
-scripts/dexjoco_async/ DexJoCo 闭环评估
+scripts/train.py  训练（LeRobot 固定窗口，通用入口）
+scripts/water_plant/  water_plant 数据准备 / 训练 / DexJoCo eval
+scripts/spray_water_gr00tstyle/  真机 spray_water 训练 / deploy
+scripts/openloop/ 开环评估引擎
 data/  runs/  evaluate_results/  logs/
 ```
 
@@ -187,7 +186,7 @@ data/  runs/  evaluate_results/  logs/
 
 多卡dexjoco并行测试
 ```python
-python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 0,1,2,3 \
   --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
   --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \

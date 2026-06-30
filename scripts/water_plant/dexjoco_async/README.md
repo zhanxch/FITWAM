@@ -53,7 +53,7 @@ cd /data_all/xiangchengzhan/FastWAM
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fastwam   # orchestrator only needs zmq + msgpack + conda on PATH
 
-python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 4,5,6,7 \
   --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
   --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \
@@ -94,7 +94,7 @@ Useful options:
 Aggregator CLI (reusable on its own, e.g. when shards were run manually):
 
 ```bash
-python scripts/dexjoco_async/eval_summary_aggregator.py \
+python scripts/water_plant/dexjoco_async/eval_summary_aggregator.py \
   shard_0/summary.json shard_1/summary.json shard_2/summary.json shard_3/summary.json \
   --output-dir evaluate_results/dexjoco/water_plant/step_006500 \
   --label blocking_stride24_gpus4

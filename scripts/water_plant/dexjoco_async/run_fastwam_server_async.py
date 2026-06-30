@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 THIS_DIR = Path(__file__).resolve().parent
 SRC_ROOT = PROJECT_ROOT / "src"

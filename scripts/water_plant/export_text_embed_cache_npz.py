@@ -5,8 +5,8 @@ Run this in the ``fastwam`` conda env (which has torch) after
 the DexJoCo eval client without any torch dependency.
 
 Usage:
-    python scripts/export_text_embed_cache_npz.py --cache-dir data/text_embeds_cache/water_plant
-    python scripts/export_text_embed_cache_npz.py --cache-dir data/text_embeds_cache/dexjoco_microwave_cook
+    python scripts/water_plant/export_text_embed_cache_npz.py --cache-dir data/text_embeds_cache/water_plant
+    python scripts/water_plant/export_text_embed_cache_npz.py --cache-dir data/text_embeds_cache/dexjoco_microwave_cook
 """
 
 from __future__ import annotations

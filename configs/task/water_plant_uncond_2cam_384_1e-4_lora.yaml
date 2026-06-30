@@ -3,7 +3,7 @@
 # LeRobot sliding-window water_plant with video DiT LoRA + ActionDiT full fine-tune.
 #
 # Usage:
-#   bash scripts/train_water_plant_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
+#   bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 
 defaults:
   - water_plant_uncond_2cam_384_1e-4

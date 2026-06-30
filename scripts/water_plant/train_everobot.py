@@ -7,7 +7,7 @@ from fastwam.utils.config_resolvers import register_default_resolvers
 register_default_resolvers()
 
 
-@hydra.main(config_path="../configs", config_name="everobot_train", version_base="1.3")
+@hydra.main(config_path="../../configs", config_name="everobot_train", version_base="1.3")
 def main(cfg: DictConfig):
     run_everobot_training(cfg)
 

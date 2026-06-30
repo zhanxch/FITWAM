@@ -13,7 +13,7 @@ written to a separate ``everobot/`` subdirectory (or a user-specified output
 directory).
 
 Usage:
-    python scripts/convert_lerobot_to_everobot.py \
+    python scripts/water_plant/convert_lerobot_to_everobot.py \
         --dataset-dir data/water_plant_fastwam \
         --video-keys front wrist \
         --output-dir data/water_plant_fastwam/everobot

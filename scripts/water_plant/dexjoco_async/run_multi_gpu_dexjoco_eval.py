@@ -7,7 +7,7 @@ merges the per-shard summaries into a single combined report.
 
 Typical usage (4 GPUs, 100 episodes of ``water_plant``)::
 
-    python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+    python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
       --gpus 4,5,6,7 \
       --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
       --checkpoint runs/.../checkpoints/weights/step_006500.pt \
@@ -44,7 +44,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 THIS_DIR = Path(__file__).resolve().parent
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -65,8 +65,8 @@ from multi_gpu_eval_utils import (  # noqa: E402
     wait_for_server,
 )
 
-DEFAULT_SERVER_SCRIPT = SCRIPTS_ROOT / "dexjoco_async" / "run_fastwam_server_async.py"
-DEFAULT_CLIENT_SCRIPT = SCRIPTS_ROOT / "dexjoco_async" / "eval_dexjoco_fastwam_control.py"
+DEFAULT_SERVER_SCRIPT = SCRIPTS_ROOT / "water_plant" / "dexjoco_async" / "run_fastwam_server_async.py"
+DEFAULT_CLIENT_SCRIPT = SCRIPTS_ROOT / "water_plant" / "dexjoco_async" / "eval_dexjoco_fastwam_control.py"
 DEFAULT_DEXJOCO_PY_ROOT = PROJECT_ROOT / "third_party" / "dexjoco" / "dexjoco"
 
 

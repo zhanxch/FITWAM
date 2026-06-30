@@ -16,10 +16,11 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parents[1]
+DATASET_DIR = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_DIR.parents[2]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 SRC_ROOT = PROJECT_ROOT / "src"
-for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT, SCRIPT_DIR):
+for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT, DATASET_DIR, SCRIPT_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 

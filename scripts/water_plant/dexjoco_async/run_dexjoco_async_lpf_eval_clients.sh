@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-FASTWAM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+FASTWAM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${FASTWAM_ROOT}"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -107,7 +107,7 @@ for spec in "${CONDITIONS[@]}"; do
   fi
 
   eval_args=(
-    scripts/eval_dexjoco_fastwam_control.py
+    scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py
     --run-dir "${RUN_DIR}"
     --task-config-dir "${TASK_CONFIG_DIR}"
     --policy-host "${POLICY_HOST}"
