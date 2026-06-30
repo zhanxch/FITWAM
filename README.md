@@ -11,50 +11,125 @@
 
 ## 核心贡献
 
-1. **Interaction-centric Event 数据构造** — 以交互边界划分 event，替代 LeRobot 格式里的固定长度 clip 方案。
-2. **触觉（Tactile）** ：
+研究路线按 5 个 Milestone 展开（详见 [实验设计](#实验设计)）：
+
+1. **Failure video 训练** — 论证 failure 轨迹纳入 video 预训练能提升闭环表现（M1）
+2. **Interaction-centric 数据构造** — event clip、subtask、structured failure text 及配套训练（M2）
+3. **面向 failure 的架构** — 更好消费 failure 信号的模型设计（M3）
+4. **迭代闭环** — Train → Test → Retrain，含 RL token 等在线优化探索（M4）
+5. **触觉（Tactile）** — 拓展 M2/M3 至接触期（M5，真机为主）：
 
 ```text
 tactile planning → future tactile prediction → tactile-refined action
-```
-
-3. **Failure 闭环** — 将部署阶段的失败回灌训练，迭代模型：
-
-```text
-Success → Deploy → Failure → Retrain
 ```
 
 ---
 
 ## 实验设计
 
-当前实验先验证 Failure 数据是否能作为 Interaction-centric WAM 的第一条闭环信号。DexJoCo `water_plant` 使用双视角视频与 proprioception；真机 `spray_water` 保持现有 FastWAM deploy 链路。当前执行顺序以 **B → C → A/reference** 为主：A 组已有学长外部 success-only 参考结果，先把 B/C 的 failure-data 对照跑完整，再决定是否补同 pipeline 的 A。
+研究按 **5 个 Milestone** 递进：先证明 failure 数据对 video 训练有价值，再改进数据构造与模型架构，最后建立可迭代闭环并在真机引入触觉。仿真主战场为 DexJoCo `water_plant`（双视角 + proprio）；真机主战场为 `spray_water`（现有 FastWAM deploy 链路）。
 
-训练预算以 B 的完整运行作为主要对齐目标。`6500`、`6000/6500` 等中间 checkpoint 保留为诊断点，但主 rollout 不再停在 `C@6500`：C 需要继续训到与 B late/final 接近的 `12240` steps 后再做闭环评估。结果分析同时报告中间 checkpoint 的 validation 轨迹和最终 rollout，不把短预算 checkpoint 当作最终结论。
+```text
+M1  failure video 有用？  →  M2  怎么构造数据？  →  M3  什么架构更好？
+                                      ↓                        ↓
+M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机，架构最后验证）
+```
 
-| 组别 | 目标 | 训练数据 | 文本 / metadata | Loss 设计 | 状态 |
-|------|------|----------|-----------------|-----------|------|
-| B. Text failure | 验证将 failure 作为语言上下文加入视频预训练是否稳定 | Success + Failure | failure 样本在 task text 后追加 `Failed to finish the whole process.` | Success: video + action；Failure: video only，action loss weight = 0 | 已完成训练；25-episode rollout 已有，100-episode 待补 |
-| A. Vanilla success | 构造同配置 success-only 对照 | Success only | 原始 task text | video + action | 外部 25-episode 参考约 70-80%；正式同 pipeline A 仍待导入或补跑 |
-| C. Structured failure | 验证结构化 outcome 信号是否优于文本拼接 | Success + Failure | 独立 outcome / failure flag | Success: video + action；Failure: video only，action loss weight = 0 | 训练中；目标对齐 B late/final，训至约 12240 steps |
+### Milestone 1：Failure video 训练是否有效
 
-核心控制变量：
+**要论证：** 将 failure 轨迹纳入 **video 预训练**（failure 只训 video、不训 action）能否提升闭环表现，优于纯 success 训练。
 
-- 三组尽量保持相同模型、数据划分、评估脚本、双视角输入与 proprioception 设置；A 外部参考不能直接作为严格同 pipeline 结论。
-- `6000/6500` checkpoint 作为诊断点保留；B/C 的主 rollout 以 late/final 预算为准，避免把 B@6500 的低成功率误读成完整训练结论。
-- Failure 样本不参与 action loss；action loss 的分母只统计启用 action 监督的 success 样本。
-- Failure 样本仍参与视频生成目标，用来测试失败轨迹中的视觉交互动态是否能改善或至少不破坏后续动作策略。
-- 当前 rollout 顺序：C 训满 `12240` 后先跑 25 episodes 并更新中文 HTML；随后把 B 从既有 25 episodes 追加 75 到 100；最后把 C 从 25 追加 75 到 100。每完成一段都同步中文讲义式 HTML。
-- Checkpoint 清理保留 best-val weight 和最近若干 weight；state checkpoint 只保留最近一个，避免远端存储被频繁保存占满。
+| 组别 | 训练数据 | 文本 / metadata | Loss | 对应假设 |
+|------|----------|---------------|------|----------|
+| **Vanilla success（A）** | Success only | 原始 task text | video + action | 基线 |
+| **Text failure（B）** | Success + Failure | failure 样本 text 后追加 `Failed to finish the whole process.` | Success: video + action；Failure: **video only**（action loss weight = 0） | failure 视觉动态有助于后续 action |
 
-阶段路线：
+**控制变量：** 同模型、同数据划分、同 eval 脚本、同双视角与 proprio；failure 不参与 action loss，分母只统计 success 样本。
 
-| 阶段 | 内容 | 目的 |
-|------|------|------|
-| 1 | Failure 闭环：采集 failure，训练 B/A/C 消融，逐组 eval | 验证 failure 数据是否值得进入主线 |
-| 2 | Event / subtask metadata：按交互边界切段并加入轻量监督 | 从 episode 级 failure 走向 interaction 级分析 |
-| 3 | Adaptive context：按当前交互状态决定是否使用 metadata、planning 或直接 action | 让额外模块在需要时介入，而不是固定增加推理负担 |
-| 4 | Tactile：加入接触期触觉观测、预测与动作修正 | 把 interaction signal 从视觉扩展到真实接触 |
+**当前状态（DexJoCo）：** B 已训完，25-episode rollout 已有；A 有外部参考（~70–80% / 25 ep），同 pipeline 对照待补跑；100-episode 主结果待齐。
+
+---
+
+### Milestone 2：Interaction-centric 数据构造与配套训练
+
+**要论证：** 相比 M1 的 episode 级 text 拼接，**subtask 边界、event clip、structured failure text** 等更细粒度构造，能更有效地从 failure 中学习交互动态。
+
+| 方向 | 内容 | 相对 M1 的增量 |
+|------|------|----------------|
+| **Event clip** | 按交互边界切段，替代固定长度 LeRobot clip | 样本对齐真实交互转移 |
+| **Subtask metadata** | 子任务阶段 / 进度标签 | 区分「哪一步失败」 |
+| **Structured failure text（C）** | 独立 outcome / failure flag / 结构化描述 | 替代纯 text 拼接 |
+
+**消融顺序：** 在 M1 证明 failure video 有价值后，逐项叠加 event → subtask → structured text，固定 M1 的模型与训练预算。
+
+**当前状态：** C（structured failure）训练中，目标训至与 B 对齐的 late/final budget（~12240 steps）后再 rollout。
+
+---
+
+### Milestone 3：面向 failure 学习的模型架构
+
+**要论证：** 在 M2 的最优数据构造之上，新架构比标准 FastWAM MoT **更能利用 failure 信号**（而非仅堆数据）。
+
+候选方向（与 M2 解耦、逐步验证）：
+
+- **Adaptive context：** 按当前交互状态决定是否启用 metadata / planning / 直接 action
+- **Failure-aware video–action 耦合：** 接触期、失败边界处的差异化监督或推理路径
+- 其他待 M2 结果收敛后选定的架构变体
+
+**原则：** M3 只在 M2 确定「怎么喂 failure」之后启动；每次只改架构，数据与 eval 协议不变。
+
+---
+
+### Milestone 4：Train → Test → Retrain 迭代闭环
+
+**要论证：** 部署失败样本回灌 + 多轮迭代，能否持续提升性能上限；并消融迭代轮数、回灌比例、checkpoint 选择策略。
+
+```text
+Success 数据预训练 → Deploy / 闭环测试 → 采集 failure
+        ↑                                      ↓
+        └──────────── Retrain（video ± action）┘
+                      （重复 K 轮，测上限）
+```
+
+**RL 扩展（探索方向）：** 真机 RL 上限较高，拟在闭环稳定后引入 **RL token / 在线微调** 等机制，把 failure 轨迹转为可优化信号；架构改动放在 **M4 后期**，需 M1–M3 在仿真与真机均验证后再做。
+
+| 验证场 | 优先级 | 说明 |
+|--------|--------|------|
+| DexJoCo | 先 | 低成本、可复现，主做迭代消融 |
+| 真机 `spray_water` | 后 | 与 deploy 链路对齐；RL 与触觉更依赖真机 |
+
+**当前状态：** 设计中；M1 B/C rollout 结果是第一条闭环信号。
+
+---
+
+### Milestone 5：触觉（Tactile）
+
+**要论证：** 在接触密集阶段，触觉观测与预测能否拓展 M2 的 event 构造与 M3 的架构，进一步提升 failure 边界处的表现。
+
+```text
+tactile planning → future tactile prediction → tactile-refined action
+```
+
+| 范围 | 计划 |
+|------|------|
+| **真机** | 主战场；`TouchAnything` 等已有数据，与 M2 event / M3 架构联合设计 |
+| **仿真** | 触觉夹爪环境可选，非必须；优先保证真机链路 |
+
+**依赖：** M2（接触期 event 切段）与 M3（触觉分支架构）就绪后再系统推进；可与 M4 迭代闭环在真机侧汇合。
+
+---
+
+### 里程碑依赖与当前焦点
+
+| Milestone | 依赖 | 状态 |
+|-----------|------|------|
+| **M1** | FastWAM 基线 / LoRA 基线 | **进行中**（B vs A） |
+| **M2** | M1 阳性结果 | C 训练中；event / subtask 未开始 |
+| **M3** | M2 最优构造 | 未开始 |
+| **M4** | M1–M3 + deploy 链路 | 设计中 |
+| **M5** | M2 + M3（真机） | 未开始 |
+
+**工程并行项（非 milestone 结论）：** `baseline_lora` 验证 video LoRA 能否作为更轻量的默认训练方式，服务于 M1 及之后各阶段的训练效率，不改变上述论证顺序。
 
 ---
 
@@ -100,34 +175,36 @@ Success → Deploy → Failure → Retrain
 
 ## 当前进展
 
-三大贡献在方法上通用，但**真机与仿真需分别实现**（数据格式、采集与 deploy 链路不同）。
+三大贡献在方法上通用，但**真机与仿真需分别实现**（数据格式、采集与 deploy 链路不同）。下表按 **Milestone** 对齐当前状态。
 
 ### 真机（`spray_water`）
 
-| 方向 | 状态 |
-|------|------|
-| FastWAM 基线（训练、deploy、开环） | 进行中 |
-| Failure 闭环 | 设计中 |
-| 触觉 | 未开始 |
-| Event 数据构造 | 未开始 |
+| Milestone | 状态 |
+|-----------|------|
+| M1 | FastWAM 基线训练 / deploy / 开环进行中；failure 对照未开始 |
+| M2–M3 | 未开始 |
+| M4 | 设计中（deploy 链路已有 ZMQ server/client） |
+| M5 | 未开始（`TouchAnything` 数据本地已有） |
 
-### 仿真（DexJoCo）
+### 仿真（DexJoCo `water_plant`）
 
-| 方向 | 状态 |
-|------|------|
-| FastWAM 基线（全参 MoT） | `water_plant_uncond_2cam_384_1e-4` 已训至 step_6500，闭环 eval 完成；A 组外部参考约 70-80% |
-| **baseline_lora**（Video LoRA） | **验证中**：LeRobot 固定窗口 + video LoRA，对照全参基线 |
-| Failure 闭环 | B 已有 25-episode 结果；C 训至 ~12240 后按 C25→B100→C100 rollout |
-| 触觉 | 未开始 |
-| Event 数据构造 | 未开始 |
+| Milestone | 状态 |
+|-----------|------|
+| **M1** | **进行中**：B（Text failure）25-ep 已有；A（Vanilla）外部参考 ~70–80%；100-ep 主结果待补 |
+| **M2** | C（Structured failure）训至 ~12240 steps 后 rollout；event / subtask 未开始 |
+| M3 | 未开始 |
+| M4 | 设计中 |
+| M5 | 未开始（仿真触觉夹爪可选，非优先） |
 
-### 结果记录
+**工程并行：** 全参基线 step_6500 eval 完成；`baseline_lora` 训练中，用于确认 LoRA 可否作为后续 milestone 的默认训练后端。
+
+### M1 结果记录（DexJoCo）
 
 | 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
 |------|------------|--------------|-----------------|------|
-| B. Text failure | 25-episode 已有初步结果，100-episode 待补 | 待分析 | `6500` / best-val / late-final checkpoints | 中文 HTML 待同步 |
-| A. Vanilla success | 外部参考约 70-80% / 25 episodes | 待导入 | 学长 run，非严格同 pipeline | 待导入或补跑 |
-| C. Structured failure | 待 12240 后评估 | 待评估 | 保留 `6000/6500` 中间 checkpoint，主结果用 late/final | 待更新 |
+| B. Text failure | 25-ep 已有，100-ep 待补 | 待分析 | late-final / best-val | 中文 HTML 待同步 |
+| A. Vanilla success | 外部参考 ~70–80% / 25 ep | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
+| C. Structured failure | 待 M2 rollout | 待评估 | 对齐 B 的 ~12240 steps | 待更新 |
 
 ---
 
@@ -195,7 +272,7 @@ python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | **baseline_lora** | LeRobot 固定窗口 + video LoRA | `runs/water_plant_uncond_2cam_384_1e-4_lora/` | **训练中**，训完即跑同配置闭环 eval |
 | everobot_full_lora | EveRobot 整 episode + video LoRA | `runs/everobot/everobot_water_plant_full_lora/` | step_475 已 eval（`evaluate_results/dexjoco/everobot_full_lora/step_000475`），待与 baseline_lora 横向对比 |
 
-目标：确认 video LoRA 能否在显著减少 video 侧可训练参数的同时，达到或接近全参基线的闭环成功率，作为后续 failure 闭环（B/A/C）的默认训练方式。
+目标：确认 video LoRA 能否在显著减少 video 侧可训练参数的同时，达到或接近全参基线的闭环成功率，作为 M1 及之后各 milestone 的默认训练后端候选。
 
 ---
 
