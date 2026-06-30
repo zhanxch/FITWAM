@@ -1,0 +1,7 @@
+method,checkpoint,episodes,successes,success_rate,artifact_coverage,summary_path
+B text failure,step_006500,100,38,0.38,legacy seed0-24 summary plus seed25-99 full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_mid_006500_seed0_100_merged_600step/summary.json
+B text failure,step_011000,100,81,0.81,legacy seed0-24 summary plus seed25-99 full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_best_011000_seed0_100_merged_600step/summary.json
+B text failure,step_012240,100,82,0.82,legacy seed0-24 summary plus seed25-99 full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_final_12240_seed0_100_merged_600step/summary.json
+C structured failure,step_006500,100,74,0.74,full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_mid_006500_seed0_100_600step/summary.json
+C structured failure,step_011500,100,59,0.59,full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_best_011500_seed0_100_600step/summary.json
+C structured failure,step_012240,100,4,0.04,full artifacts,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_final_12240_seed0_100_600step/summary.json

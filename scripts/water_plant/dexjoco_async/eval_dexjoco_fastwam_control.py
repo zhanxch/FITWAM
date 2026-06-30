@@ -25,7 +25,39 @@ for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT, THIS_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from dexjoco.data.video_writer import Mp4VideoWriter
+try:
+    from dexjoco.data.video_writer import Mp4VideoWriter
+except ModuleNotFoundError:
+    import imageio.v2 as imageio
+
+    class Mp4VideoWriter:
+        """Small fallback for DexJoCo checkouts without dexjoco.data.video_writer."""
+
+        def __init__(self, fps: int):
+            self.fps = int(fps)
+            self._writer = None
+
+        @classmethod
+        def create_h264(cls, fps: int, **_: Any) -> "Mp4VideoWriter":
+            return cls(fps=fps)
+
+        def start(self, path: str) -> None:
+            self._writer = imageio.get_writer(
+                path,
+                fps=self.fps,
+                codec="libx264",
+                macro_block_size=1,
+            )
+
+        def write_frame(self, frame: np.ndarray) -> None:
+            if self._writer is None:
+                raise RuntimeError("video writer is not started")
+            self._writer.append_data(np.asarray(frame, dtype=np.uint8))
+
+        def stop(self) -> None:
+            if self._writer is not None:
+                self._writer.close()
+                self._writer = None
 from dexjoco_fastwam_adapter import (
     DEFAULT_TASK_CONFIG_DIR,
     ActionConstraintConfig,

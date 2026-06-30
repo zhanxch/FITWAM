@@ -48,7 +48,7 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 
 **控制变量：** 同模型、同数据划分、同 eval 脚本、同双视角与 proprio；failure 不参与 action loss，分母只统计 success 样本。
 
-**当前状态（DexJoCo）：** B（76% / 25 ep） ；A （70% / 100 ep）
+**当前状态（DexJoCo）：** B 已完成 100-episode 主评估：`38 -> 81 -> 82`（step 6500 / 11000 / 12240）；A 为外部参考约 `70-80%`，暂不混入本次 B/C 主证据。
 
 ---
 
@@ -66,7 +66,7 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 
 **消融顺序：** 
 
-**当前状态：** C（structured failure）训练中，目标训至与 B 对齐的 late/final budget（~12240 steps）后再 rollout。
+**当前状态：** C（structured failure）已完成同协议 rollout：`74 -> 59 -> 4`（step 6500 / 11500 / 12240）。早中期 checkpoint 可用，但 late/final 明显退化，后续优先诊断 checkpoint 稳定性。
 
 ---
 
@@ -200,8 +200,8 @@ tactile planning → future tactile prediction → tactile-refined action
 
 | Milestone | 状态 |
 |-----------|------|
-| **M1** | **进行中**：B（Text failure）25-ep 已有；A（Vanilla）外部参考 ~70–80%；100-ep 主结果待补 |
-| **M2** | C（Structured failure）训至 ~12240 steps 后 rollout；event / subtask 未开始 |
+| **M1** | **进行中**：B（Text failure）100-ep 主结果完成；A（Vanilla）外部参考 ~70–80%，同 pipeline 主结果待补 |
+| **M2** | C（Structured failure）100-ep 主结果完成；event / subtask 未开始 |
 | M3 | 未开始 |
 | M4 | 设计中 |
 | M5 | 未开始（仿真触觉夹爪可选，非优先） |
@@ -212,9 +212,11 @@ tactile planning → future tactile prediction → tactile-refined action
 
 | 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
 |------|------------|--------------|-----------------|------|
-| B. Text failure | 25-ep 已有，100-ep 待补 | 待分析 | late-final / best-val | 中文 HTML 待同步 |
-| A. Vanilla success | 外部参考 ~70–80% / 25 ep | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
-| C. Structured failure | 待 M2 rollout | 待评估 | 对齐 B 的 ~12240 steps | 待更新 |
+| B. Text failure | 38/100 → 81/100 → 82/100 | 6500 明显未训够；后期稳定 | step 006500 / 011000 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
+| A. Vanilla success | 外部参考 ~70–80% | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
+| C. Structured failure | 74/100 → 59/100 → 4/100 | late/final checkpoint 退化 | step 006500 / 011500 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
+
+DexJoCo async rollout 代码位于 [`scripts/water_plant/dexjoco_async`](./scripts/water_plant/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
 
 ---
 
