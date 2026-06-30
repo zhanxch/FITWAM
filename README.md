@@ -28,23 +28,23 @@ Success → Deploy → Failure → Retrain
 
 ## 实验设计
 
-当前实验先验证 Failure 数据是否能作为 Interaction-centric WAM 的第一条闭环信号。DexJoCo `water_plant` 使用双视角视频与 proprioception；真机 `spray_water` 保持现有 FastWAM deploy 链路。训练与评估按 **B → A → C** 顺序推进，每个模型完成训练后立即做闭环评估并更新结果报告，再启动下一个模型。
+当前实验先验证 Failure 数据是否能作为 Interaction-centric WAM 的第一条闭环信号。DexJoCo `water_plant` 使用双视角视频与 proprioception；真机 `spray_water` 保持现有 FastWAM deploy 链路。当前执行顺序以 **B → C → A/reference** 为主：A 组已有学长外部 success-only 参考结果，先把 B/C 的 failure-data 对照跑完整，再决定是否补同 pipeline 的 A。
 
-第一轮控制比较以约 6500 steps 为统一预算；已经启动并超过该预算的 B 组继续跑完原始训练计划，同时保留中后期与 final checkpoint。结果分析同时报告公平预算下的 `B@6500` 对 `A@6500/C@6500`，以及 `B@late/final` 是否仍有上升空间。
+训练预算以 B 的完整运行作为主要对齐目标。`6500`、`6000/6500` 等中间 checkpoint 保留为诊断点，但主 rollout 不再停在 `C@6500`：C 需要继续训到与 B late/final 接近的 `12240` steps 后再做闭环评估。结果分析同时报告中间 checkpoint 的 validation 轨迹和最终 rollout，不把短预算 checkpoint 当作最终结论。
 
 | 组别 | 目标 | 训练数据 | 文本 / metadata | Loss 设计 | 状态 |
 |------|------|----------|-----------------|-----------|------|
-| B. Text failure | 验证将 failure 作为语言上下文加入视频预训练是否稳定 | Success + Failure | failure 样本在 task text 后追加 `Failed to finish the whole process.` | Success: video + action；Failure: video only，action loss weight = 0 | full run in progress；保留多 checkpoint |
-| A. Vanilla success | 构造同配置 success-only 对照 | Success only | 原始 task text | video + action | 待训练，6500 steps |
-| C. Structured failure | 验证结构化 outcome 信号是否优于文本拼接 | Success + Failure | 独立 outcome / failure flag | Success: video + action；Failure: video only，action loss weight = 0 | 待训练，6500 steps |
+| B. Text failure | 验证将 failure 作为语言上下文加入视频预训练是否稳定 | Success + Failure | failure 样本在 task text 后追加 `Failed to finish the whole process.` | Success: video + action；Failure: video only，action loss weight = 0 | 已完成训练；25-episode rollout 已有，100-episode 待补 |
+| A. Vanilla success | 构造同配置 success-only 对照 | Success only | 原始 task text | video + action | 外部 25-episode 参考约 70-80%；正式同 pipeline A 仍待导入或补跑 |
+| C. Structured failure | 验证结构化 outcome 信号是否优于文本拼接 | Success + Failure | 独立 outcome / failure flag | Success: video + action；Failure: video only，action loss weight = 0 | 训练中；目标对齐 B late/final，训至约 12240 steps |
 
 核心控制变量：
 
-- 三组尽量保持相同模型、数据划分、训练步数、评估脚本、双视角输入与 proprioception 设置。
-- 第一轮控制在约 6500 steps；若训练过程已经超过该步数，闭环评估同时选用同预算附近 checkpoint、best-val checkpoint 与 late/final checkpoint。
+- 三组尽量保持相同模型、数据划分、评估脚本、双视角输入与 proprioception 设置；A 外部参考不能直接作为严格同 pipeline 结论。
+- `6000/6500` checkpoint 作为诊断点保留；B/C 的主 rollout 以 late/final 预算为准，避免把 B@6500 的低成功率误读成完整训练结论。
 - Failure 样本不参与 action loss；action loss 的分母只统计启用 action 监督的 success 样本。
 - Failure 样本仍参与视频生成目标，用来测试失败轨迹中的视觉交互动态是否能改善或至少不破坏后续动作策略。
-- 每组先跑 50-episode 轻量闭环评估作为主成功率，再跑小样本 qualitative eval 保存视频和 action 文件，用于分析典型失败模式和挑选可复核样本。
+- 当前 rollout 顺序：C 训满 `12240` 后先跑 25 episodes 并更新中文 HTML；随后把 B 从既有 25 episodes 追加 75 到 100；最后把 C 从 25 追加 75 到 100。每完成一段都同步中文讲义式 HTML。
 - Checkpoint 清理保留 best-val weight 和最近若干 weight；state checkpoint 只保留最近一个，避免远端存储被频繁保存占满。
 
 阶段路线：
@@ -75,8 +75,8 @@ Success → Deploy → Failure → Retrain
 
 | 方向 | 状态 |
 |------|------|
-| FastWAM 基线 | Success-only 对照待跑 |
-| Failure 闭环 | B 组继续完整训练，完成后先评估关键 checkpoints 并更新报告，再启动 A 组 |
+| FastWAM 基线 | success-only 外部参考已知；严格同 pipeline A 待导入或补跑 |
+| Failure 闭环 | B 已有 25-episode 关键 checkpoint 结果；C 正在训至 12240，完成后按 C25 → B100 → C100 顺序 rollout 并更新中文报告 |
 | 触觉 | 未开始 |
 | Event 数据构造 | 未开始 |
 
@@ -84,9 +84,9 @@ Success → Deploy → Failure → Retrain
 
 | 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
 |------|------------|--------------|-----------------|------|
-| B. Text failure | 待评估 | 待评估 | `6500` / best-val / late-final checkpoints | 待更新 |
-| A. Vanilla success | 待评估 | 待评估 | 待评估 | 待更新 |
-| C. Structured failure | 待评估 | 待评估 | 待评估 | 待更新 |
+| B. Text failure | 25-episode 已有初步结果，100-episode 待补 | 待分析 | `6500` / best-val / late-final checkpoints | 中文 HTML 待同步 |
+| A. Vanilla success | 外部参考约 70-80% / 25 episodes | 待导入 | 学长 run，非严格同 pipeline | 待导入或补跑 |
+| C. Structured failure | 待 12240 后评估 | 待评估 | 保留 `6000/6500` 中间 checkpoint，主结果用 late/final | 待更新 |
 
 ---
 
