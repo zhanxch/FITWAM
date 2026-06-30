@@ -37,6 +37,8 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 
 ### Milestone 1：Failure video 训练是否有效
 
+**目标：** 鉴于现在的提升较为明显，所以想充分论证failure video 效果，后续更好开展。
+
 **要论证：** 将 failure 轨迹纳入 **video 预训练**（failure 只训 video、不训 action）能否提升闭环表现，优于纯 success 训练。
 
 | 组别 | 训练数据 | 文本 / metadata | Loss | 对应假设 |
@@ -46,11 +48,13 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 
 **控制变量：** 同模型、同数据划分、同 eval 脚本、同双视角与 proprio；failure 不参与 action loss，分母只统计 success 样本。
 
-**当前状态（DexJoCo）：** B 已训完，25-episode rollout 已有；A 有外部参考（~70–80% / 25 ep），同 pipeline 对照待补跑；100-episode 主结果待齐。
+**当前状态（DexJoCo）：** B（76% / 25 ep） ；A （70% / 100 ep）
 
 ---
 
 ### Milestone 2：Interaction-centric 数据构造与配套训练
+
+**目标：** 提出EveRobot 数据格式代替LeRobot数据格式，使训练纳入failure data
 
 **要论证：** 相比 M1 的 episode 级 text 拼接，**subtask 边界、event clip、structured failure text** 等更细粒度构造，能更有效地从 failure 中学习交互动态。
 
@@ -60,13 +64,15 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 | **Subtask metadata** | 子任务阶段 / 进度标签 | 区分「哪一步失败」 |
 | **Structured failure text（C）** | 独立 outcome / failure flag / 结构化描述 | 替代纯 text 拼接 |
 
-**消融顺序：** 在 M1 证明 failure video 有价值后，逐项叠加 event → subtask → structured text，固定 M1 的模型与训练预算。
+**消融顺序：** 
 
 **当前状态：** C（structured failure）训练中，目标训至与 B 对齐的 late/final budget（~12240 steps）后再 rollout。
 
 ---
 
 ### Milestone 3：面向 failure 学习的模型架构
+
+**目标：** 架构上，为failure data的学习专门设计点模块，能涨点就行，主要是为了叙事上完整。
 
 **要论证：** 在 M2 的最优数据构造之上，新架构比标准 FastWAM MoT **更能利用 failure 信号**（而非仅堆数据）。
 
@@ -81,6 +87,8 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 ---
 
 ### Milestone 4：Train → Test → Retrain 迭代闭环
+
+**目标：** 迭代闭环，参考Pi 0.6 的RECAP。他们的是RL，需要执行过程中的人工纠正，失败数据用于更新advantage计算。先做仿真，再做真机。
 
 **要论证：** 部署失败样本回灌 + 多轮迭代，能否持续提升性能上限；并消融迭代轮数、回灌比例、checkpoint 选择策略。
 
@@ -103,6 +111,8 @@ Success 数据预训练 → Deploy / 闭环测试 → 采集 failure
 ---
 
 ### Milestone 5：触觉（Tactile）
+
+**目标：** 加入触觉，计划参考周哥他们即将推出的基模，感觉不需要搞太复杂，就在他们基础上能基于触觉去更好区分成功失败轨迹就行。这个后面再议，而且估计只做真机。
 
 **要论证：** 在接触密集阶段，触觉观测与预测能否拓展 M2 的 event 构造与 M3 的架构，进一步提升 failure 边界处的表现。
 
