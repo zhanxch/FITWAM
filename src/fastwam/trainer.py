@@ -21,6 +21,7 @@ from .utils.pytorch_utils import set_global_seed
 from .utils.samplers import ResumableEpochSampler
 from .utils.video_io import save_mp4
 from .utils.video_metrics import pil_frames_to_video_tensor, video_psnr, video_ssim
+from .models.wan22.video_lora import apply_training_mode, collect_trainable_parameters
 
 logger = get_logger(__name__)
 
@@ -85,12 +86,12 @@ class Wan22Trainer:
             self._assert_dataset_length_consistent(self.val_dataset, "val_dataset")
 
         # Freeze non-trainable modules before optimizer/deepspeed initialization.
-        # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
-        self._apply_dit_only_train_mode(self.model)
-        trainable_params = list(self.model.dit.parameters())
-        proprio_encoder = getattr(self.model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            trainable_params.extend(list(proprio_encoder.parameters()))
+        self._apply_training_mode(self.model)
+        trainable_params = collect_trainable_parameters(self.model)
+        video_lora_cfg = cfg.model.get("video_lora") or {}
+        if bool(video_lora_cfg.get("enabled", False)):
+            trainable_m = sum(p.numel() for p in trainable_params) / 1e6
+            logger.info("Video-LoRA training enabled: optimizer trainable params=%.2fM", trainable_m)
         self.optimizer = torch.optim.AdamW(
             trainable_params,
             lr=self.learning_rate,
@@ -306,21 +307,16 @@ class Wan22Trainer:
         logger.warning("Loaded .pt weights only; optimizer/scheduler/step were not restored under ZeRO2.")
 
     def _set_dit_only_train_mode(self):
-        # Match DiffSynth's freeze_except("dit"): only DiT stays trainable/in-train-mode.
-        logger.info("Setting DiT to train mode and freezing other model components.")
         model = self.accelerator.unwrap_model(self.model)
-        self._apply_dit_only_train_mode(model)
+        self._apply_training_mode(model)
+
+    @staticmethod
+    def _apply_training_mode(model):
+        apply_training_mode(model)
 
     @staticmethod
     def _apply_dit_only_train_mode(model):
-        model.eval()
-        model.requires_grad_(False)
-        model.dit.train()
-        model.dit.requires_grad_(True)
-        proprio_encoder = getattr(model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            proprio_encoder.train()
-            proprio_encoder.requires_grad_(True)
+        apply_training_mode(model)
 
     @staticmethod
     def _to_batched_eval_sample(sample):

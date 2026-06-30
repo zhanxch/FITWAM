@@ -36,7 +36,7 @@ from dexjoco_fastwam_adapter import (
     load_dexjoco_eval_settings,
     load_task_configs,
 )
-from fastwam_policy_server_async import PolicyClientAsync
+from policy_client_async import PolicyClientAsync
 
 
 def _patch_dexjoco_renderer_compat() -> None:
@@ -91,6 +91,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--replan-steps", type=int, required=True)
+    parser.add_argument(
+        "--action-horizon",
+        type=int,
+        default=None,
+        help="Closed-loop action chunk size. Required for EveRobot full-episode runs "
+        "(training has no fixed num_frames). For sliding-window runs, defaults to "
+        "config num_frames-1. Must match the policy server --action-horizon.",
+    )
     parser.add_argument("--max-env-steps", type=int, default=1500)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--save-video", action=argparse.BooleanOptionalAction, default=True)
@@ -732,7 +740,10 @@ def main() -> None:
     if not run_dir.exists():
         raise FileNotFoundError(f"run dir not found: {run_dir}")
 
-    eval_settings = load_dexjoco_eval_settings(run_dir)
+    eval_settings = load_dexjoco_eval_settings(
+        run_dir,
+        action_horizon_override=args.action_horizon,
+    )
     adapter = DexJoCoFastWAMAdapter(eval_settings)
     if args.replan_steps < 1 or args.replan_steps > adapter.action_horizon:
         raise ValueError(

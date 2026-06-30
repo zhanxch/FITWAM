@@ -29,7 +29,7 @@
 #          contributing cause; tune interpolation/clip/filter.
 #
 # Usage:
-#   scripts/1/run_fastwam_client_diagnostic.sh \
+#   scripts/wuji/run_fastwam_client_diagnostic.sh \
 #       --host <server-ip> --port 5560 \
 #       --task "Pick up the spray bottle, pump it to build up pressure, then spray water on the flowers" \
 #       --no-home --no-wbc \
@@ -37,7 +37,7 @@
 #       --log-prefix client_fastwam_diag_nopostproc
 #
 # The server should be launched with:
-#   python scripts/1/run_fastwam_server.py \
+#   python scripts/wuji/run_fastwam_server.py \
 #       --run-dir runs/spray_water_rot6d_rosbag_ts_filter_uncond_3cam_384_1e-4/<latest> \
 #       --checkpoint <ckpt> \
 #       --dump-dir runs/diag_b2_nopostproc/server_dump
@@ -45,7 +45,7 @@
 set -o pipefail
 
 REPO_ROOT="${FASTWAM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-WRAPPER="${REPO_ROOT}/scripts/1/run_fastwam_client_with_env.sh"
+WRAPPER="${REPO_ROOT}/scripts/wuji/run_fastwam_client_with_env.sh"
 
 if [[ ! -f "${WRAPPER}" ]]; then
     echo "[run_fastwam_client_diagnostic.sh][ERROR] wrapper not found: ${WRAPPER}" >&2

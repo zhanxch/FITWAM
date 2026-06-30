@@ -2,6 +2,9 @@
 archive/
 paper/
 outputs/
+logs/
+video_generation/
+scripts/diagnose/
 checkpoints
 data/*
 apex/

@@ -2,11 +2,11 @@
 """Run a Wuji/Astribot real-robot client against a FastWAM policy server.
 
 Uses the same robot control loop as ``run_gr00t_client.py`` but talks to
-``scripts/1/run_fastwam_server.py`` over the FastWAM ZMQ protocol.
+``scripts/wuji/run_fastwam_server.py`` over the FastWAM ZMQ protocol.
 
 Example:
 
-  scripts/1/run_fastwam_client_with_env.sh \\
+  scripts/wuji/run_fastwam_client_with_env.sh \\
     --host <server-ip> \\
     --port 5560 \\
     --task "Pick up the spray bottle, pump it to build up pressure, then spray water on the flowers" \\

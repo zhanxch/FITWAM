@@ -75,8 +75,9 @@ Success → Deploy → Failure → Retrain
 
 | 方向 | 状态 |
 |------|------|
-| FastWAM 基线 | success-only 外部参考已知；严格同 pipeline A 待导入或补跑 |
-| Failure 闭环 | B 已有 25-episode 关键 checkpoint 结果；C 正在训至 12240，完成后按 C25 → B100 → C100 顺序 rollout 并更新中文报告 |
+| FastWAM 基线（全参 MoT） | `water_plant_uncond_2cam_384_1e-4` 已训至 step_6500，闭环 eval 完成；A 组外部参考约 70-80% |
+| **baseline_lora**（Video LoRA） | **验证中**：LeRobot 固定窗口 + video LoRA，对照全参基线 |
+| Failure 闭环 | B 已有 25-episode 结果；C 训至 ~12240 后按 C25→B100→C100 rollout |
 | 触觉 | 未开始 |
 | Event 数据构造 | 未开始 |
 
@@ -90,16 +91,85 @@ Success → Deploy → Failure → Retrain
 
 ---
 
+## Video LoRA（独立可选路径）
+
+LoRA 是**与默认全参训练完全解耦**的可选模块，不影响现有 `fastwam` 基线：
+
+| 维度 | 默认全参 (`model=fastwam`) | Video LoRA (`model=fastwam_video_lora`) |
+|------|---------------------------|----------------------------------------|
+| Video DiT | 全参微调 | **仅 LoRA adapter**（rank 32，self-attn + FFN） |
+| ActionDiT / proprio | 全参微调 | 全参微调（不变） |
+| 默认配置 | `configs/model/fastwam.yaml` | `configs/model/fastwam_video_lora.yaml` |
+| Checkpoint | 标准 MoT 权重 | `checkpoint_format: video_lora_v1`（LoRA + action + proprio） |
+| 实现 | — | `src/fastwam/models/wan22/video_lora.py` |
+
+切换方式：在 task 配置里 `override /model: fastwam_video_lora`，或命令行传 `model=fastwam_video_lora`。训练入口（`train.py` / `train_everobot.py`）、数据 pipeline、DexJoCo deploy 均不变；推理时 run 的 `config.yaml` 含 `model.video_lora.enabled=true` 即自动加载 LoRA checkpoint。
+
+### 使用
+
+**LeRobot 固定窗口（当前 baseline_lora 对照实验）：**
+
+```bash
+# 数据准备（与全参基线相同）
+bash scripts/prepare_water_plant_2cam.sh
+python scripts/precompute_text_embeds.py task=water_plant_uncond_2cam_384_1e-4
+
+# 训练：Video LoRA + ActionDiT 全参
+bash scripts/train_water_plant_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
+```
+
+**EveRobot 整 episode（DiffSynth 风格，可变 T）：**
+
+```bash
+python scripts/convert_lerobot_to_everobot.py \
+  --dataset-dir data/water_plant_fastwam --video-keys front wrist
+
+bash scripts/train_everobot.sh task=everobot_water_plant_full_lora
+```
+
+（EveRobot + LoRA 的 task / data 配置说明见 [`scripts/README.md`](./scripts/README.md)。）
+
+**DexJoCo 闭环评估（与全参相同脚本，传入 LoRA run 目录即可）：**
+
+```bash
+python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+  --gpus 0,1,2,3 \
+  --run-dir runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id> \
+  --checkpoint runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id>/checkpoints/weights/step_XXXXX.pt \
+  --no-load-text-encoder \
+  --task-config-dir third_party/dexjoco/configs/rand_obj \
+  --tasks water_plant --episodes 100 --seed 25 \
+  --replan-steps 24 --control-mode blocking --max-env-steps 1500 \
+  --output-dir evaluate_results/dexjoco/baseline_lora/step_XXXXX
+```
+
+依赖 `peft`（已写入 `pyproject.toml`，`pip install -e .` 即可）。更多细节见 [`scripts/README.md`](./scripts/README.md#video-lora--actiondit-full-fine-tune-optional)。
+
+### baseline_lora 验证进展
+
+对照组为同数据、同双视角、同 proprio 的全参 run `water_plant_uncond_2cam_384_1e-4`（step_6500）。
+
+| 实验 | Task / 采样 | Run | 状态 |
+|------|-------------|-----|------|
+| 全参基线 | LeRobot 固定窗口 | `runs/water_plant_uncond_2cam_384_1e-4/` | eval 完成（`evaluate_results/dexjoco/water_plant/step_006500`） |
+| **baseline_lora** | LeRobot 固定窗口 + video LoRA | `runs/water_plant_uncond_2cam_384_1e-4_lora/` | **训练中**，训完即跑同配置闭环 eval |
+| everobot_full_lora | EveRobot 整 episode + video LoRA | `runs/everobot/everobot_water_plant_full_lora/` | step_475 已 eval（`evaluate_results/dexjoco/everobot_full_lora/step_000475`），待与 baseline_lora 横向对比 |
+
+目标：确认 video LoRA 能否在显著减少 video 侧可训练参数的同时，达到或接近全参基线的闭环成功率，作为后续 failure 闭环（B/A/C）的默认训练方式。
+
+---
+
 ## 代码地图
 
 ```text
-configs/          Hydra 配置
-src/fastwam/      模型
-scripts/train.py  训练
-scripts/1/        真机 deploy
+configs/          Hydra 配置（model/fastwam.yaml 与 model/fastwam_video_lora.yaml 并行）
+src/fastwam/      模型（video_lora.py 为独立 LoRA 模块）
+scripts/train.py  训练（LeRobot 固定窗口）
+scripts/train_everobot.py  训练（EveRobot 整 episode）
+scripts/wuji/     真机 deploy
 scripts/openloop/ 开环评估
-scripts/dexjoco_async/ DexJoCo async/LPF 历史消融（结果样本在 results/dexjoco_async_microwave/）
-data/  runs/  evaluate_results/
+scripts/dexjoco_async/ DexJoCo 闭环评估
+data/  runs/  evaluate_results/  logs/
 ```
 
 ---
@@ -113,4 +183,19 @@ data/  runs/  evaluate_results/
   journal={arXiv preprint arXiv:2603.16666},
   year={2026}
 }
+```
+
+多卡dexjoco并行测试
+```python
+python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+  --gpus 0,1,2,3 \
+  --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
+  --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \
+  --no-load-text-encoder \
+  --task-config-dir third_party/dexjoco/configs/rand_obj \
+  --tasks water_plant \
+  --episodes 100 --seed 25 \
+  --replan-steps 24 --control-mode blocking \
+  --max-env-steps 1500 \
+  --output-dir evaluate_results/dexjoco/water_plant/step_006500
 ```

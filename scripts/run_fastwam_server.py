@@ -291,6 +291,41 @@ def _resolve_run_dir(run_dir: Path) -> Path:
     )
 
 
+DEFAULT_INFER_NUM_FRAMES = 33
+
+
+def _resolve_inference_horizons(
+    train_data: Any,
+    *,
+    action_horizon: int | None,
+) -> tuple[int, int]:
+    """Resolve closed-loop (action_horizon, num_video_frames) from run config."""
+    num_frames = train_data.get("num_frames") if hasattr(train_data, "get") else None
+    if num_frames is None and hasattr(train_data, "num_frames"):
+        num_frames = train_data.num_frames
+    if num_frames is not None:
+        num_video_frames = int(num_frames)
+        resolved_action_horizon = (
+            int(action_horizon) if action_horizon is not None else num_video_frames - 1
+        )
+        return resolved_action_horizon, num_video_frames
+    if action_horizon is not None:
+        resolved_action_horizon = int(action_horizon)
+        return resolved_action_horizon, resolved_action_horizon + 1
+    target = ""
+    if hasattr(train_data, "get"):
+        target = str(train_data.get("_target_", ""))
+    elif hasattr(train_data, "_target_"):
+        target = str(train_data._target_)
+    if "EveRobotFullEpisodeDataset" in target:
+        raise ValueError(
+            "EveRobot full-episode run config has no fixed `num_frames`. "
+            "Pass --action-horizon when starting the policy server."
+        )
+    num_video_frames = DEFAULT_INFER_NUM_FRAMES
+    return num_video_frames - 1, num_video_frames
+
+
 def _resolve_checkpoint_path(run_dir: Path, checkpoint: str) -> Path:
     """Resolve checkpoint from absolute/relative paths or run-dir checkpoint layout."""
     raw = Path(checkpoint).expanduser()
@@ -355,21 +390,25 @@ def _build_policy_from_run(
     processor_cfg = cfg.data.train.processor
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
-    stats_path = _resolve_stats_path(run_dir, dataset_stats_path)
     if processor.wants_modality_stats:
-        # GR00T-aligned path: rebuild normalizer from meta/stats.json + modality.json.
+        # GR00T/meta path: rebuild normalizer from meta/stats.json + modality.json.
         processor.set_normalizer_from_modality_stats()
         print(f"  Modality stats (GR00T-style) from: {processor.norm_stats_meta_dir}", flush=True)
     else:
+        stats_path = _resolve_stats_path(run_dir, dataset_stats_path)
         processor.set_normalizer_from_stats(load_dataset_stats_from_json(str(stats_path)))
         print(f"  Dataset stats: {stats_path}", flush=True)
 
     if action_horizon is None:
-        action_horizon = int(cfg.data.train.num_frames) - 1
+        action_horizon, num_video_frames = _resolve_inference_horizons(
+            cfg.data.train, action_horizon=None
+        )
+    else:
+        action_horizon, num_video_frames = _resolve_inference_horizons(
+            cfg.data.train, action_horizon=action_horizon
+        )
     if num_inference_steps is None:
         num_inference_steps = int(cfg.get("eval_num_inference_steps", 10))
-    num_video_frames = int(cfg.data.train.num_frames)
-    print(f"  Dataset stats: {stats_path}", flush=True)
     print(f"  Action horizon: {action_horizon}", flush=True)
     print(f"  Num video frames: {num_video_frames}", flush=True)
     print(f"  Num inference steps: {num_inference_steps}", flush=True)

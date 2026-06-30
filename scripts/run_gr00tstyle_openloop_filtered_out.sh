@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /data_all/xiangchengzhan/FastWAM
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
 export PYTHONPATH="${PWD}/src:${PWD}:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4}"
+LOG_DIR="${ROOT_DIR}/logs/openloop"
+mkdir -p "${LOG_DIR}"
 
 CKPT="runs/spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4/2026-06-26_19-16-40/checkpoints/weights/step_005000.pt"
 OUT_BASE="./evaluate_results/openloop_episode_gr00tstyle/filtered_out"
@@ -37,7 +40,7 @@ run_one() {
     2>&1 | tee "${log}"
 }
 
-run_one gt_window "${OUT_BASE}/gt_window" run_gr00tstyle_openloop_gt.log
-run_one autoregressive "${OUT_BASE}/autoregressive" run_gr00tstyle_openloop_ar.log
+run_one gt_window "${OUT_BASE}/gt_window" "${LOG_DIR}/run_gr00tstyle_openloop_gt.log"
+run_one autoregressive "${OUT_BASE}/autoregressive" "${LOG_DIR}/run_gr00tstyle_openloop_ar.log"
 
 echo "=== Done ==="

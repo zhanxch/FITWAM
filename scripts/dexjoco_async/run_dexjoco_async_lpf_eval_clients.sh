@@ -53,7 +53,7 @@ wait_for_policy_server() {
     if "${PYTHON_BIN}" - <<PY >/dev/null 2>&1; then
 import sys
 sys.path.insert(0, "${FASTWAM_ROOT}/scripts")
-from fastwam_policy_server_async import PolicyClientAsync
+from policy_client_async import PolicyClientAsync
 c = PolicyClientAsync(host="${POLICY_HOST}", port=${port}, timeout_ms=5000, identity="probe-${port}")
 try:
     ok = c.ping()

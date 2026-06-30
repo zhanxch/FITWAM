@@ -25,6 +25,41 @@ DEFAULT_PROMPT = (
     "A video recorded from a robot's point of view executing the following instruction: {task}"
 )
 
+EVEROOBOT_FULL_EPISODE_DATASET = "EveRobotFullEpisodeDataset"
+DEFAULT_SLIDING_WINDOW_ACTION_HORIZON = 32
+
+
+def is_everobot_full_episode_train(train_data: dict[str, Any]) -> bool:
+    """True when the run was trained with variable-length full-episode EveRobot data."""
+    target = str(train_data.get("_target_", ""))
+    return EVEROOBOT_FULL_EPISODE_DATASET in target
+
+
+def resolve_eval_action_horizon(
+    train_data: dict[str, Any],
+    *,
+    action_horizon_override: int | None = None,
+) -> int:
+    """Resolve closed-loop action chunk size for DexJoCo eval.
+
+    - Sliding-window (LeRobot) runs: use ``num_frames - 1`` from training config.
+    - EveRobot full-episode runs: require ``action_horizon_override`` (no fixed train T).
+    """
+    if action_horizon_override is not None:
+        return int(action_horizon_override)
+
+    num_frames = train_data.get("num_frames")
+    if num_frames is not None:
+        return int(num_frames) - 1
+
+    if is_everobot_full_episode_train(train_data):
+        raise ValueError(
+            "EveRobot full-episode training config has no fixed `num_frames`. "
+            "Pass --action-horizon to specify inference chunk size (e.g. 32 or 180)."
+        )
+
+    return DEFAULT_SLIDING_WINDOW_ACTION_HORIZON
+
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 CLICK_MOUSE_ALIGN_ROTVEC = np.array(
@@ -116,33 +151,26 @@ def load_text_context_arrays(
     text_embedding_cache_dir: str | Path,
     context_len: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load cached T5 context as numpy arrays (works with or without pre-exported .npz)."""
+    """Load cached T5 context as numpy arrays (torch-free, .npz only).
+
+    Requires pre-exported ``.npz`` caches produced by
+    ``scripts/export_text_embed_cache_npz.py`` (run in the ``fastwam`` env).
+    The ``.pt`` format is intentionally unsupported here to keep the dexjoco
+    eval client free of any torch dependency.
+    """
     cache_dir = Path(text_embedding_cache_dir)
     hashed = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
     npz_path = cache_dir / f"{hashed}.t5_len{context_len}.npz"
-    if npz_path.exists():
-        payload = np.load(npz_path)
-        context = payload["context"].astype(np.float32)
-        context_mask = payload["mask"].astype(bool)
-    else:
-        pt_path = cache_dir / f"{hashed}.t5_len{context_len}.wan22ti2v5b.pt"
-        if not pt_path.exists():
-            raise FileNotFoundError(
-                f"Missing text embedding cache: {pt_path}. "
-                "Run `python scripts/precompute_text_embeds.py` for this instruction first."
-            )
-        try:
-            import torch
-        except ImportError as exc:
-            raise ImportError(
-                "torch is required to load .pt text caches from the dexjoco eval env. "
-                "Either `pip install torch` in dexjoco, or export .npz caches via "
-                "`python scripts/export_text_embed_cache_npz.py --cache-dir "
-                f"{cache_dir}`."
-            ) from exc
-        payload = torch.load(pt_path, map_location="cpu")
-        context = payload["context"].to(dtype=torch.float32).numpy()
-        context_mask = payload["mask"].bool().numpy()
+    if not npz_path.exists():
+        raise FileNotFoundError(
+            f"Missing torch-free text embedding cache (.npz): {npz_path}. "
+            "The dexjoco eval client does not import torch, so .pt caches are "
+            "not supported. Run in the fastwam env:\n"
+            f"  python scripts/export_text_embed_cache_npz.py --cache-dir {cache_dir}"
+        )
+    payload = np.load(npz_path)
+    context = payload["context"].astype(np.float32)
+    context_mask = payload["mask"].astype(bool)
 
     context = context.copy()
     context[~context_mask] = 0.0
@@ -150,7 +178,11 @@ def load_text_context_arrays(
     return context, context_mask
 
 
-def load_dexjoco_eval_settings(run_dir: Path) -> dict[str, Any]:
+def load_dexjoco_eval_settings(
+    run_dir: Path,
+    *,
+    action_horizon_override: int | None = None,
+) -> dict[str, Any]:
     """Training-run settings for DexJoCo closed-loop eval."""
     config_path = run_dir / "config.yaml"
     if not config_path.exists():
@@ -163,9 +195,14 @@ def load_dexjoco_eval_settings(run_dir: Path) -> dict[str, Any]:
     shape_meta = train_data["shape_meta"]
     image_keys = [str(item["key"]) for item in shape_meta["images"]]
     image_sizes_wh = [(int(item["shape"][2]), int(item["shape"][1])) for item in shape_meta["images"]]
+    everobot_full_episode = is_everobot_full_episode_train(train_data)
     return {
         "image_size_wh": (image_size[1], image_size[0]),
-        "action_horizon": int(train_data["num_frames"]) - 1,
+        "action_horizon": resolve_eval_action_horizon(
+            train_data,
+            action_horizon_override=action_horizon_override,
+        ),
+        "everobot_full_episode": everobot_full_episode,
         "action_output_dim": int(processor["action_output_dim"]),
         "proprio_output_dim": int(processor["proprio_output_dim"]),
         "text_embedding_cache_dir": train_data.get("text_embedding_cache_dir"),

@@ -11,6 +11,15 @@ from .action_dit import ActionDiT
 from .helpers.loader import load_wan22_ti2v_5b_components
 from .mot import MoT
 from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
+from .video_lora import (
+    CHECKPOINT_FORMAT_VIDEO_LORA_V1,
+    export_action_expert_state_dict,
+    export_video_lora_state_dict,
+    inject_video_lora,
+    load_action_expert_state_dict,
+    load_video_lora_state_dict,
+    normalize_video_lora_config,
+)
 
 logger = get_logger(__name__)
 
@@ -84,6 +93,8 @@ class FastWAM(torch.nn.Module):
         self.torch_dtype = torch_dtype
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
+        self.video_lora_enabled = False
+        self.video_lora_config: dict[str, Any] = {"enabled": False}
 
         self.to(self.device)
 
@@ -111,6 +122,7 @@ class FastWAM(torch.nn.Module):
         action_num_train_timesteps: int = 1000,
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
+        video_lora: dict[str, Any] | None = None,
     ):
         if video_dit_config is None:
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
@@ -130,6 +142,15 @@ class FastWAM(torch.nn.Module):
         )
 
         video_expert = components.dit
+        video_lora_cfg = normalize_video_lora_config(video_lora)
+        if video_lora_cfg["enabled"]:
+            video_expert = inject_video_lora(
+                video_expert,
+                rank=video_lora_cfg["rank"],
+                alpha=video_lora_cfg["alpha"],
+                target_modules=video_lora_cfg["target_modules"],
+                checkpoint=video_lora_cfg["checkpoint"],
+            )
         action_expert = ActionDiT.from_pretrained(
             action_dit_config=action_dit_config,
             action_dit_pretrained_path=action_dit_pretrained_path,
@@ -169,6 +190,8 @@ class FastWAM(torch.nn.Module):
             loss_lambda_video=loss_lambda_video,
             loss_lambda_action=loss_lambda_action,
         )
+        model.video_lora_enabled = bool(video_lora_cfg["enabled"])
+        model.video_lora_config = video_lora_cfg
         model.model_paths = {
             "video_dit": components.dit_path,
             "vae": components.vae_path,
@@ -1086,11 +1109,27 @@ class FastWAM(torch.nn.Module):
         )
 
     def save_checkpoint(self, path, optimizer=None, step=None):
-        payload = {
-            "mot": self.mot.state_dict(),
-            "step": step,
-            "torch_dtype": str(self.torch_dtype),
-        }
+        if self.video_lora_enabled:
+            video_lora_state = export_video_lora_state_dict(self.video_expert)
+            if not video_lora_state:
+                raise RuntimeError(
+                    "Video LoRA checkpoint export found no LoRA parameters. "
+                    "Was LoRA injected on the video expert?"
+                )
+            payload = {
+                "checkpoint_format": CHECKPOINT_FORMAT_VIDEO_LORA_V1,
+                "video_lora": video_lora_state,
+                "mot_action": export_action_expert_state_dict(self.mot),
+                "video_lora_config": dict(self.video_lora_config),
+                "step": step,
+                "torch_dtype": str(self.torch_dtype),
+            }
+        else:
+            payload = {
+                "mot": self.mot.state_dict(),
+                "step": step,
+                "torch_dtype": str(self.torch_dtype),
+            }
         if self.proprio_encoder is not None:
             payload["proprio_encoder"] = self.proprio_encoder.state_dict()
         if optimizer is not None:
@@ -1136,8 +1175,36 @@ class FastWAM(torch.nn.Module):
         experts: Optional[Sequence[str]] = None,
     ):
         payload = torch.load(path, map_location="cpu")
-        if "mot" in payload:
+        checkpoint_format = payload.get("checkpoint_format")
+        if checkpoint_format == CHECKPOINT_FORMAT_VIDEO_LORA_V1:
+            if not self.video_lora_enabled:
+                raise ValueError(
+                    f"Checkpoint {path} uses {CHECKPOINT_FORMAT_VIDEO_LORA_V1} but the model was "
+                    "created without `model.video_lora.enabled=true`. "
+                    "Instantiate the model with video LoRA enabled before loading this checkpoint."
+                )
+            if "video_lora" not in payload:
+                raise ValueError(f"LoRA checkpoint missing `video_lora` key: {path}")
+            if "mot_action" not in payload:
+                raise ValueError(f"LoRA checkpoint missing `mot_action` key: {path}")
+            load_video_lora_state_dict(self.video_expert, payload["video_lora"])
+            load_action_expert_state_dict(self.mot, payload["mot_action"])
+            logger.info("Loaded video-LoRA checkpoint from %s", path)
+        elif "mot" in payload:
             mot_state = self._select_mot_state_dict(payload["mot"], experts=experts)
+            if self.video_lora_enabled and experts is None:
+                action_prefix = "mixtures.action."
+                action_only = {
+                    key: value for key, value in mot_state.items() if key.startswith(action_prefix)
+                }
+                if action_only:
+                    logger.warning(
+                        "Loading legacy/full MoT checkpoint into video-LoRA model: "
+                        "applying action expert weights only (video base + LoRA unchanged)."
+                    )
+                    mot_state = action_only
+                else:
+                    mot_state = self._select_mot_state_dict(payload["mot"], experts=["action"])
             filtered, skipped_shape = self._filter_state_dict_by_shape(self.mot, mot_state)
             incompatible = self.mot.load_state_dict(filtered, strict=False)
             expert_desc = ",".join(experts) if experts else "all"

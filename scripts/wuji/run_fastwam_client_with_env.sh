@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Example:
-# scripts/1/run_fastwam_client_with_env.sh \
+# scripts/wuji/run_fastwam_client_with_env.sh \
 #   --host <server-ip> \
 #   --port 5560 \
 #   --task "Pick up the spray bottle, pump it to build up pressure, then spray water on the flowers" \
@@ -25,7 +25,7 @@ SDK="${ASTRIBOT_SDK_ROOT:-/home/zxc/cenyj/astribot_sdk/astribot_sdk_ros2-master}
 SHIM="${ASTRIBOT_PYTHON_SHIMS:-/home/zxc/cenyj/astribot_sdk/python_shims}"
 WUJI_SETUP="${WUJI_HAND_SETUP:-/home/zxc/Desktop/wuji/wuji-teleop/wujihandros2/install/setup.bash}"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
-CLIENT="${REPO_ROOT}/scripts/1/run_fastwam_client.py"
+CLIENT="${REPO_ROOT}/scripts/wuji/run_fastwam_client.py"
 RESET_RAN=0
 
 source_if_present() {
@@ -99,7 +99,7 @@ elif ! activate_conda_env_if_present astribot; then
     echo "[run_fastwam_client_with_env.sh][WARN] astribot conda env not activated" >&2
 fi
 
-export PYTHONPATH="${REPO_ROOT}/scripts:${REPO_ROOT}/scripts/1:${REPO_ROOT}/src:${REPO_ROOT}:${SHIM}:${SDK}/third_party/software/astribot_ros_middleware/lib/python3.10/site-packages:${SDK}/astribot_msgs/local/lib/python3.10/dist-packages:${SDK}:${PYTHONPATH:-}"
+export PYTHONPATH="${REPO_ROOT}/scripts:${REPO_ROOT}/scripts/wuji:${REPO_ROOT}/src:${REPO_ROOT}:${SHIM}:${SDK}/third_party/software/astribot_ros_middleware/lib/python3.10/site-packages:${SDK}/astribot_msgs/local/lib/python3.10/dist-packages:${SDK}:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${SDK}/astribot_msgs/lib:${SDK}/astribot_msgs/local/lib:${SDK}/astribot_sdk/core/common/robotics_library_py:${SDK}/astribot_sdk/core/common/whole_body_control/third_party:${SDK}/third_party/third_pkg/pinocchio/lib:${SDK}/third_party/drake/lib:${LD_LIBRARY_PATH:-}"
 
 cd "${REPO_ROOT}" || exit 1

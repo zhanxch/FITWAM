@@ -1,0 +1,23 @@
+# Video DiT LoRA + ActionDiT full fine-tune (DiffSynth-style video adapters).
+#
+# Usage (LeRobot sliding-window):
+#   bash scripts/train_zero1.sh task=water_plant_uncond_2cam_384_1e-4_lora
+# Usage (EveRobot):
+#   bash scripts/train_everobot.sh task=everobot_water_plant_lora
+
+defaults:
+  - fastwam
+  - _self_
+
+video_lora:
+  enabled: true
+  rank: 32
+  alpha: null
+  target_modules:
+    - self_attn.q
+    - self_attn.k
+    - self_attn.v
+    - self_attn.o
+    - ffn.0
+    - ffn.2
+  checkpoint: null

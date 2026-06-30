@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /data_all/xiangchengzhan/FastWAM
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
 export PYTHONPATH="${PWD}/src:${PWD}:${PYTHONPATH:-}"
+LOG_DIR="${ROOT_DIR}/logs/openloop"
+mkdir -p "${LOG_DIR}"
 PYTHON="/home/xiangchengzhan/anaconda3/envs/fastwam/bin/python"
 unset CUDA_VISIBLE_DEVICES
 # GPU 1 typically has the most headroom beside occupied training jobs.
@@ -39,7 +42,7 @@ for step in "${STEPS[@]}"; do
 
   for mode in "${MODES[@]}"; do
     out_dir="${OUT_BASE}/step_${step}/${mode}"
-    log="run_gr00tstyle_openloop_step${step}_${mode}.log"
+    log="${LOG_DIR}/run_gr00tstyle_openloop_step${step}_${mode}.log"
     if compgen -G "${out_dir}/*/summary.json" > /dev/null; then
       echo "SKIP existing: step=${step} mode=${mode}"
       continue

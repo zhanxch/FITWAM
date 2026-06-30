@@ -54,9 +54,11 @@ class FastWAMProcessor(BaseProcessor):
         norm_stats_source: str = "compute",
         norm_stats_meta_dir: Optional[str] = None,
         norm_relative_action_keys: Optional[List[str]] = None,
+        variable_obs_steps: bool = False,
     ):
         self.shape_meta = shape_meta
         self.num_obs_steps = num_obs_steps
+        self.variable_obs_steps = variable_obs_steps
         self.num_output_cameras = num_output_cameras
         self.action_output_dim = action_output_dim
         self.proprio_output_dim = proprio_output_dim
@@ -277,8 +279,13 @@ class FastWAMProcessor(BaseProcessor):
                 image = trans(image)
             
             meta_shape = [self.num_obs_steps] + shape
-            assert image.shape == meta_shape, \
-                f"Expected shape {meta_shape}, got {image.shape} after transforms for key {key}"
+            if not self.variable_obs_steps:
+                assert image.shape == meta_shape, \
+                    f"Expected shape {meta_shape}, got {image.shape} after transforms for key {key}"
+            elif image.ndim != 4 or image.shape[1:] != tuple(shape):
+                raise ValueError(
+                    f"Expected shape [T, {shape[0]}, {shape[1]}, {shape[2]}], got {image.shape} for key {key}"
+                )
 
             processed_images.append(image)
         pixel_values = torch.stack(processed_images, dim=0) # [num_input_cameras, T, C, H, W]
