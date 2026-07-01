@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
 RESULT_ROOT=${RESULT_ROOT:-/data_all/share/dexjoco_fastwam_results}
+PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
 ACCEL=${ACCEL:-/home/zhaoyc/.local/bin/accelerate}
 ACCEL_CFG=${ACCEL_CFG:-scripts/accelerate_configs/accelerate_zero1_ds.yaml}
 TASK=${TASK:?Set TASK, e.g. TASK=hammer_nail}
@@ -46,7 +47,8 @@ fi
 
 cd "$ROOT"
 mkdir -p "$LOGDIR" "$EVAL_DIR"
-export PATH=/home/zhaoyc/.local/bin:$PATH
+PY_BIN_DIR=$(dirname "$PY")
+export PATH="$PY_BIN_DIR":/home/zhaoyc/.local/bin:$PATH
 export PYTHONPATH="$ROOT/src:$ROOT/scripts:${PYTHONPATH:-}"
 export DIFFSYNTH_MODEL_BASE_PATH="$ROOT/checkpoints"
 export PYTHONUNBUFFERED=1
@@ -92,15 +94,15 @@ done
 
 if [[ ! -f "$STATS_PATH" ]]; then
   log "missing stats; computing $STATS_PATH"
-  python scripts/compute_dexjoco_success_stats.py --tasks "$TASK"
+  "$PY" scripts/compute_dexjoco_success_stats.py --tasks "$TASK"
 fi
 
 log "generating configs for $TASK"
-python scripts/create_dexjoco_failure_configs.py --tasks "$TASK" --max-steps "$MAX_STEPS" --save-every "$SAVE_EVERY" --eval-every "$EVAL_EVERY"
+"$PY" scripts/create_dexjoco_failure_configs.py --tasks "$TASK" --max-steps "$MAX_STEPS" --save-every "$SAVE_EVERY" --eval-every "$EVAL_EVERY"
 
 log "precomputing text embeddings for task=$TASK_CFG cache=$CACHE_DIR"
-CUDA_VISIBLE_DEVICES="$FIRST_GPU" python scripts/precompute_text_embeds.py "task=${TASK_CFG}" >> "$TRAIN_LOG" 2>&1
-CUDA_VISIBLE_DEVICES="$FIRST_GPU" python scripts/water_plant/export_text_embed_cache_npz.py --cache-dir "$CACHE_DIR" >> "$TRAIN_LOG" 2>&1
+CUDA_VISIBLE_DEVICES="$FIRST_GPU" "$PY" scripts/precompute_text_embeds.py "task=${TASK_CFG}" >> "$TRAIN_LOG" 2>&1
+CUDA_VISIBLE_DEVICES="$FIRST_GPU" "$PY" scripts/water_plant/export_text_embed_cache_npz.py --cache-dir "$CACHE_DIR" >> "$TRAIN_LOG" 2>&1
 
 train_args=(
   "task=${TASK_CFG}"
@@ -128,7 +130,7 @@ if [[ ! -f "$CKPT" ]]; then
 fi
 
 log "rolling out checkpoint=$CKPT episodes=$EVAL_EPISODES seed=$EVAL_SEED"
-python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+"$PY" scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus "$GPUS" \
   --run-dir "$RUN_DIR" \
   --checkpoint "$CKPT" \
