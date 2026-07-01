@@ -54,12 +54,6 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
             meta = LeRobotDatasetMetadata(repo_id=repo_id, root=ds_root)
             metas.append(meta)
 
-        # Load modality.json if present (GR00T-style per-modality slicing).
-        # When shape_meta uses multiple non-"default" keys whose names match
-        # modality.json entries, the merged parquet column (action / observation.state)
-        # is sliced per-key using {start, end} from modality.json.
-        self.modality_meta = self._load_modality_meta(dataset_dirs)
-
         fps_list = [m.fps for m in metas]
         assert len(set(fps_list)) == 1, f"All dataset_dirs must have the same fps, got {fps_list}"
         fps = fps_list[0]
@@ -83,35 +77,15 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
         
         for meta in self.state_meta:
             key = meta["key"]
-            if key != "default" and self.modality_meta and key in self.modality_meta.get("state", {}):
-                # Multi-modality mode: all state keys share the merged parquet column.
-                # Slicing by modality.json {start, end} happens in _get_state.
-                meta["lerobot_key"] = "observation.state"
-                meta["modality_slice"] = (
-                    self.modality_meta["state"][key]["start"],
-                    self.modality_meta["state"][key]["end"],
-                )
-            else:
-                meta["lerobot_key"] = f"observation.state.{key}" if key != "default" else "observation.state"
-                meta["modality_slice"] = None
-            if meta["lerobot_key"] not in delta_timestamps:
-                delta_timestamps[meta["lerobot_key"]] = [
-                    (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
-                ]
+            meta["lerobot_key"] = f"observation.state.{key}" if key != "default" else "observation.state"
+            delta_timestamps[meta["lerobot_key"]] = [
+                (t * global_sample_stride) / fps for t in range(-past_obs_size, -past_obs_size + obs_size)
+            ]
         
         for meta in self.action_meta:
             key = meta["key"]
-            if key != "default" and self.modality_meta and key in self.modality_meta.get("action", {}):
-                meta["lerobot_key"] = "action"
-                meta["modality_slice"] = (
-                    self.modality_meta["action"][key]["start"],
-                    self.modality_meta["action"][key]["end"],
-                )
-            else:
-                meta["lerobot_key"] = f"action.{key}" if key != "default" else "action"
-                meta["modality_slice"] = None
-            if meta["lerobot_key"] not in delta_timestamps:
-                delta_timestamps[meta["lerobot_key"]] = [(t * global_sample_stride) / fps for t in range(-past_action_size, -past_action_size + action_size)]
+            meta["lerobot_key"] = f"action.{key}" if key != "default" else "action"
+            delta_timestamps[meta["lerobot_key"]] = [(t * global_sample_stride) / fps for t in range(-past_action_size, -past_action_size + action_size)]
 
         episodes = {}
         if val_set_proportion < 1e-6:
@@ -154,32 +128,11 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
             "to": torch.cat([dataset["to"] for dataset in episode_data_index]),
         }
 
-    @staticmethod
-    def _load_modality_meta(dataset_dirs: List[str]) -> Optional[Dict[str, Any]]:
-        """Load meta/modality.json from the first dataset dir if it exists.
-
-        Returns the modality layout dict ({state/action: {key: {start, end}}})
-        or None when not present / not usable.
-        """
-        import json as _json
-        for ds_dir in dataset_dirs:
-            p = Path(ds_dir) / "meta" / "modality.json"
-            if p.exists():
-                try:
-                    with open(p, "r") as f:
-                        return _json.load(f)
-                except Exception as e:
-                    logger.warning(f"Failed to load {p}: {e}")
-        return None
-
     def _get_action(self, meta, lerobot_sample) -> torch.Tensor:
         key, lerobot_key, raw_shape = meta["key"], meta["lerobot_key"], meta["raw_shape"]
         action: torch.Tensor = lerobot_sample[lerobot_key] # [T, action_dim]
         if action.ndim == 1: # for shape of 1, like gripper
             action = action.unsqueeze(-1)
-        sl = meta.get("modality_slice")
-        if sl is not None:
-            action = action[..., sl[0]:sl[1]]
         assert action.shape[-1] == raw_shape, f"Action '{key}' shape {action.shape[-1]} mismatch with meta {raw_shape}."
         return action
 
@@ -188,9 +141,6 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
         state: torch.Tensor = lerobot_sample[lerobot_key]
         if state.ndim == 1: # for shape of 1, like gripper
             state = state.unsqueeze(-1)
-        sl = meta.get("modality_slice")
-        if sl is not None:
-            state = state[..., sl[0]:sl[1]]
         # state = state[..., :-1, :]  # use state_{t} as observation_t
         assert state.shape[-1] == raw_shape, f"State '{key}' shape {state.shape[-1]} mismatch with meta {raw_shape}."
         return state
