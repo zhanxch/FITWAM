@@ -205,9 +205,10 @@ def task_cfg(
     model_cfg = {
         "proprio_dim": "${data.train.processor.proprio_output_dim}",
         "state_dit_config": None,
-        "skip_dit_load_from_pretrain": True,
-        "action_dit_pretrained_path": None,
     }
+    if variant != "success":
+        model_cfg["skip_dit_load_from_pretrain"] = True
+        model_cfg["action_dit_pretrained_path"] = None
     if variant == "failure_embedding":
         model_cfg["outcome_num_classes"] = 2
 
