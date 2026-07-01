@@ -1,0 +1,7 @@
+step,episodes,successes,success_rate,summary_path
+7000,50,25,0.5,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json
+8000,50,35,0.7,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json
+9000,50,35,0.7,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json
+10000,50,37,0.74,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json
+11000,50,39,0.78,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json
+12000,50,40,0.8,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json

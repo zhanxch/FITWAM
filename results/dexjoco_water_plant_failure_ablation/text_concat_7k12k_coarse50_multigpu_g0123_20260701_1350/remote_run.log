@@ -1,0 +1,2176 @@
+[2026-07-01 13:48:57] starting concat/text-failure coarse sweep
+run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57
+out_root=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350
+gpus=0,1,2,3 episodes=50 seed=0 steps=7000 8000 9000 10000 11000 12000 env=residual
+0, 37702 MiB, 81920 MiB, 100 %
+1, 6133 MiB, 81920 MiB, 100 %
+2, 7 MiB, 81920 MiB, 0 %
+3, 13 MiB, 81920 MiB, 0 %
+4, 76313 MiB, 81920 MiB, 100 %
+5, 74068 MiB, 81920 MiB, 100 %
+6, 74067 MiB, 81920 MiB, 100 %
+7, 76938 MiB, 81920 MiB, 100 %
+[2026-07-01 13:48:57] evaluating step=7000 attempt=1 ports=41903,45611,40065,37461 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_007000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[41903, 45611, 40065, 37461] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=41903 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=45611 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=40065 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=37461 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=41903 pid=2765536 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=45611 pid=2765539 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=40065 pid=2765545 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=37461 pid=2765554 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=41903: ready
+[multi-gpu]   server shard=1 port=45611: ready
+[multi-gpu]   server shard=2 port=40065: ready
+[multi-gpu]   server shard=3 port=37461: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=41903 eps=13 pid=2941817 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=45611 eps=13 pid=2941818 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=40065 eps=12 pid=2941819 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=37461 eps=12 pid=2941824 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:41903
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:45611
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40065
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:37461
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=257 elapsed=27.4s jerk=0.1900742045804566
+  [shard2]   episode 2/12 seed=27
+  [shard3]     -> success=True steps=246 elapsed=26.2s jerk=0.17832398031395477
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=194 elapsed=30.7s jerk=0.5234395024987558
+  [shard0]   episode 2/13 seed=1
+  [shard1]     -> success=True steps=258 elapsed=29.8s jerk=0.1730790770088788
+  [shard1]   episode 2/13 seed=14
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=274 elapsed=21.0s jerk=0.21661551463801196
+  [shard1]   episode 3/13 seed=15
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=369 elapsed=28.8s jerk=0.24270744495885574
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=44.9s jerk=0.35508720300169694
+  [shard0]   episode 3/13 seed=2
+  [shard2]     -> success=False steps=600 elapsed=46.6s jerk=0.18156407696247898
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=323 elapsed=25.4s jerk=0.19672807795793468
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=45.4s jerk=0.3233974072210067
+  [shard1]   episode 4/13 seed=16
+  [shard2]     -> success=True steps=269 elapsed=21.5s jerk=0.17693801921851626
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=402 elapsed=30.9s jerk=0.233983001941815
+  [shard0]   episode 4/13 seed=3
+  [shard3]     -> success=True steps=304 elapsed=24.8s jerk=0.18965277833160976
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=298 elapsed=23.2s jerk=0.17474373518111738
+  [shard1]   episode 5/13 seed=17
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=45.1s jerk=0.24488941956323923
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=44.8s jerk=0.17483149423422822
+  [shard0]   episode 5/13 seed=4
+  [shard3]     -> success=False steps=600 elapsed=46.1s jerk=0.23876563244091228
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=45.6s jerk=0.18485945993318006
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=279 elapsed=22.1s jerk=0.1855304570135657
+  [shard0]   episode 6/13 seed=5
+  [shard2]     -> success=True steps=374 elapsed=30.4s jerk=0.1835158297651878
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=266 elapsed=21.2s jerk=0.1804612342155341
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=47.0s jerk=0.24837768758743703
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=44.3s jerk=0.17156231124265536
+  [shard0]   episode 7/13 seed=6
+  [shard2]     -> success=False steps=600 elapsed=46.4s jerk=0.3195123907153722
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=290 elapsed=24.8s jerk=0.17935662341511083
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=44.0s jerk=0.18292368071334417
+  [shard1]   episode 8/13 seed=20
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=259 elapsed=20.4s jerk=0.17250082344686474
+  [shard0]   episode 8/13 seed=7
+  [shard2]     -> success=True steps=249 elapsed=19.7s jerk=0.16690540645527935
+  [shard2]   episode 8/12 seed=33
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=151 elapsed=13.4s jerk=0.294710026691424
+  [shard0]   episode 9/13 seed=8
+  [shard1]     -> success=True steps=254 elapsed=20.5s jerk=0.2657487058332042
+  [shard1]   episode 9/13 seed=21
+  [shard3]     -> success=True steps=326 elapsed=27.0s jerk=0.25366144733112533
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=253 elapsed=21.0s jerk=0.16310388198589898
+  [shard0]   episode 10/13 seed=9
+  [shard3]     -> success=True steps=267 elapsed=22.0s jerk=0.1806857947752161
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=46.6s jerk=0.17179053833701938
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=221 elapsed=17.5s jerk=0.23503032030716334
+  [shard0]   episode 11/13 seed=10
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=45.7s jerk=0.19481173775043575
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=46.5s jerk=0.18286549684943562
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=44.9s jerk=0.17555637576657793
+  [shard2]   episode 10/12 seed=35
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=44.5s jerk=0.3658973573517042
+  [shard0]   episode 12/13 seed=11
+  [shard3]     -> success=True steps=245 elapsed=19.9s jerk=0.17688618146588284
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=43.9s jerk=0.23114006376411006
+  [shard1]   episode 11/13 seed=23
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=266 elapsed=20.8s jerk=0.18773492397458263
+  [shard0]   episode 13/13 seed=12
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=45.9s jerk=0.16773226024290191
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=44.9s jerk=0.16803454071981053
+  [shard1]   episode 12/13 seed=24
+  [shard3]     -> success=False steps=600 elapsed=47.5s jerk=0.17132379363811134
+  [shard3] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard3] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+  [shard2]     -> success=True steps=263 elapsed=21.1s jerk=0.26992271161170756
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,1,2]
+  [shard0]     -> success=False steps=600 elapsed=44.3s jerk=0.18478803354686119
+  [shard0] [dexjoco-control] water_plant: 6/13 (46.2%)
+  [shard0] [dexjoco-control] overall: 6/13 (46.2%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+[multi-gpu] still running: shards [1,2]
+[multi-gpu] still running: shards [1,2]
+[multi-gpu] still running: shards [1,2]
+[multi-gpu] still running: shards [1,2]
+  [shard2]     -> success=True steps=304 elapsed=24.6s jerk=0.6037969880595507
+  [shard2] [dexjoco-control] water_plant: 6/12 (50.0%)
+  [shard2] [dexjoco-control] overall: 6/12 (50.0%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+  [shard1]     -> success=False steps=600 elapsed=44.3s jerk=0.18872053096425973
+  [shard1]   episode 13/13 seed=25
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+[multi-gpu] still running: shards [1]
+  [shard1]     -> success=False steps=600 elapsed=43.3s jerk=0.18959186126456212
+  [shard1] [dexjoco-control] water_plant: 5/13 (38.5%)
+  [shard1] [dexjoco-control] overall: 5/13 (38.5%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] client shard=1 finished (ok)
+
+[multi-gpu] combined: 25/50 (50.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 25/50 (50.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.csv
+[summary] step=None successes=25/50 rate=0.500 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json
+[2026-07-01 13:59:30] finished step=7000
+[2026-07-01 13:59:30] evaluating step=8000 attempt=1 ports=43791,36843,40705,43947 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_008000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[43791, 36843, 40705, 43947] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=43791 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=36843 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=40705 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=43947 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=43791 pid=3653869 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=36843 pid=3653875 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=40705 pid=3653885 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=43947 pid=3653894 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=43791: ready
+[multi-gpu]   server shard=1 port=36843: ready
+[multi-gpu]   server shard=2 port=40705: ready
+[multi-gpu]   server shard=3 port=43947: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=43791 eps=13 pid=3855622 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=36843 eps=13 pid=3855623 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=40705 eps=12 pid=3855625 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=43947 eps=12 pid=3855627 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:43791
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:36843
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40705
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:43947
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=253 elapsed=29.7s jerk=0.2000060522283216
+  [shard1]   episode 2/13 seed=14
+  [shard2]     -> success=True steps=273 elapsed=31.9s jerk=0.15143728155876438
+  [shard2]   episode 2/12 seed=27
+  [shard3]     -> success=True steps=235 elapsed=31.8s jerk=0.2402192192559846
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=253 elapsed=23.9s jerk=0.14215567559597503
+  [shard1]   episode 3/13 seed=15
+  [shard3]     -> success=True steps=213 elapsed=20.5s jerk=0.22778736755816859
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=237 elapsed=22.8s jerk=0.14467810560414132
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=61.5s jerk=0.13493524441950297
+  [shard0]   episode 2/13 seed=1
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=237 elapsed=21.8s jerk=0.1876967557884277
+  [shard1]   episode 4/13 seed=16
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=307 elapsed=29.0s jerk=0.16543988906702056
+  [shard2]   episode 4/12 seed=29
+  [shard3]     -> success=True steps=287 elapsed=27.5s jerk=0.13846392771392538
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=256 elapsed=24.1s jerk=0.1930291129818817
+  [shard0]   episode 3/13 seed=2
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=254 elapsed=23.9s jerk=0.13282295690465068
+  [shard1]   episode 5/13 seed=17
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=258 elapsed=23.5s jerk=0.13338427036069334
+  [shard0]   episode 4/13 seed=3
+  [shard3]     -> success=True steps=301 elapsed=29.5s jerk=0.1335434947274999
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=293 elapsed=26.1s jerk=0.23422896220665618
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=53.1s jerk=0.14378610419040938
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=288 elapsed=25.9s jerk=0.13722177042619332
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=52.2s jerk=0.1377584223688446
+  [shard0]   episode 5/13 seed=4
+  [shard3]     -> success=False steps=600 elapsed=53.4s jerk=0.16040702825131822
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=256 elapsed=24.2s jerk=0.2991747499010929
+  [shard0]   episode 6/13 seed=5
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=52.3s jerk=0.13052177110867555
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=50.2s jerk=0.13300493808718628
+  [shard1]   episode 8/13 seed=20
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=53.2s jerk=0.13139912843654386
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=46.7s jerk=0.14977259009478483
+  [shard0]   episode 7/13 seed=6
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=47.4s jerk=0.1708430065570966
+  [shard2]   episode 7/12 seed=32
+  [shard3]     -> success=True steps=257 elapsed=22.2s jerk=0.14706395649734666
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=45.7s jerk=0.14582855797631286
+  [shard1]   episode 9/13 seed=21
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=209 elapsed=17.0s jerk=0.13370144507591275
+  [shard0]   episode 8/13 seed=7
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=247 elapsed=19.9s jerk=0.17208318348441806
+  [shard2]   episode 8/12 seed=33
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=255 elapsed=22.1s jerk=0.259672763422426
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=231 elapsed=18.9s jerk=0.2849572125871109
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=249 elapsed=20.3s jerk=0.1721730432831324
+  [shard0]   episode 9/13 seed=8
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=277 elapsed=23.8s jerk=0.22367205446416683
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=269 elapsed=21.7s jerk=0.13957451466708148
+  [shard1]   episode 11/13 seed=23
+  [shard3]     -> success=True steps=253 elapsed=25.1s jerk=0.13917784919717396
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=271 elapsed=21.7s jerk=0.1373999659179755
+  [shard0]   episode 10/13 seed=9
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=287 elapsed=24.0s jerk=0.22216929207768357
+  [shard0]   episode 11/13 seed=10
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=48.5s jerk=0.1329018326482446
+  [shard2]   episode 10/12 seed=35
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=229 elapsed=19.7s jerk=0.15312237146470514
+  [shard0]   episode 12/13 seed=11
+  [shard1]     -> success=False steps=600 elapsed=46.6s jerk=0.202815349347715
+  [shard1]   episode 12/13 seed=24
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=53.6s jerk=0.1343307986257467
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=238 elapsed=20.8s jerk=0.13274355366889198
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=261 elapsed=23.9s jerk=0.12259425995260131
+  [shard0]   episode 13/13 seed=12
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=259 elapsed=25.1s jerk=0.1331121742522438
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=239 elapsed=21.1s jerk=0.20624070043993903
+  [shard0] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard0] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+  [shard1]     -> success=False steps=600 elapsed=48.8s jerk=0.1479403778075873
+  [shard1]   episode 13/13 seed=25
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=53.1s jerk=0.15514791132041245
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [1,2,3]
+  [shard2]     -> success=True steps=244 elapsed=20.2s jerk=0.22255312178807318
+  [shard2] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard2] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+[multi-gpu] still running: shards [1,3]
+[multi-gpu] still running: shards [1,3]
+  [shard1]     -> success=True steps=276 elapsed=22.4s jerk=0.2578969070701486
+  [shard1] [dexjoco-control] water_plant: 9/13 (69.2%)
+  [shard1] [dexjoco-control] overall: 9/13 (69.2%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] client shard=1 finished (ok)
+[multi-gpu] still running: shards [3]
+  [shard3]     -> success=True steps=255 elapsed=21.3s jerk=0.13053576614369045
+  [shard3] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard3] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] still running: shards [3]
+[multi-gpu] client shard=3 finished (ok)
+
+[multi-gpu] combined: 35/50 (70.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 35/50 (70.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.csv
+[summary] step=None successes=35/50 rate=0.700 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json
+[2026-07-01 14:09:00] finished step=8000
+[2026-07-01 14:09:00] evaluating step=9000 attempt=1 ports=37955,40411,38149,35005 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_009000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[37955, 40411, 38149, 35005] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=37955 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=40411 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=38149 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=35005 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=37955 pid=237769 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=40411 pid=237772 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=38149 pid=237779 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=35005 pid=237784 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=37955: ready
+[multi-gpu]   server shard=1 port=40411: ready
+[multi-gpu]   server shard=2 port=38149: ready
+[multi-gpu]   server shard=3 port=35005: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=37955 eps=13 pid=446926 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=40411 eps=13 pid=446927 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=38149 eps=12 pid=446929 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=35005 eps=12 pid=446933 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:37955
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40411
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:38149
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:35005
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=250 elapsed=35.6s jerk=0.22064911242153856
+  [shard0]   episode 2/13 seed=1
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=256 elapsed=38.7s jerk=0.12958807628748453
+  [shard1]   episode 2/13 seed=14
+  [shard2]     -> success=True steps=283 elapsed=39.1s jerk=0.12508718589870954
+  [shard2]   episode 2/12 seed=27
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=63.0s jerk=0.18533562152431562
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=261 elapsed=27.9s jerk=0.12744965073454795
+  [shard1]   episode 3/13 seed=15
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=51.9s jerk=0.15975818283432303
+  [shard0]   episode 3/13 seed=2
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=51.9s jerk=0.12321744481705901
+  [shard2]   episode 3/12 seed=28
+  [shard3]     -> success=True steps=276 elapsed=27.7s jerk=0.13829895660933786
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=305 elapsed=30.9s jerk=0.16042824379681753
+  [shard1]   episode 4/13 seed=16
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=270 elapsed=27.0s jerk=0.1403369455695597
+  [shard0]   episode 4/13 seed=3
+  [shard3]     -> success=True steps=274 elapsed=27.3s jerk=0.13752300896243574
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=314 elapsed=30.9s jerk=0.1551401357835111
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=301 elapsed=32.4s jerk=0.34443500745156935
+  [shard1]   episode 5/13 seed=17
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=259 elapsed=28.3s jerk=0.20258086048617438
+  [shard2]   episode 5/12 seed=30
+  [shard3]     -> success=True steps=350 elapsed=31.7s jerk=0.12855817723334179
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=283 elapsed=31.1s jerk=0.12023347063367901
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=53.7s jerk=0.12236854328110465
+  [shard0]   episode 5/13 seed=4
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=294 elapsed=30.2s jerk=0.17610741638871905
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=304 elapsed=36.5s jerk=0.12955433131497823
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=312 elapsed=40.7s jerk=0.20455172194107887
+  [shard0]   episode 6/13 seed=5
+  [shard2]     -> success=False steps=600 elapsed=59.2s jerk=0.22174509570476003
+  [shard2]   episode 6/12 seed=31
+  [shard3]     -> success=True steps=278 elapsed=33.3s jerk=0.253168933255517
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=267 elapsed=31.2s jerk=0.2951706244908976
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=59.4s jerk=0.13284312487022334
+  [shard0]   episode 7/13 seed=6
+  [shard1]     -> success=False steps=600 elapsed=67.1s jerk=0.13364047389539788
+  [shard1]   episode 8/13 seed=20
+  [shard2]     -> success=False steps=600 elapsed=55.8s jerk=0.1986485974408412
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=253 elapsed=31.7s jerk=0.182208771576207
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=304 elapsed=30.8s jerk=0.12441067524649055
+  [shard2]   episode 8/12 seed=33
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=261 elapsed=31.6s jerk=0.1398271253929405
+  [shard0]   episode 8/13 seed=7
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=270 elapsed=27.4s jerk=0.2684601783446634
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=61.7s jerk=0.15888885113980658
+  [shard1]   episode 9/13 seed=21
+  [shard2]     -> success=True steps=279 elapsed=30.6s jerk=0.14481146435929118
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=329 elapsed=34.2s jerk=0.133931326175775
+  [shard0]   episode 9/13 seed=8
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=229 elapsed=27.1s jerk=0.20593228373299086
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=57.6s jerk=0.11820518375564379
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=290 elapsed=31.0s jerk=0.12102074879739019
+  [shard0]   episode 10/13 seed=9
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=54.7s jerk=0.1234927166153655
+  [shard2]   episode 10/12 seed=35
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=261 elapsed=31.6s jerk=0.14289158179953293
+  [shard1]   episode 11/13 seed=23
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=269 elapsed=28.2s jerk=0.12599469015325945
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=274 elapsed=31.6s jerk=0.1974990118897575
+  [shard1]   episode 12/13 seed=24
+  [shard3]     -> success=False steps=600 elapsed=55.2s jerk=0.12700735026951818
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=56.2s jerk=0.21474007261063544
+  [shard0]   episode 11/13 seed=10
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=282 elapsed=30.9s jerk=0.22984201532921622
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=247 elapsed=27.8s jerk=0.1355602235210185
+  [shard1]   episode 13/13 seed=25
+  [shard3]     -> success=True steps=294 elapsed=31.5s jerk=0.1354855829211947
+  [shard3] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard3] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] still running: shards [0,1,2]
+  [shard0]     -> success=True steps=277 elapsed=30.6s jerk=0.27489235207438467
+  [shard0]   episode 12/13 seed=11
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+  [shard2]     -> success=True steps=248 elapsed=24.7s jerk=0.3670733233504906
+  [shard2] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard2] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+  [shard1]     -> success=True steps=342 elapsed=32.9s jerk=0.14852290466866072
+  [shard1] [dexjoco-control] water_plant: 11/13 (84.6%)
+  [shard1] [dexjoco-control] overall: 11/13 (84.6%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] client shard=1 finished (ok)
+[multi-gpu] still running: shards [0]
+  [shard0]     -> success=True steps=282 elapsed=32.6s jerk=0.12866645685530134
+  [shard0]   episode 13/13 seed=12
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+  [shard0]     -> success=False steps=600 elapsed=55.1s jerk=0.1120211962598024
+  [shard0] [dexjoco-control] water_plant: 8/13 (61.5%)
+  [shard0] [dexjoco-control] overall: 8/13 (61.5%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+
+[multi-gpu] combined: 35/50 (70.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 35/50 (70.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.csv
+[summary] step=None successes=35/50 rate=0.700 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json
+[2026-07-01 14:22:37] finished step=9000
+[2026-07-01 14:22:37] evaluating step=10000 attempt=1 ports=37375,40819,41197,33165 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_010000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[37375, 40819, 41197, 33165] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=37375 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=40819 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=41197 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=33165 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=37375 pid=1093402 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=40819 pid=1093405 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=41197 pid=1093411 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=33165 pid=1093418 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=37375: ready
+[multi-gpu]   server shard=1 port=40819: ready
+[multi-gpu]   server shard=2 port=41197: ready
+[multi-gpu]   server shard=3 port=33165: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=37375 eps=13 pid=1457298 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=40819 eps=13 pid=1457299 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=41197 eps=12 pid=1457301 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=33165 eps=12 pid=1457305 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:37375
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40819
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:41197
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:33165
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1] Traceback (most recent call last):
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 897, in <module>
+  [shard1]     main()
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 835, in main
+  [shard1]     task_summary = evaluate_task(
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 658, in evaluate_task
+  [shard1]     stats = run_episode(task_cfg, adapter, args, episode=ep, seed=ep_seed)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 455, in run_episode
+  [shard1]     pred = _predict_chunk(
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 319, in _predict_chunk
+  [shard1]     response = client.get_action(_copy_for_async(policy_obs))
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/policy_client_async.py", line 72, in get_action
+  [shard1]     response = self.call_endpoint(
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/policy_client_async.py", line 118, in call_endpoint
+  [shard1]     raise RuntimeError(msg)
+  [shard1] RuntimeError: Server error: CUDA error: out of memory
+  [shard1] CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+  [shard1] For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+  [shard1] Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+  [shard1] Traceback (most recent call last):
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/fastwam_policy_server_async.py", line 202, in _process_frames
+  [shard1]     response = self._handle_request(request)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/fastwam_policy_server_async.py", line 186, in _handle_request
+  [shard1]     return handler.handler(**request.get("data", {}))
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/run_fastwam_server.py", line 168, in get_action
+  [shard1]     pred = self.model.infer_action(**infer_kwargs)
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+  [shard1]     return func(*args, **kwargs)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/fastwam.py", line 1283, in infer_action
+  [shard1]     first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+  [shard1]     return func(*args, **kwargs)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/fastwam.py", line 388, in _encode_input_image_latents_tensor
+  [shard1]     z = self.vae.encode([image], device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1229, in encode
+  [shard1]     hidden_state = self.single_encode(video, device)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1208, in single_encode
+  [shard1]     x = self.model.encode(video, self.scale)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1301, in encode
+  [shard1]     x = patchify(x, patch_size=2)
+  [shard1]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 205, in patchify
+  [shard1]     x = rearrange(x,
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 616, in rearrange
+  [shard1]     return reduce(tensor, pattern, reduction="rearrange", **axes_lengths)
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 540, in reduce
+  [shard1]     return _apply_recipe(
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 251, in _apply_recipe
+  [shard1]     tensor = backend.reshape(tensor, final_shapes)
+  [shard1]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/_backends.py", line 96, in reshape
+  [shard1]     return x.reshape(shape)
+  [shard1] RuntimeError: CUDA error: out of memory
+  [shard1] CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+  [shard1] For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+  [shard1] Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+[multi-gpu] client shard=1 finished (exit=1)
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=258 elapsed=35.0s jerk=0.17110813542240066
+  [shard2]   episode 2/12 seed=27
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=271 elapsed=42.7s jerk=0.30052911242310887
+  [shard0]   episode 2/13 seed=1
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=False steps=600 elapsed=61.6s jerk=0.16314693469317462
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=False steps=600 elapsed=50.0s jerk=0.14156439218881936
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=True steps=267 elapsed=27.5s jerk=0.11876917614970567
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=False steps=600 elapsed=54.8s jerk=0.22954142062510535
+  [shard0]   episode 3/13 seed=2
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=323 elapsed=32.9s jerk=0.15889370061944577
+  [shard2]   episode 4/12 seed=29
+  [shard3]     -> success=True steps=269 elapsed=28.8s jerk=0.12650771007946368
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=270 elapsed=28.2s jerk=0.11305664609005647
+  [shard0]   episode 4/13 seed=3
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=241 elapsed=24.5s jerk=0.37051654398191924
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=True steps=284 elapsed=28.2s jerk=0.18879594040889267
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=249 elapsed=28.2s jerk=0.2331301374172392
+  [shard0]   episode 5/13 seed=4
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=264 elapsed=30.4s jerk=0.22775178195069765
+  [shard0]   episode 6/13 seed=5
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=False steps=600 elapsed=50.0s jerk=0.13963208720710962
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=False steps=600 elapsed=49.6s jerk=0.1582076889914414
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=False steps=600 elapsed=54.3s jerk=0.1377481745749114
+  [shard0]   episode 7/13 seed=6
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=False steps=600 elapsed=51.0s jerk=0.1725942087499892
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=False steps=600 elapsed=54.6s jerk=0.11017929140266566
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=238 elapsed=26.9s jerk=0.1733963173829903
+  [shard0]   episode 8/13 seed=7
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=262 elapsed=26.1s jerk=0.2856114349972743
+  [shard2]   episode 8/12 seed=33
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=True steps=265 elapsed=27.5s jerk=0.44091909535994095
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=304 elapsed=32.2s jerk=0.15741697445955893
+  [shard0]   episode 9/13 seed=8
+  [shard2]     -> success=True steps=261 elapsed=28.1s jerk=0.14253415184591728
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=True steps=306 elapsed=31.9s jerk=0.14246950091451013
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=277 elapsed=30.1s jerk=0.10601973860101266
+  [shard0]   episode 10/13 seed=9
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=True steps=254 elapsed=25.4s jerk=0.22101916795566914
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=220 elapsed=23.4s jerk=0.3364100386004109
+  [shard0]   episode 11/13 seed=10
+  [shard2]     -> success=False steps=600 elapsed=53.4s jerk=0.11360181828206997
+  [shard2]   episode 10/12 seed=35
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=259 elapsed=27.6s jerk=0.1715142533241079
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=253 elapsed=28.2s jerk=0.33388850269505227
+  [shard0]   episode 12/13 seed=11
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=False steps=600 elapsed=54.9s jerk=0.0898252770765669
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=271 elapsed=29.9s jerk=0.1874593640071752
+  [shard0]   episode 13/13 seed=12
+  [shard2]     -> success=True steps=289 elapsed=30.7s jerk=0.15036747926515154
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=296 elapsed=30.5s jerk=0.3467141957890217
+  [shard2] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard2] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+  [shard3]     -> success=False steps=600 elapsed=53.3s jerk=0.11849861337264446
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+  [shard0]     -> success=False steps=600 elapsed=56.8s jerk=0.09985742893032605
+  [shard0] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard0] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+  [shard3]     -> success=True steps=281 elapsed=23.5s jerk=0.1369986343581403
+  [shard3] [dexjoco-control] water_plant: 7/12 (58.3%)
+  [shard3] [dexjoco-control] overall: 7/12 (58.3%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] WARNING: shard 1 exited with 1; attempting partial aggregation
+[multi-gpu] WARNING: no summary.json for shard 1 at /data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/summary.json
+
+[multi-gpu] combined: 25/37 (67.6%) across 3 shards / 1 task(s)
+[multi-gpu]   water_plant: 25/37 (67.6%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.csv
+[2026-07-01 14:35:23] step=10000 attempt=1 failed; retrying with fresh ports
+[2026-07-01 14:35:28] evaluating step=10000 attempt=2 ports=40393,46793,39091,39669 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_010000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[40393, 46793, 39091, 39669] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=40393 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=46793 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=39091 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=39669 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=40393 pid=2192770 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=46793 pid=2192776 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=39091 pid=2192782 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=39669 pid=2192785 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=40393: ready
+[multi-gpu]   server shard=1 port=46793: ready
+[multi-gpu]   server shard=2 port=39091: ready
+[multi-gpu]   server shard=3 port=39669: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=40393 eps=13 pid=2595220 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=46793 eps=13 pid=2595221 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=39091 eps=12 pid=2595224 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=39669 eps=12 pid=2595228 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40393
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:46793
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:39091
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:39669
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=246 elapsed=36.1s jerk=0.1717085419528064
+  [shard1]   episode 2/13 seed=14
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=270 elapsed=43.6s jerk=0.26834321519665755
+  [shard0]   episode 2/13 seed=1
+  [shard2]     -> success=True steps=280 elapsed=43.9s jerk=0.12809300034059037
+  [shard2]   episode 2/12 seed=27
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=255 elapsed=26.5s jerk=0.14016094868597778
+  [shard1]   episode 3/13 seed=15
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=66.5s jerk=0.12905828193154023
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=244 elapsed=26.9s jerk=0.19815426390648874
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=274 elapsed=30.5s jerk=0.36555435604361053
+  [shard0]   episode 3/13 seed=2
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=263 elapsed=27.1s jerk=0.14388352342777783
+  [shard1]   episode 4/13 seed=16
+  [shard3]     -> success=True steps=232 elapsed=26.6s jerk=0.12334199405234793
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=317 elapsed=31.1s jerk=0.2453042547735903
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=259 elapsed=30.9s jerk=0.1269780194915918
+  [shard0]   episode 4/13 seed=3
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=258 elapsed=27.2s jerk=0.26952326275932137
+  [shard1]   episode 5/13 seed=17
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=266 elapsed=27.5s jerk=0.2548520024442537
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=242 elapsed=26.7s jerk=0.2770229831493149
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=271 elapsed=27.6s jerk=0.19580782287958387
+  [shard0]   episode 5/13 seed=4
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=264 elapsed=27.1s jerk=0.2671054104584774
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=312 elapsed=30.9s jerk=0.1216720091118928
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=280 elapsed=30.0s jerk=0.25581821598273385
+  [shard0]   episode 6/13 seed=5
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=278 elapsed=30.6s jerk=0.18899409324470637
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=53.9s jerk=0.10499441372324093
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=54.4s jerk=0.11109035543125609
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=54.6s jerk=0.11153627877874318
+  [shard0]   episode 7/13 seed=6
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=54.1s jerk=0.12851899008213677
+  [shard1]   episode 8/13 seed=20
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=50.3s jerk=0.18974055904259648
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=277 elapsed=30.3s jerk=0.24766334815458818
+  [shard0]   episode 8/13 seed=7
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=307 elapsed=30.1s jerk=0.12231076646779404
+  [shard1]   episode 9/13 seed=21
+  [shard2]     -> success=True steps=243 elapsed=26.1s jerk=0.16042149210681064
+  [shard2]   episode 8/12 seed=33
+  [shard3]     -> success=False steps=600 elapsed=52.8s jerk=0.20227062896541928
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=333 elapsed=34.2s jerk=0.19849676181902698
+  [shard0]   episode 9/13 seed=8
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=286 elapsed=27.0s jerk=0.1910717065223086
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=342 elapsed=30.8s jerk=0.2601353475057027
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=49.7s jerk=0.13354048266832447
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=251 elapsed=22.3s jerk=0.12188980086560709
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=52.8s jerk=0.1454363874655005
+  [shard0]   episode 10/13 seed=9
+  [shard1]     -> success=True steps=262 elapsed=26.1s jerk=0.19713322504495198
+  [shard1]   episode 11/13 seed=23
+  [shard2]     -> success=False steps=600 elapsed=48.8s jerk=0.11991924461114367
+  [shard2]   episode 10/12 seed=35
+  [shard3]     -> success=True steps=257 elapsed=26.4s jerk=0.15542935277609266
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=233 elapsed=22.1s jerk=0.16922008105880254
+  [shard0]   episode 11/13 seed=10
+  [shard2]     -> success=True steps=247 elapsed=22.2s jerk=0.1808918434214227
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=249 elapsed=26.8s jerk=0.41995423124266057
+  [shard0]   episode 12/13 seed=11
+  [shard1]     -> success=False steps=600 elapsed=48.9s jerk=0.1856329164165617
+  [shard1]   episode 12/13 seed=24
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=308 elapsed=30.6s jerk=0.21620501100627426
+  [shard2]   episode 12/12 seed=37
+  [shard3]     -> success=False steps=600 elapsed=49.3s jerk=0.09215107424975837
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=272 elapsed=26.7s jerk=0.11738123078313138
+  [shard0]   episode 13/13 seed=12
+  [shard1]     -> success=True steps=308 elapsed=29.9s jerk=0.2359254981324174
+  [shard1]   episode 13/13 seed=25
+  [shard2]     -> success=True steps=250 elapsed=26.0s jerk=0.13704387914209115
+  [shard2] [dexjoco-control] water_plant: 9/12 (75.0%)
+  [shard2] [dexjoco-control] overall: 9/12 (75.0%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+  [shard3]     -> success=True steps=275 elapsed=26.0s jerk=0.11420347783100473
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,1,3]
+[multi-gpu] still running: shards [0,1,3]
+[multi-gpu] still running: shards [0,1,3]
+[multi-gpu] still running: shards [0,1,3]
+[multi-gpu] still running: shards [0,1,3]
+  [shard3]     -> success=True steps=271 elapsed=23.1s jerk=0.11611885016569418
+  [shard3] [dexjoco-control] water_plant: 8/12 (66.7%)
+  [shard3] [dexjoco-control] overall: 8/12 (66.7%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] still running: shards [0,1]
+  [shard1]     -> success=True steps=318 elapsed=26.3s jerk=0.12036158148010698
+  [shard1] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard1] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] client shard=1 finished (ok)
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+  [shard0]     -> success=False steps=600 elapsed=48.9s jerk=0.14591334630613742
+  [shard0] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard0] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] still running: shards [0]
+[multi-gpu] client shard=0 finished (ok)
+
+[multi-gpu] combined: 37/50 (74.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 37/50 (74.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.csv
+[summary] step=None successes=37/50 rate=0.740 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json
+[2026-07-01 14:47:55] finished step=10000
+[2026-07-01 14:47:55] evaluating step=11000 attempt=1 ports=37045,38939,44781,46235 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_011000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[37045, 38939, 44781, 46235] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=37045 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=38939 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=44781 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=46235 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=37045 pid=3274120 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=38939 pid=3274123 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=44781 pid=3274131 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=46235 pid=3274136 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=37045: ready
+[multi-gpu]   server shard=1 port=38939: ready
+[multi-gpu]   server shard=2 port=44781: ready
+[multi-gpu]   server shard=3 port=46235: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=37045 eps=13 pid=3346375 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=38939 eps=13 pid=3346378 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=44781 eps=12 pid=3346379 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=46235 eps=12 pid=3346381 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:37045
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:38939
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:44781
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:46235
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=228 elapsed=39.8s jerk=0.19106212149547264
+  [shard0]   episode 2/13 seed=1
+  [shard1]     -> success=True steps=248 elapsed=39.8s jerk=0.1702199210450659
+  [shard1]   episode 2/13 seed=14
+  [shard2]     -> success=True steps=267 elapsed=43.4s jerk=0.10853235749000649
+  [shard2]   episode 2/12 seed=27
+  [shard3]     -> success=True steps=258 elapsed=43.5s jerk=0.10041447191906627
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=310 elapsed=31.5s jerk=0.1453581601502253
+  [shard1]   episode 3/13 seed=15
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=324 elapsed=34.2s jerk=0.1111154614698998
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=56.4s jerk=0.1948167613511251
+  [shard0]   episode 3/13 seed=2
+  [shard2]     -> success=False steps=600 elapsed=53.0s jerk=0.0961432714065082
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=262 elapsed=29.2s jerk=0.11981960317979638
+  [shard1]   episode 4/13 seed=16
+  [shard3]     -> success=True steps=260 elapsed=22.7s jerk=0.11223230835830056
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=248 elapsed=24.2s jerk=0.16298039836006437
+  [shard0]   episode 4/13 seed=3
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=300 elapsed=31.9s jerk=0.11608021825101951
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=343 elapsed=32.2s jerk=0.2572698882040827
+  [shard1]   episode 5/13 seed=17
+  [shard3]     -> success=True steps=328 elapsed=31.8s jerk=0.14056494301813513
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=263 elapsed=27.5s jerk=0.15703825114501846
+  [shard0]   episode 5/13 seed=4
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=241 elapsed=23.3s jerk=0.43020241314771285
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=234 elapsed=23.3s jerk=0.19404194652552492
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=264 elapsed=26.6s jerk=0.20224133567557534
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=290 elapsed=29.6s jerk=0.13007909698515302
+  [shard0]   episode 6/13 seed=5
+  [shard2]     -> success=True steps=238 elapsed=22.3s jerk=0.1756822415706465
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=294 elapsed=29.9s jerk=0.11440296606352068
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=53.2s jerk=0.1566415640983394
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=49.9s jerk=0.09746977347369776
+  [shard0]   episode 7/13 seed=6
+  [shard2]     -> success=False steps=600 elapsed=53.6s jerk=0.3198237921731129
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=49.5s jerk=0.1052275755159233
+  [shard1]   episode 8/13 seed=20
+  [shard3]     -> success=True steps=262 elapsed=26.3s jerk=0.4465723344626335
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=255 elapsed=22.3s jerk=0.17597642184599585
+  [shard0]   episode 8/13 seed=7
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=246 elapsed=26.5s jerk=0.15155528381955427
+  [shard2]   episode 8/12 seed=33
+  [shard3]     -> success=True steps=238 elapsed=23.5s jerk=0.25829758738183367
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=274 elapsed=28.0s jerk=0.10842426345847986
+  [shard2]   episode 9/12 seed=34
+  [shard3]     -> success=True steps=247 elapsed=23.5s jerk=0.43869674681704873
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=600 elapsed=51.3s jerk=0.14148925908881685
+  [shard1]   episode 9/13 seed=21
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=51.5s jerk=0.14591603519326468
+  [shard0]   episode 9/13 seed=8
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=254 elapsed=26.8s jerk=0.11908379371558862
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=234 elapsed=26.1s jerk=0.33070676595550674
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=260 elapsed=22.2s jerk=0.22177326868382075
+  [shard0]   episode 10/13 seed=9
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=53.9s jerk=0.11053281612569672
+  [shard2]   episode 10/12 seed=35
+  [shard3]     -> success=True steps=284 elapsed=27.8s jerk=0.10591743153962471
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=228 elapsed=20.6s jerk=0.17465841381159503
+  [shard0]   episode 11/13 seed=10
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=245 elapsed=27.8s jerk=0.28307566072776486
+  [shard2]   episode 11/12 seed=36
+  [shard3]     -> success=True steps=269 elapsed=27.2s jerk=0.10519035738170816
+  [shard3] [dexjoco-control] water_plant: 11/12 (91.7%)
+  [shard3] [dexjoco-control] overall: 11/12 (91.7%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=235 elapsed=24.1s jerk=0.1364557401720802
+  [shard0]   episode 12/13 seed=11
+  [shard1]     -> success=False steps=600 elapsed=51.2s jerk=0.11061571065000068
+  [shard1]   episode 11/13 seed=23
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+  [shard2]     -> success=True steps=273 elapsed=26.6s jerk=0.1877568227915966
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,1,2]
+  [shard0]     -> success=True steps=273 elapsed=25.9s jerk=0.140095584561904
+  [shard0]   episode 13/13 seed=12
+  [shard1]     -> success=True steps=299 elapsed=30.1s jerk=0.345359024751668
+  [shard1]   episode 12/13 seed=24
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+[multi-gpu] still running: shards [0,1,2]
+  [shard2]     -> success=True steps=259 elapsed=26.9s jerk=0.4115645769215279
+  [shard2] [dexjoco-control] water_plant: 9/12 (75.0%)
+  [shard2] [dexjoco-control] overall: 9/12 (75.0%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+  [shard1]     -> success=True steps=259 elapsed=27.0s jerk=0.19016574671789135
+  [shard1]   episode 13/13 seed=25
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+[multi-gpu] still running: shards [0,1]
+  [shard0]     -> success=False steps=600 elapsed=60.1s jerk=0.10547420626076368
+  [shard0] [dexjoco-control] water_plant: 9/13 (69.2%)
+  [shard0] [dexjoco-control] overall: 9/13 (69.2%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+  [shard1]     -> success=True steps=293 elapsed=33.3s jerk=0.20682074331848072
+  [shard1] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard1] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] client shard=1 finished (ok)
+
+[multi-gpu] combined: 39/50 (78.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 39/50 (78.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.csv
+[summary] step=None successes=39/50 rate=0.780 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json
+[2026-07-01 14:59:21] finished step=11000
+[2026-07-01 14:59:21] evaluating step=12000 attempt=1 ports=43547,37113,35535,40513 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_012000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[43547, 37113, 35535, 40513] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=43547 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=37113 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=35535 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=40513 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=43547 pid=3944489 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=37113 pid=3944492 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=35535 pid=3944498 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=40513 pid=3944504 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=43547: ready
+[multi-gpu]   server shard=1 port=37113: ready
+[multi-gpu]   server shard=2 port=35535: ready
+[multi-gpu]   server shard=3 port=40513: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=43547 eps=13 pid=73730 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=37113 eps=13 pid=73731 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=35535 eps=12 pid=73733 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=40513 eps=12 pid=73737 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:43547
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:37113
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:35535
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40513
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0] Traceback (most recent call last):
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 897, in <module>
+  [shard0]     main()
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 835, in main
+  [shard0]     task_summary = evaluate_task(
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 658, in evaluate_task
+  [shard0]     stats = run_episode(task_cfg, adapter, args, episode=ep, seed=ep_seed)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 455, in run_episode
+  [shard0]     pred = _predict_chunk(
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/eval_dexjoco_fastwam_control.py", line 319, in _predict_chunk
+  [shard0]     response = client.get_action(_copy_for_async(policy_obs))
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/policy_client_async.py", line 72, in get_action
+  [shard0]     response = self.call_endpoint(
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/policy_client_async.py", line 118, in call_endpoint
+  [shard0]     raise RuntimeError(msg)
+  [shard0] RuntimeError: Server error: CUDA error: out of memory
+  [shard0] CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+  [shard0] For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+  [shard0] Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+  [shard0] Traceback (most recent call last):
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/fastwam_policy_server_async.py", line 202, in _process_frames
+  [shard0]     response = self._handle_request(request)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/water_plant/dexjoco_async/fastwam_policy_server_async.py", line 186, in _handle_request
+  [shard0]     return handler.handler(**request.get("data", {}))
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/scripts/run_fastwam_server.py", line 168, in get_action
+  [shard0]     pred = self.model.infer_action(**infer_kwargs)
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+  [shard0]     return func(*args, **kwargs)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/fastwam.py", line 1283, in infer_action
+  [shard0]     first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+  [shard0]     return func(*args, **kwargs)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/fastwam.py", line 388, in _encode_input_image_latents_tensor
+  [shard0]     z = self.vae.encode([image], device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1229, in encode
+  [shard0]     hidden_state = self.single_encode(video, device)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1208, in single_encode
+  [shard0]     x = self.model.encode(video, self.scale)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 1301, in encode
+  [shard0]     x = patchify(x, patch_size=2)
+  [shard0]   File "/data_all/share/FastWAM_zhaoyc_failure/src/fastwam/models/wan22/wan_video_vae.py", line 205, in patchify
+  [shard0]     x = rearrange(x,
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 616, in rearrange
+  [shard0]     return reduce(tensor, pattern, reduction="rearrange", **axes_lengths)
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 540, in reduce
+  [shard0]     return _apply_recipe(
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/einops.py", line 251, in _apply_recipe
+  [shard0]     tensor = backend.reshape(tensor, final_shapes)
+  [shard0]   File "/home/gzr1/miniconda3/envs/residual/lib/python3.10/site-packages/einops/_backends.py", line 96, in reshape
+  [shard0]     return x.reshape(shape)
+  [shard0] RuntimeError: CUDA error: out of memory
+  [shard0] CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+  [shard0] For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+  [shard0] Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+[multi-gpu] client shard=0 finished (exit=1)
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard1]     -> success=True steps=247 elapsed=196.8s jerk=0.10560532744441714
+  [shard1]   episode 2/13 seed=14
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard2]     -> success=True steps=263 elapsed=262.5s jerk=0.09675553319012296
+  [shard2]   episode 2/12 seed=27
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard1]     -> success=True steps=279 elapsed=265.0s jerk=0.10186587029980623
+  [shard1]   episode 3/13 seed=15
+  [shard3]     -> success=True steps=255 elapsed=461.9s jerk=0.09616559471478575
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [1,2,3]
+  [shard2]     -> success=True steps=278 elapsed=203.1s jerk=0.13731591626191916
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard1]     -> success=True steps=257 elapsed=190.2s jerk=0.21527423394076964
+  [shard1]   episode 4/13 seed=16
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard2]     -> success=True steps=360 elapsed=306.5s jerk=0.11105530564387084
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+  [shard1]     -> success=True steps=285 elapsed=186.5s jerk=0.19196980222796384
+  [shard1]   episode 5/13 seed=17
+  [shard3]     -> success=True steps=252 elapsed=372.8s jerk=0.11150236868858338
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+[multi-gpu] still running: shards [1,2,3]
+
+[multi-gpu] signal 15 received, shutting down...
+/data_all/share/FastWAM_zhaoyc_failure/artifacts/scripts/run_text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350.sh: line 61: 3937588 Killed                  "$PY" scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py --gpus "$GPUS" --ports "$ports" --episodes "$EPISODES" --seed "$SEED" --server-conda-env residual --client-conda-env residual --run-dir "$RUN_DIR" --checkpoint "$ckpt" --task-config-dir "$ROOT/third_party/dexjoco/configs/rand_obj" --tasks water_plant --replan-steps 25 --control-mode blocking --async-fallback wait --max-env-steps 600 --policy-timeout-ms 300000 --no-load-text-encoder --no-randomize --no-randomize-dynamics --no-save-video --no-save-actions --no-action-clip --output-dir "$out"
+     3937589 Done                    | tee "$per_log"
+[2026-07-01 15:17:50] step=12000 attempt=1 failed; retrying with fresh ports
+[2026-07-01 15:17:55] evaluating step=12000 attempt=2 ports=33291,33001,40303,40177 checkpoint=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57/checkpoints/weights/step_012000.pt output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step
+[multi-gpu] gpus=[0, 1, 2, 3] ports=[33291, 33001, 40303, 40177] episodes=50 shards=4 output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step
+[multi-gpu]   shard 0: gpu=0 port=33291 eps=13 seed=0..12 (global 0..12)
+[multi-gpu]   shard 1: gpu=1 port=33001 eps=13 seed=13..25 (global 13..25)
+[multi-gpu]   shard 2: gpu=2 port=40303 eps=12 seed=26..37 (global 26..37)
+[multi-gpu]   shard 3: gpu=3 port=40177 eps=12 seed=38..49 (global 38..49)
+[multi-gpu] started server shard=0 gpu=0 port=33291 pid=1133058 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/server.log
+[multi-gpu] started server shard=1 gpu=1 port=33001 pid=1133061 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/server.log
+[multi-gpu] started server shard=2 gpu=2 port=40303 pid=1133067 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/server.log
+[multi-gpu] started server shard=3 gpu=3 port=40177 pid=1133076 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/server.log
+[multi-gpu] waiting for servers to become ready...
+[multi-gpu]   server shard=0 port=33291: ready
+[multi-gpu]   server shard=1 port=33001: ready
+[multi-gpu]   server shard=2 port=40303: ready
+[multi-gpu]   server shard=3 port=40177: ready
+[multi-gpu] launching eval clients...
+[multi-gpu] started client shard=0 port=33291 eps=13 pid=1464205 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/client.log
+[multi-gpu] started client shard=1 port=33001 eps=13 pid=1464206 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/client.log
+[multi-gpu] started client shard=2 port=40303 eps=12 pid=1464207 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/client.log
+[multi-gpu] started client shard=3 port=40177 eps=12 pid=1464220 log=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/client.log
+[multi-gpu] waiting for eval clients to finish...
+  [shard0] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:33291
+  [shard0] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard0] [dexjoco-control] tasks=1 episodes=13
+  [shard0] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0
+  [shard0] [dexjoco-control] task=water_plant
+  [shard0]   episode 1/13 seed=0
+  [shard1] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:33001
+  [shard1] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard1] [dexjoco-control] tasks=1 episodes=13
+  [shard1] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1
+  [shard1] [dexjoco-control] task=water_plant
+  [shard1]   episode 1/13 seed=13
+  [shard2] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40303
+  [shard2] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard2] [dexjoco-control] tasks=1 episodes=12
+  [shard2] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2
+  [shard2] [dexjoco-control] task=water_plant
+  [shard2]   episode 1/12 seed=26
+  [shard3] [dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:40177
+  [shard3] [dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+  [shard3] [dexjoco-control] tasks=1 episodes=12
+  [shard3] [dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3
+  [shard3] [dexjoco-control] task=water_plant
+  [shard3]   episode 1/12 seed=38
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=251 elapsed=53.9s jerk=0.2553410688228157
+  [shard0]   episode 2/13 seed=1
+  [shard1]     -> success=True steps=250 elapsed=57.5s jerk=0.1100227372240155
+  [shard1]   episode 2/13 seed=14
+  [shard3]     -> success=True steps=282 elapsed=57.4s jerk=0.1006348597817123
+  [shard3]   episode 2/12 seed=39
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=272 elapsed=61.5s jerk=0.09923625475968476
+  [shard2]   episode 2/12 seed=27
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=293 elapsed=45.6s jerk=0.11421417753464987
+  [shard1]   episode 3/13 seed=15
+  [shard3]     -> success=True steps=244 elapsed=41.1s jerk=0.1076708981105365
+  [shard3]   episode 3/12 seed=40
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=251 elapsed=45.1s jerk=0.2255617710930037
+  [shard2]   episode 3/12 seed=28
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=72.3s jerk=0.16172508564606358
+  [shard0]   episode 3/13 seed=2
+  [shard3]     -> success=True steps=265 elapsed=28.3s jerk=0.2273984256381091
+  [shard3]   episode 4/12 seed=41
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=267 elapsed=26.7s jerk=0.1018070806309862
+  [shard1]   episode 4/13 seed=16
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=321 elapsed=31.3s jerk=0.11214048998155937
+  [shard2]   episode 4/12 seed=29
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=287 elapsed=27.2s jerk=0.08970133398839256
+  [shard0]   episode 4/13 seed=3
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=252 elapsed=27.4s jerk=0.32720252794027327
+  [shard1]   episode 5/13 seed=17
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=333 elapsed=34.5s jerk=0.1837449506589203
+  [shard3]   episode 5/12 seed=42
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=247 elapsed=27.1s jerk=0.4386627481147951
+  [shard2]   episode 5/12 seed=30
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=254 elapsed=29.7s jerk=0.13945283763672386
+  [shard0]   episode 5/13 seed=4
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=299 elapsed=33.2s jerk=0.15973065309351944
+  [shard1]   episode 6/13 seed=18
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=259 elapsed=29.5s jerk=0.09605132157874478
+  [shard2]   episode 6/12 seed=31
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=255 elapsed=26.8s jerk=0.20573565892492357
+  [shard0]   episode 6/13 seed=5
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=False steps=600 elapsed=55.7s jerk=0.16726210208790357
+  [shard3]   episode 6/12 seed=43
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=280 elapsed=30.5s jerk=0.09636688891717855
+  [shard1]   episode 7/13 seed=19
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=166 elapsed=18.8s jerk=0.11955553551045496
+  [shard1]   episode 8/13 seed=20
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=False steps=600 elapsed=56.1s jerk=0.23855170354022828
+  [shard2]   episode 7/12 seed=32
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=False steps=600 elapsed=50.9s jerk=0.1058940066921721
+  [shard0]   episode 7/13 seed=6
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=285 elapsed=24.1s jerk=0.10611098938927634
+  [shard1]   episode 9/13 seed=21
+  [shard3]     -> success=False steps=600 elapsed=51.2s jerk=0.13794079745954593
+  [shard3]   episode 7/12 seed=44
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=266 elapsed=23.6s jerk=0.09957740910238388
+  [shard2]   episode 8/12 seed=33
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=239 elapsed=20.3s jerk=0.11165003461236692
+  [shard0]   episode 8/13 seed=7
+  [shard1]     -> success=True steps=246 elapsed=17.8s jerk=0.2269483906232187
+  [shard1]   episode 10/13 seed=22
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=256 elapsed=22.8s jerk=0.26532026059837555
+  [shard3]   episode 8/12 seed=45
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=272 elapsed=20.3s jerk=0.11853983958286268
+  [shard2]   episode 9/12 seed=34
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=False steps=217 elapsed=19.8s jerk=0.2043988368019115
+  [shard1]   episode 11/13 seed=23
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=328 elapsed=23.9s jerk=0.12456085849439073
+  [shard0]   episode 9/13 seed=8
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=276 elapsed=24.4s jerk=0.11400579794371216
+  [shard3]   episode 9/12 seed=46
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=281 elapsed=20.6s jerk=0.31114105345501053
+  [shard1]   episode 12/13 seed=24
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=285 elapsed=23.8s jerk=0.08754731796339628
+  [shard0]   episode 10/13 seed=9
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard3]     -> success=True steps=275 elapsed=21.1s jerk=0.20815880798594855
+  [shard3]   episode 10/12 seed=47
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard1]     -> success=True steps=251 elapsed=20.9s jerk=0.1444827546945298
+  [shard1]   episode 13/13 seed=25
+  [shard2]     -> success=False steps=600 elapsed=47.7s jerk=0.10279395363377687
+  [shard2]   episode 10/12 seed=35
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=288 elapsed=20.8s jerk=0.176692024107788
+  [shard0]   episode 11/13 seed=10
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard2]     -> success=True steps=248 elapsed=18.0s jerk=0.1423666168882595
+  [shard2]   episode 11/12 seed=36
+[multi-gpu] still running: shards [0,1,2,3]
+[multi-gpu] still running: shards [0,1,2,3]
+  [shard0]     -> success=True steps=232 elapsed=23.6s jerk=0.28880947826673153
+  [shard0]   episode 12/13 seed=11
+  [shard1]     -> success=True steps=322 elapsed=27.1s jerk=0.12881038133054973
+  [shard1] [dexjoco-control] water_plant: 11/13 (84.6%)
+  [shard1] [dexjoco-control] overall: 11/13 (84.6%)
+  [shard1] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/summary.json
+[multi-gpu] client shard=1 finished (ok)
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard3]     -> success=False steps=600 elapsed=50.0s jerk=0.08418223397949567
+  [shard3]   episode 11/12 seed=48
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=282 elapsed=29.6s jerk=0.15588759182553205
+  [shard2]   episode 12/12 seed=37
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard0]     -> success=True steps=289 elapsed=26.4s jerk=0.10993263228611456
+  [shard0]   episode 13/13 seed=12
+[multi-gpu] still running: shards [0,2,3]
+[multi-gpu] still running: shards [0,2,3]
+  [shard2]     -> success=True steps=226 elapsed=22.5s jerk=0.3807766173267737
+  [shard2] [dexjoco-control] water_plant: 10/12 (83.3%)
+  [shard2] [dexjoco-control] overall: 10/12 (83.3%)
+  [shard2] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/summary.json
+[multi-gpu] client shard=2 finished (ok)
+  [shard3]     -> success=True steps=293 elapsed=25.8s jerk=0.11160054298508208
+  [shard3]   episode 12/12 seed=49
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+[multi-gpu] still running: shards [0,3]
+  [shard3]     -> success=True steps=294 elapsed=23.6s jerk=0.11828892419038162
+  [shard3] [dexjoco-control] water_plant: 9/12 (75.0%)
+  [shard3] [dexjoco-control] overall: 9/12 (75.0%)
+  [shard3] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/summary.json
+[multi-gpu] client shard=3 finished (ok)
+[multi-gpu] still running: shards [0]
+[multi-gpu] still running: shards [0]
+  [shard0]     -> success=False steps=600 elapsed=47.3s jerk=0.09189527390219496
+  [shard0] [dexjoco-control] water_plant: 10/13 (76.9%)
+  [shard0] [dexjoco-control] overall: 10/13 (76.9%)
+  [shard0] [dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/summary.json
+[multi-gpu] client shard=0 finished (ok)
+
+[multi-gpu] combined: 40/50 (80.0%) across 4 shards / 1 task(s)
+[multi-gpu]   water_plant: 40/50 (80.0%)
+[multi-gpu] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json
+[multi-gpu] csv=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.csv
+[summary] step=None successes=40/50 rate=0.800 path=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json
+[2026-07-01 15:29:49] finished step=12000
+/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/coarse50_summary.csv
+[
+  {
+    "step": 7000,
+    "episodes": 50,
+    "successes": 25,
+    "success_rate": 0.5,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json"
+  },
+  {
+    "step": 8000,
+    "episodes": 50,
+    "successes": 35,
+    "success_rate": 0.7,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json"
+  },
+  {
+    "step": 9000,
+    "episodes": 50,
+    "successes": 35,
+    "success_rate": 0.7,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json"
+  },
+  {
+    "step": 10000,
+    "episodes": 50,
+    "successes": 37,
+    "success_rate": 0.74,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json"
+  },
+  {
+    "step": 11000,
+    "episodes": 50,
+    "successes": 39,
+    "success_rate": 0.78,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json"
+  },
+  {
+    "step": 12000,
+    "episodes": 50,
+    "successes": 40,
+    "success_rate": 0.8,
+    "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json"
+  }
+]
+[2026-07-01 15:29:49] completed concat/text-failure coarse sweep

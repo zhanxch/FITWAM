@@ -1,0 +1,36 @@
+[dexjoco-control] label=blocking_stride25 run_dir=/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57 policy=127.0.0.1:46793
+[dexjoco-control] mode=blocking replan=25 horizon=32 overlap=7 lpf=None
+[dexjoco-control] tasks=1 episodes=13
+[dexjoco-control] output=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1
+
+[dexjoco-control] task=water_plant
+  episode 1/13 seed=13
+    -> success=True steps=246 elapsed=36.1s jerk=0.1717085419528064
+  episode 2/13 seed=14
+    -> success=True steps=255 elapsed=26.5s jerk=0.14016094868597778
+  episode 3/13 seed=15
+    -> success=True steps=263 elapsed=27.1s jerk=0.14388352342777783
+  episode 4/13 seed=16
+    -> success=True steps=258 elapsed=27.2s jerk=0.26952326275932137
+  episode 5/13 seed=17
+    -> success=True steps=264 elapsed=27.1s jerk=0.2671054104584774
+  episode 6/13 seed=18
+    -> success=True steps=278 elapsed=30.6s jerk=0.18899409324470637
+  episode 7/13 seed=19
+    -> success=False steps=600 elapsed=54.1s jerk=0.12851899008213677
+  episode 8/13 seed=20
+    -> success=True steps=307 elapsed=30.1s jerk=0.12231076646779404
+  episode 9/13 seed=21
+    -> success=False steps=600 elapsed=49.7s jerk=0.13354048266832447
+  episode 10/13 seed=22
+    -> success=True steps=262 elapsed=26.1s jerk=0.19713322504495198
+  episode 11/13 seed=23
+    -> success=False steps=600 elapsed=48.9s jerk=0.1856329164165617
+  episode 12/13 seed=24
+    -> success=True steps=308 elapsed=29.9s jerk=0.2359254981324174
+  episode 13/13 seed=25
+    -> success=True steps=318 elapsed=26.3s jerk=0.12036158148010698
+[dexjoco-control] water_plant: 10/13 (76.9%)
+
+[dexjoco-control] overall: 10/13 (76.9%)
+[dexjoco-control] summary=/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/shard_1/summary.json

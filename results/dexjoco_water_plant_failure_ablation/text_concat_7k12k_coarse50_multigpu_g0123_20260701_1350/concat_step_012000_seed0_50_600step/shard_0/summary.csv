@@ -1,0 +1,2 @@
+label,control_mode,replan_steps,overlap_steps,low_pass_alpha,env_name,episodes,successes,success_rate,inference_latency_mean_s,inference_latency_p95_s,action_delta_l2_mean,action_jerk_l2_mean,oscillation_sign_flip_rate,queue_underruns,queue_wait_s,async_replan_delays
+blocking_stride25,blocking,25,7,,water_plant,13,10,0.7692307692307693,0.9633383752197453,1.1948056578206327,0.09816842457664098,0.14991827779569802,0.566798443572791,0.0,0.0,0.0
