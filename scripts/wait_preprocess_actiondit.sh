@@ -12,6 +12,10 @@ FREE_MB="${FREE_MB:-45000}"
 MAX_UTIL="${MAX_UTIL:-20}"
 POLL_SECONDS="${POLL_SECONDS:-180}"
 
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
+export DIFFSYNTH_MODEL_BASE_PATH="${ROOT_DIR}/checkpoints"
+export PYTHONUNBUFFERED=1
+
 echo "===== $(date) wait_preprocess_actiondit start ====="
 echo "root=${ROOT_DIR}"
 echo "download_session=${DOWNLOAD_SESSION}"
