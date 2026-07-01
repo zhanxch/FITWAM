@@ -107,6 +107,7 @@ def main() -> None:
 
     output.mkdir(parents=True, exist_ok=True)
     if (inputs[0] / "meta" / "modality.json").exists():
+        (output / "meta").mkdir(parents=True, exist_ok=True)
         shutil.copy2(inputs[0] / "meta" / "modality.json", output / "meta" / "modality.json")
 
     for root in inputs:
