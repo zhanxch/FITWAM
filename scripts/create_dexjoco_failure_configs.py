@@ -119,8 +119,13 @@ def data_cfg(
 ) -> dict[str, Any]:
     success_dir = success_root / task
     failure_dir = failure_root / f"{task}_failure_fastwam_2cam_text"
-    if variant == "failure_embedding":
+    if variant == "success":
         cache_dir = text_cache_root / f"dexjoco_{task}_2cam_success"
+        dataset_dirs = [str(success_dir)]
+        extra_train = {}
+    elif variant == "failure_embedding":
+        cache_dir = text_cache_root / f"dexjoco_{task}_2cam_success"
+        dataset_dirs = [str(success_dir), str(failure_dir)]
         extra_train = {
             "action_loss_zero_if_instruction_contains": FAILURE_PHRASE,
             "outcome_flag_if_instruction_contains": FAILURE_PHRASE,
@@ -128,6 +133,7 @@ def data_cfg(
         }
     elif variant == "text_failure":
         cache_dir = text_cache_root / f"dexjoco_{task}_2cam_text_failure"
+        dataset_dirs = [str(success_dir), str(failure_dir)]
         extra_train = {
             "action_loss_zero_if_instruction_contains": FAILURE_PHRASE,
         }
@@ -136,7 +142,7 @@ def data_cfg(
 
     train = {
         "_target_": "fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset",
-        "dataset_dirs": [str(success_dir), str(failure_dir)],
+        "dataset_dirs": dataset_dirs,
         "shape_meta": shape_meta(image_keys),
         "num_frames": 33,
         "global_sample_stride": 1,
@@ -168,11 +174,14 @@ def data_cfg(
         "pretrained_norm_stats": "${data.train.pretrained_norm_stats}",
         "skip_padding_as_possible": False,
         "concat_multi_camera": "${data.train.concat_multi_camera}",
-        "action_loss_zero_if_instruction_contains": "${data.train.action_loss_zero_if_instruction_contains}",
         "processor": processor_cfg(),
         "text_embedding_cache_dir": "${data.train.text_embedding_cache_dir}",
         "context_len": "${data.train.context_len}",
     }
+    if "action_loss_zero_if_instruction_contains" in train:
+        val["action_loss_zero_if_instruction_contains"] = "${data.train.action_loss_zero_if_instruction_contains}"
+    else:
+        val["action_loss_zero_if_instruction_contains"] = None
     if variant == "failure_embedding":
         val["outcome_flag_if_instruction_contains"] = "${data.train.outcome_flag_if_instruction_contains}"
         val["strip_instruction_suffix_if_contains"] = "${data.train.strip_instruction_suffix_if_contains}"
@@ -250,7 +259,7 @@ def main() -> None:
     for task in args.tasks:
         success_dir = args.success_root / task
         image_keys = image_keys_from_info(success_dir)
-        for variant in ("failure_embedding", "text_failure"):
+        for variant in ("success", "failure_embedding", "text_failure"):
             write_yaml(
                 data_dir / f"dexjoco_{task}_2cam_{variant}.yaml",
                 data_cfg(

@@ -21,8 +21,8 @@ REQUIRE_FREE_MB=${REQUIRE_FREE_MB:-70000}
 START_PRUNER=${START_PRUNER:-1}
 
 case "$VARIANT" in
-  failure_embedding|text_failure) ;;
-  *) echo "Unknown VARIANT=$VARIANT; expected failure_embedding or text_failure" >&2; exit 2 ;;
+  success|failure_embedding|text_failure) ;;
+  *) echo "Unknown VARIANT=$VARIANT; expected success, failure_embedding, or text_failure" >&2; exit 2 ;;
 esac
 
 IFS=',' read -r -a GPU_LIST <<< "$GPUS"
@@ -38,7 +38,7 @@ SUCCESS_DATASET="/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/${TAS
 FAILURE_DATASET="${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text"
 STATS_PATH="${ROOT}/artifacts/dataset_stats/dexjoco_${TASK}_success_action_state.json"
 
-if [[ "$VARIANT" == "failure_embedding" ]]; then
+if [[ "$VARIANT" == "success" || "$VARIANT" == "failure_embedding" ]]; then
   CACHE_DIR="${ROOT}/artifacts/text_embeds_cache/dexjoco_${TASK}_2cam_success"
 else
   CACHE_DIR="${ROOT}/artifacts/text_embeds_cache/dexjoco_${TASK}_2cam_text_failure"
@@ -82,7 +82,11 @@ if [[ "$START_PRUNER" == "1" && -f "${ROOT}/artifacts/scripts/run_ckpt_pruner.sh
   fi
 fi
 
-for path in "$SUCCESS_DATASET" "$FAILURE_DATASET"; do
+required_datasets=("$SUCCESS_DATASET")
+if [[ "$VARIANT" != "success" ]]; then
+  required_datasets+=("$FAILURE_DATASET")
+fi
+for path in "${required_datasets[@]}"; do
   [[ -d "$path" ]] || { log "missing dataset: $path"; exit 10; }
 done
 
