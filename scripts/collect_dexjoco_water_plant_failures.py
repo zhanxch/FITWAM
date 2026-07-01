@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect failed DexJoCo water_plant rollouts as a two-camera LeRobot dataset."""
+"""Collect failed DexJoCo rollouts as a two-camera LeRobot dataset."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ from dexjoco_fastwam_adapter import (
     _safe_rgb_uint8,
     constrain_rotvec_action,
     load_dexjoco_eval_settings,
+    resolve_env_camera_keys,
 )
 from fastwam.datasets.lerobot.lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from fastwam.datasets.lerobot.lerobot.datasets.utils import cast_stats_to_numpy, serialize_dict
@@ -47,17 +48,21 @@ from fastwam.datasets.lerobot.lerobot.datasets.video_utils import get_video_info
 from policy_zmq_client import PolicyClient
 
 
-SUCCESS_PROMPT = "Grasp the watering can and apply water to the plant."
+DEFAULT_SUCCESS_DATASET_ROOT = Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets")
+DEFAULT_FAILURE_DATASET_ROOT = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/datasets")
+DEFAULT_TASK_NAME = "water_plant"
 FAILURE_PHRASE = "Failed to finish the whole process."
-VIDEO_KEYS = (
-    ("observation.images.front", "front"),
-    ("observation.images.wrist", "wrist"),
-)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect failed FastWAM DexJoCo water_plant rollouts in LeRobot v2.1 format."
+        description="Collect failed FastWAM DexJoCo rollouts in LeRobot v2.1 format."
+    )
+    parser.add_argument(
+        "--task-name",
+        type=str,
+        default=None,
+        help="DexJoCo task name, e.g. hammer_nail. Defaults to water_plant for backward compatibility.",
     )
     parser.add_argument(
         "--run-dir",
@@ -71,22 +76,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--task-config",
         type=Path,
-        default=DEFAULT_TASK_CONFIG_DIR / "water_plant.yaml",
-        help="DexJoCo task yaml. Defaults to rand_obj/water_plant.yaml.",
+        default=None,
+        help="DexJoCo task yaml. Defaults to rand_obj/<task_name>.yaml.",
     )
     parser.add_argument(
         "--source-dataset",
         type=Path,
-        default=Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant"),
-        help="Existing successful LeRobot water_plant dataset used as schema/template.",
+        default=None,
+        help="Existing successful LeRobot dataset used as schema/template. Defaults to the task dataset.",
     )
     parser.add_argument(
         "--output-dataset",
         type=Path,
-        default=Path(
-            "/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/"
-            "water_plant_failure_fastwam_2cam_text"
-        ),
+        default=None,
+        help="Output failure LeRobot dataset. Defaults to artifacts/datasets/<task_name>_failure_fastwam_2cam_text.",
     )
     parser.add_argument("--target-failures", type=int, default=100)
     parser.add_argument("--max-attempts", type=int, default=260)
@@ -196,10 +199,65 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in f if line.strip()]
 
 
+def resolve_task_name(args: argparse.Namespace) -> str:
+    if args.task_name:
+        return str(args.task_name)
+    if args.task_config is not None:
+        return Path(args.task_config).stem
+    if args.source_dataset is not None:
+        return Path(args.source_dataset).name
+    return DEFAULT_TASK_NAME
+
+
+def resolve_input_paths(args: argparse.Namespace) -> tuple[str, Path, Path, Path]:
+    task_name = resolve_task_name(args)
+    task_config = (
+        args.task_config.expanduser()
+        if args.task_config is not None
+        else DEFAULT_TASK_CONFIG_DIR / f"{task_name}.yaml"
+    )
+    source_dataset = (
+        args.source_dataset.expanduser()
+        if args.source_dataset is not None
+        else DEFAULT_SUCCESS_DATASET_ROOT / task_name
+    )
+    output_dataset = (
+        args.output_dataset.expanduser()
+        if args.output_dataset is not None
+        else DEFAULT_FAILURE_DATASET_ROOT / f"{task_name}_failure_fastwam_2cam_text"
+    )
+    return task_name, task_config, source_dataset, output_dataset
+
+
+def read_primary_task_text(source_dataset: Path) -> str:
+    tasks = load_jsonl(source_dataset / "meta" / "tasks.jsonl")
+    if not tasks:
+        raise FileNotFoundError(f"Missing or empty task metadata: {source_dataset / 'meta' / 'tasks.jsonl'}")
+    task = str(tasks[0].get("task", "")).strip()
+    if not task:
+        raise ValueError(f"First task row has no non-empty `task`: {source_dataset / 'meta' / 'tasks.jsonl'}")
+    return task
+
+
+def infer_video_keys(source_info: dict[str, Any], task: DexJoCoTaskConfig) -> tuple[tuple[str, str], ...]:
+    camera_feature_keys = [
+        str(key)
+        for key in source_info.get("features", {})
+        if str(key).startswith("observation.images.")
+    ]
+    if not camera_feature_keys:
+        raise ValueError("Source dataset has no `observation.images.*` features.")
+
+    dataset_camera_keys = [key.split("observation.images.", 1)[1] for key in camera_feature_keys]
+    env_camera_keys = resolve_env_camera_keys(dataset_camera_keys, task.camera_mapping)
+    return tuple(zip(camera_feature_keys, env_camera_keys))
+
+
 def prepare_dataset(
     source_dataset: Path,
     output_dataset: Path,
     failure_task: str,
+    video_keys: tuple[tuple[str, str], ...],
     *,
     overwrite: bool,
     resume: bool,
@@ -238,7 +296,7 @@ def prepare_dataset(
 
     (output_dataset / "meta").mkdir(parents=True, exist_ok=False)
     (output_dataset / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
-    for video_key, _ in VIDEO_KEYS:
+    for video_key, _ in video_keys:
         (output_dataset / "videos" / "chunk-000" / video_key).mkdir(parents=True, exist_ok=True)
 
     info = copy.deepcopy(read_json(source_dataset / "meta" / "info.json"))
@@ -261,15 +319,22 @@ def prepare_dataset(
     return info, 0, 0, [], []
 
 
-def update_info(output_dataset: Path, info: dict, *, num_episodes: int, total_frames: int) -> None:
+def update_info(
+    output_dataset: Path,
+    info: dict,
+    *,
+    num_episodes: int,
+    total_frames: int,
+    video_keys: tuple[tuple[str, str], ...],
+) -> None:
     info["total_episodes"] = int(num_episodes)
     info["total_frames"] = int(total_frames)
     info["total_tasks"] = 1
-    info["total_videos"] = int(num_episodes * len(VIDEO_KEYS))
+    info["total_videos"] = int(num_episodes * len(video_keys))
     info["total_chunks"] = 1 if num_episodes > 0 else 0
     info["splits"] = {"train": f"0:{num_episodes}"}
     if num_episodes > 0:
-        for video_key, _ in VIDEO_KEYS:
+        for video_key, _ in video_keys:
             video_path = output_dataset / info["video_path"].format(
                 episode_chunk=0,
                 video_key=video_key,
@@ -290,6 +355,7 @@ def run_attempt(
     seed: int,
     replan_steps: int,
     max_env_steps: int,
+    video_keys: tuple[tuple[str, str], ...],
     randomize: bool,
     randomize_dynamics: bool,
     action_clip_config: ActionConstraintConfig | None,
@@ -301,7 +367,7 @@ def run_attempt(
         randomize_dynamics=randomize_dynamics,
     )
     action_queue: deque[np.ndarray] = deque()
-    frames: dict[str, list[np.ndarray]] = {video_key: [] for video_key, _ in VIDEO_KEYS}
+    frames: dict[str, list[np.ndarray]] = {video_key: [] for video_key, _ in video_keys}
     actions: list[np.ndarray] = []
     states: list[np.ndarray] = []
     policy_query_steps: list[int] = []
@@ -336,7 +402,7 @@ def run_attempt(
             current_obs = env._latest_obs
             states.append(np.asarray(current_obs["state"], dtype=np.float32).reshape(-1)[:23])
             actions.append(rotvec_action.reshape(-1)[:22].astype(np.float32))
-            for video_key, env_key in VIDEO_KEYS:
+            for video_key, env_key in video_keys:
                 frames[video_key].append(_safe_rgb_uint8(current_obs[env_key]))
 
             env.step_rotvec(rotvec_action)
@@ -368,6 +434,7 @@ def save_failure_episode(
     episode: dict[str, Any],
     failure_task: str,
     fps: int,
+    video_keys: tuple[tuple[str, str], ...],
 ) -> int:
     length = int(episode["actions"].shape[0])
     if length <= 0:
@@ -382,7 +449,7 @@ def save_failure_episode(
     global_indices = np.arange(global_start_index, global_start_index + length, dtype=np.int64)
     task_indices = np.zeros((length,), dtype=np.int64)
 
-    for video_key, _ in VIDEO_KEYS:
+    for video_key, _ in video_keys:
         video_path = output_dataset / info["video_path"].format(
             episode_chunk=chunk,
             video_key=video_key,
@@ -442,23 +509,27 @@ def save_failure_episode(
 def main() -> None:
     args = parse_args()
     run_dir = args.run_dir.expanduser().resolve()
-    source_dataset = args.source_dataset.expanduser().resolve()
-    output_dataset = args.output_dataset.expanduser().resolve()
-    task_config = args.task_config.expanduser().resolve()
+    task_name, task_config, source_dataset, output_dataset = resolve_input_paths(args)
+    source_dataset = source_dataset.resolve()
+    output_dataset = output_dataset.resolve()
+    task_config = task_config.resolve()
 
     if not source_dataset.exists():
         raise FileNotFoundError(source_dataset)
     if not task_config.exists():
         raise FileNotFoundError(task_config)
 
+    task = load_task(task_config)
     source_info = read_json(source_dataset / "meta" / "info.json")
     fps = int(args.video_fps or source_info.get("fps", 30))
-    base_task = SUCCESS_PROMPT
+    base_task = read_primary_task_text(source_dataset)
     failure_task = f"{base_task} {args.failure_phrase.strip()}".strip()
+    video_keys = infer_video_keys(source_info, task)
     info, failures, global_index, stats_list, attempts = prepare_dataset(
         source_dataset,
         output_dataset,
         failure_task,
+        video_keys,
         overwrite=args.overwrite,
         resume=args.resume,
     )
@@ -469,7 +540,6 @@ def main() -> None:
     if replan_steps is None:
         replan_steps = max(1, int(0.8 * adapter.action_horizon))
 
-    task = load_task(task_config)
     action_clip_config = None
     if args.action_clip:
         action_clip_config = ActionConstraintConfig(
@@ -478,8 +548,12 @@ def main() -> None:
             clip_to_dataset_bounds=False,
         )
 
+    print(f"[collect] task_name={task_name}", flush=True)
     print(f"[collect] run_dir={run_dir}", flush=True)
+    print(f"[collect] task_config={task_config}", flush=True)
+    print(f"[collect] source_dataset={source_dataset}", flush=True)
     print(f"[collect] output_dataset={output_dataset}", flush=True)
+    print(f"[collect] video_keys={video_keys}", flush=True)
     print(f"[collect] target_failures={args.target_failures} max_attempts={args.max_attempts}", flush=True)
     if args.resume:
         print(
@@ -510,6 +584,7 @@ def main() -> None:
                 seed=seed,
                 replan_steps=replan_steps,
                 max_env_steps=args.max_env_steps,
+                video_keys=video_keys,
                 randomize=args.randomize,
                 randomize_dynamics=args.randomize_dynamics,
                 action_clip_config=action_clip_config,
@@ -542,14 +617,29 @@ def main() -> None:
                 episode=episode,
                 failure_task=failure_task,
                 fps=fps,
+                video_keys=video_keys,
             )
             global_index += length
             failures += 1
-            update_info(output_dataset, info, num_episodes=failures, total_frames=global_index)
+            update_info(
+                output_dataset,
+                info,
+                num_episodes=failures,
+                total_frames=global_index,
+                video_keys=video_keys,
+            )
             write_json(
                 output_dataset / "collection_summary.json",
                 {
                     "status": "running",
+                    "task_name": task_name,
+                    "task_config": str(task_config),
+                    "source_dataset": str(source_dataset),
+                    "output_dataset": str(output_dataset),
+                    "video_keys": [
+                        {"dataset_key": dataset_key, "env_key": env_key}
+                        for dataset_key, env_key in video_keys
+                    ],
                     "target_failures": args.target_failures,
                     "max_attempts": args.max_attempts,
                     "failures": failures,
@@ -565,18 +655,31 @@ def main() -> None:
 
     if stats_list:
         write_json(output_dataset / "meta" / "stats.json", serialize_dict(aggregate_stats(stats_list)))
-    update_info(output_dataset, info, num_episodes=failures, total_frames=global_index)
+    update_info(
+        output_dataset,
+        info,
+        num_episodes=failures,
+        total_frames=global_index,
+        video_keys=video_keys,
+    )
     write_json(
         output_dataset / "collection_summary.json",
         {
             "status": "complete" if failures >= args.target_failures else "incomplete",
+            "task_name": task_name,
+            "task_config": str(task_config),
+            "source_dataset": str(source_dataset),
+            "output_dataset": str(output_dataset),
+            "video_keys": [
+                {"dataset_key": dataset_key, "env_key": env_key}
+                for dataset_key, env_key in video_keys
+            ],
             "target_failures": args.target_failures,
             "max_attempts": args.max_attempts,
             "failures": failures,
             "attempts": len(attempts),
             "successes_discarded": sum(1 for item in attempts if item["success"]),
             "failure_task": failure_task,
-            "output_dataset": str(output_dataset),
             "attempt_log": attempts,
         },
     )
