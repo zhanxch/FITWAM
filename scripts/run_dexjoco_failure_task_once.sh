@@ -44,6 +44,10 @@ if [[ "$VARIANT" == "success" || "$VARIANT" == "failure_embedding" ]]; then
 else
   CACHE_DIR="${ROOT}/artifacts/text_embeds_cache/dexjoco_${TASK}_2cam_text_failure"
 fi
+EXPORT_TEXT_CACHE_SCRIPT=${EXPORT_TEXT_CACHE_SCRIPT:-scripts/export_text_embed_cache_npz.py}
+if [[ ! -f "${ROOT}/${EXPORT_TEXT_CACHE_SCRIPT}" ]]; then
+  EXPORT_TEXT_CACHE_SCRIPT=scripts/water_plant/export_text_embed_cache_npz.py
+fi
 
 cd "$ROOT"
 mkdir -p "$LOGDIR" "$EVAL_DIR"
@@ -102,7 +106,7 @@ log "generating configs for $TASK"
 
 log "precomputing text embeddings for task=$TASK_CFG cache=$CACHE_DIR"
 CUDA_VISIBLE_DEVICES="$FIRST_GPU" "$PY" scripts/precompute_text_embeds.py "task=${TASK_CFG}" >> "$TRAIN_LOG" 2>&1
-CUDA_VISIBLE_DEVICES="$FIRST_GPU" "$PY" scripts/water_plant/export_text_embed_cache_npz.py --cache-dir "$CACHE_DIR" >> "$TRAIN_LOG" 2>&1
+CUDA_VISIBLE_DEVICES="$FIRST_GPU" "$PY" "$EXPORT_TEXT_CACHE_SCRIPT" --cache-dir "$CACHE_DIR" >> "$TRAIN_LOG" 2>&1
 
 train_args=(
   "task=${TASK_CFG}"
