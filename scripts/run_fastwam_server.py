@@ -436,7 +436,7 @@ def _build_policy_from_run(
     _maybe_resolve_norm_stats_meta_dir(processor_cfg, cfg, run_dir)
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
-    if processor.wants_modality_stats:
+    if processor.wants_modality_stats and dataset_stats_path is None:
         # GR00T/meta path: rebuild normalizer from meta/stats.json + modality.json.
         processor.set_normalizer_from_modality_stats()
         print(f"  Modality stats (GR00T-style) from: {processor.norm_stats_meta_dir}", flush=True)

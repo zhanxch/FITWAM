@@ -14,6 +14,7 @@ SEED=${SEED:-10000}
 REPLAN_STEPS=${REPLAN_STEPS:-25}
 MAX_ENV_STEPS=${MAX_ENV_STEPS:-600}
 OUTPUT_DATASET=${OUTPUT_DATASET:-${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text}
+DATASET_STATS_PATH=${DATASET_STATS_PATH:-${ROOT}/artifacts/dataset_stats/dexjoco_${TASK}_success_action_state.json}
 LOGDIR=${ROOT}/artifacts/logs
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}
 SERVER_LOG=${LOGDIR}/collect_${TASK}_${RUN_ID}_server.log
@@ -34,13 +35,19 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[$(date '+%F %T')] starting policy server task=$TASK gpu=$GPU port=$PORT" | tee -a "$COLLECT_LOG"
+server_args=(
+  --device cuda:0
+  --host 0.0.0.0
+  --port "$PORT"
+  --run-dir "$RUN_DIR"
+  --checkpoint "$CHECKPOINT"
+  --no-load-text-encoder
+)
+if [[ -f "$DATASET_STATS_PATH" ]]; then
+  server_args+=(--dataset-stats-path "$DATASET_STATS_PATH")
+fi
 CUDA_VISIBLE_DEVICES="$GPU" "$PY" scripts/water_plant/dexjoco_async/run_fastwam_server_async.py \
-  --device cuda:0 \
-  --host 0.0.0.0 \
-  --port "$PORT" \
-  --run-dir "$RUN_DIR" \
-  --checkpoint "$CHECKPOINT" \
-  --no-load-text-encoder > "$SERVER_LOG" 2>&1 &
+  "${server_args[@]}" > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 deadline=$((SECONDS + 900))
