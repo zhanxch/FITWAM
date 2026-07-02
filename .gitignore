@@ -77,6 +77,8 @@ results/
 results/*
 !results/dexjoco_async_microwave/
 !results/dexjoco_async_microwave/**
+!results/dexjoco_hammer_nail_failure_embedding/
+!results/dexjoco_hammer_nail_failure_embedding/**
 sdist/
 var/
 wheels/

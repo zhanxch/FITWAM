@@ -216,6 +216,8 @@ tactile planning → future tactile prediction → tactile-refined action
 | A. Vanilla success | 外部参考 ~70–80% | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
 | C. Structured failure | 74/100 → 59/100 → 4/100 | late/final checkpoint 退化 | step 006500 / 011500 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
 
+**单臂任务 sweep（M1 扩展）：** `hammer_nail` failure-embedding 50-episode rollout 已完成：baseline 36/50，failure-embedding step 6000 为 32/50，step 5500 为 **34/50**，step 5000 为 27/50。step 5500 通过本轮 gate（68.0% ≥ 66.3%），但仍低于同 seed baseline 72.0%；详见 [`results/dexjoco_hammer_nail_failure_embedding`](./results/dexjoco_hammer_nail_failure_embedding/)。
+
 DexJoCo async rollout 代码位于 [`scripts/water_plant/dexjoco_async`](./scripts/water_plant/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
 
 ---

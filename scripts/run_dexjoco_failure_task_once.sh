@@ -16,6 +16,8 @@ EVAL_EPISODES=${EVAL_EPISODES:-50}
 EVAL_SEED=${EVAL_SEED:-0}
 REPLAN_STEPS=${REPLAN_STEPS:-24}
 MAX_ENV_STEPS=${MAX_ENV_STEPS:-1500}
+EVAL_SERVER_CONDA_ENV=${EVAL_SERVER_CONDA_ENV:-residual}
+EVAL_CLIENT_CONDA_ENV=${EVAL_CLIENT_CONDA_ENV:-residual}
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}
 WAIT_FOR_GPUS=${WAIT_FOR_GPUS:-0}
 REQUIRE_FREE_MB=${REQUIRE_FREE_MB:-70000}
@@ -139,6 +141,8 @@ log "rolling out checkpoint=$CKPT episodes=$EVAL_EPISODES seed=$EVAL_SEED"
   --run-dir "$RUN_DIR" \
   --checkpoint "$CKPT" \
   --no-load-text-encoder \
+  --server-conda-env "$EVAL_SERVER_CONDA_ENV" \
+  --client-conda-env "$EVAL_CLIENT_CONDA_ENV" \
   --task-config-dir third_party/dexjoco/configs/rand_obj \
   --tasks "$TASK" \
   --episodes "$EVAL_EPISODES" \
