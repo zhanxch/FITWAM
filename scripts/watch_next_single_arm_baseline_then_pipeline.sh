@@ -8,7 +8,8 @@ TASKS=${TASKS:-"click_mouse pick_bucket pinch_tongs fold_glasses"}
 GPUS=${GPUS:-4,5,6,7}
 POLL_SECONDS=${POLL_SECONDS:-180}
 MIN_BYTES=${MIN_BYTES:-1000000000}
-MIN_AGE_SECONDS=${MIN_AGE_SECONDS:-900}
+MIN_AGE_SECONDS=${MIN_AGE_SECONDS:-180}
+MIN_STEP=${MIN_STEP:-6000}
 EXIT_AFTER_LAUNCH=${EXIT_AFTER_LAUNCH:-1}
 DRY_RUN=${DRY_RUN:-0}
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}
@@ -29,7 +30,7 @@ pipeline_active() {
 }
 
 find_checkpoint() {
-  "$PY" - "$SEARCH_ROOT" "$MIN_BYTES" "$MIN_AGE_SECONDS" "$1" <<'PY'
+  "$PY" - "$SEARCH_ROOT" "$MIN_BYTES" "$MIN_AGE_SECONDS" "$MIN_STEP" "$1" <<'PY'
 import re
 import sys
 import time
@@ -38,7 +39,8 @@ from pathlib import Path
 root = Path(sys.argv[1])
 min_bytes = int(sys.argv[2])
 min_age = int(sys.argv[3])
-task = sys.argv[4]
+min_step = int(sys.argv[4])
+task = sys.argv[5]
 now = time.time()
 step_re = re.compile(r"step_(\d+)\.pt$")
 bad = re.compile(r"(failure|structured|text_failure)", re.IGNORECASE)
@@ -58,10 +60,13 @@ for path in root.rglob("step_*.pt"):
     match = step_re.search(path.name)
     if not match:
         continue
+    step = int(match.group(1))
+    if step < min_step:
+        continue
     run_dir = path.parent.parent.parent
     if not (run_dir / "config.yaml").exists():
         continue
-    row = (int(match.group(1)), st.st_mtime, str(path), str(run_dir), st.st_size)
+    row = (step, st.st_mtime, str(path), str(run_dir), st.st_size)
     runs.setdefault(str(run_dir), []).append(row)
 candidates = []
 for run_dir, rows in runs.items():
@@ -81,7 +86,7 @@ print(f"{step}\t{mtime:.0f}\t{ckpt}\t{run_dir}")
 PY
 }
 
-log "watch start tasks=$TASKS search_root=$SEARCH_ROOT min_age=${MIN_AGE_SECONDS}s gpus=$GPUS dry_run=$DRY_RUN"
+log "watch start tasks=$TASKS search_root=$SEARCH_ROOT min_age=${MIN_AGE_SECONDS}s min_step=$MIN_STEP gpus=$GPUS dry_run=$DRY_RUN"
 while true; do
   if pipeline_active; then
     log "pipeline/collector/train already active; waiting"
