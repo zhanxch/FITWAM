@@ -9,6 +9,9 @@ BASELINE_CKPT=${BASELINE_CKPT:-/data_all/share/dexjoco_fastwam_results/hammer_na
 RUN_ID=${RUN_ID:-2026-07-02_after_fe_hammer_text_failure_6000_g4567}
 LONG_RUN_ID=${LONG_RUN_ID:-2026-07-02_after_fe_hammer_text_failure_long_12240_g4567}
 RUN_ID_STEM=${RUN_ID_STEM:-2026-07-02_after_fe_hammer_text_failure_eval}
+RESTART_NEXT_ON_DONE=${RESTART_NEXT_ON_DONE:-1}
+WATCH_TASKS=${WATCH_TASKS:-"click_mouse pick_bucket pinch_tongs fold_glasses"}
+NEXT_WATCH_SESSION=${NEXT_WATCH_SESSION:-fastwam_next_single_arm_pipeline_watch}
 
 cd "$ROOT"
 mkdir -p artifacts/logs
@@ -16,6 +19,19 @@ LOG="artifacts/logs/queue_hammer_text_failure_after_fe_2026-07-02.log"
 
 log() {
   echo "[$(date '+%F %T')] $*" | tee -a "$LOG"
+}
+
+restart_next_watcher_if_needed() {
+  if [[ "$RESTART_NEXT_ON_DONE" != "1" ]]; then
+    return 0
+  fi
+  if tmux has-session -t "$NEXT_WATCH_SESSION" 2>/dev/null; then
+    log "next-task watcher already active: $NEXT_WATCH_SESSION"
+    return 0
+  fi
+  log "starting next-task watcher after hammer concat queue: tasks=$WATCH_TASKS session=$NEXT_WATCH_SESSION"
+  tmux new-session -d -s "$NEXT_WATCH_SESSION" \
+    "cd $ROOT && TASKS=\"$WATCH_TASKS\" GPUS=$GPUS MIN_AGE_SECONDS=900 POLL_SECONDS=180 bash scripts/watch_next_single_arm_baseline_then_pipeline.sh"
 }
 
 session_active() {
@@ -49,6 +65,7 @@ TASK=hammer_nail \
   bash scripts/run_dexjoco_failure_task_once.sh 2>&1 | tee -a "$LOG"
 
 log "starting hammer_nail text_failure fallback eval"
+set +e
 TASK=hammer_nail \
   VARIANT=text_failure \
   RUN_ID="$RUN_ID" \
@@ -57,5 +74,12 @@ TASK=hammer_nail \
   LONG_ON_FAIL=1 \
   LONG_RUN_ID="$LONG_RUN_ID" \
   LONG_STEPS="12240 12000 11000" \
+  RESTART_WATCHER_ON_PASS=1 \
+  WATCH_TASKS="$WATCH_TASKS" \
+  NEXT_WATCH_SESSION="$NEXT_WATCH_SESSION" \
   RUN_ID_STEM="$RUN_ID_STEM" \
   bash scripts/watch_dexjoco_run_then_eval_steps.sh 2>&1 | tee -a "$LOG"
+status=${PIPESTATUS[0]}
+set -e
+restart_next_watcher_if_needed
+exit "$status"

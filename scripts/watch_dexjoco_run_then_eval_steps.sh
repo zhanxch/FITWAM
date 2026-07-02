@@ -22,6 +22,9 @@ LONG_STEPS=${LONG_STEPS:-"12240 12000 11000"}
 LONG_RUN_ID=${LONG_RUN_ID:-${RUN_ID}_long_${LONG_MAX_STEPS}}
 LONG_SESSION=${LONG_SESSION:-fastwam_${TASK}_${VARIANT}_long_${LONG_MAX_STEPS}}
 RUN_ID_STEM=${RUN_ID_STEM:-$(date +%Y-%m-%d_%H-%M-%S)}
+RESTART_WATCHER_ON_PASS=${RESTART_WATCHER_ON_PASS:-0}
+WATCH_TASKS=${WATCH_TASKS:-"click_mouse pick_bucket pinch_tongs fold_glasses"}
+NEXT_WATCH_SESSION=${NEXT_WATCH_SESSION:-fastwam_next_single_arm_pipeline_watch}
 
 cd "$ROOT"
 mkdir -p artifacts/logs artifacts/gates artifacts/evals
@@ -141,6 +144,19 @@ check_gate() {
   return 1
 }
 
+restart_watcher_if_needed() {
+  if [[ "$RESTART_WATCHER_ON_PASS" != "1" ]]; then
+    return 0
+  fi
+  if tmux has-session -t "$NEXT_WATCH_SESSION" 2>/dev/null; then
+    log "next-task watcher already active: $NEXT_WATCH_SESSION"
+    return 0
+  fi
+  log "starting next-task watcher after pass: tasks=$WATCH_TASKS session=$NEXT_WATCH_SESSION"
+  tmux new-session -d -s "$NEXT_WATCH_SESSION" \
+    "cd $ROOT && TASKS=\"$WATCH_TASKS\" GPUS=$GPUS MIN_AGE_SECONDS=900 POLL_SECONDS=180 bash scripts/watch_next_single_arm_baseline_then_pipeline.sh"
+}
+
 eval_steps_until_pass() {
   local variant=$1
   local run_id=$2
@@ -194,11 +210,15 @@ wait_for_session "$WAIT_SESSION"
 
 if eval_steps_until_pass "$VARIANT" "$RUN_ID" "$STEPS" "primary"; then
   log "watch-eval complete with passing checkpoint"
+  restart_watcher_if_needed
   exit 0
 fi
 
 if [[ "$LONG_ON_FAIL" == "1" ]]; then
-  continue_long_then_eval
+  if continue_long_then_eval; then
+    restart_watcher_if_needed
+    exit 0
+  fi
   exit $?
 fi
 
