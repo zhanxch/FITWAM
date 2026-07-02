@@ -17,6 +17,8 @@ DEFAULT_DATASET="${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text"
 SHARD_SUFFIXES=${SHARD_SUFFIXES:-s20000 s30000 s40000}
 COLLECT_SESSIONS=${COLLECT_SESSIONS:-fastwam_${TASK}_failure_collect fastwam_${TASK}_failure_collect_s20000 fastwam_${TASK}_failure_collect_s30000 fastwam_${TASK}_failure_collect_s40000}
 TRAIN_SESSION=${TRAIN_SESSION:-fastwam_${TASK}_${TRAIN_VARIANT}_train}
+TRAIN_USE_FALLBACK_SUPERVISOR=${TRAIN_USE_FALLBACK_SUPERVISOR:-1}
+WATCH_TASKS=${WATCH_TASKS:-"click_mouse pick_bucket pinch_tongs fold_glasses"}
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}
 LOGDIR="${ROOT}/artifacts/logs"
 LOG="${LOGDIR}/watch_${TASK}_failures_then_train_${RUN_ID}.log"
@@ -147,6 +149,10 @@ if tmux has-session -t "$TRAIN_SESSION" 2>/dev/null; then
 fi
 
 train_log="${LOGDIR}/train_${TASK}_${TRAIN_VARIANT}_autostart_${stamp}.log"
-train_cmd="cd $ROOT && export PATH=/home/zhaoyc/.local/bin:/home/gzr1/miniconda3/bin:\$PATH && export PYTHONPATH=$ROOT/src:$ROOT/scripts:\${PYTHONPATH:-} && TASK=$TASK VARIANT=$TRAIN_VARIANT RESUME_CHECKPOINT=$RESUME_CHECKPOINT GPUS=$TRAIN_GPUS WAIT_FOR_GPUS=1 REQUIRE_FREE_MB=$TRAIN_REQUIRE_FREE_MB MAX_STEPS=$TRAIN_MAX_STEPS SAVE_EVERY=$TRAIN_SAVE_EVERY EVAL_EVERY=$TRAIN_EVAL_EVERY EVAL_EPISODES=$TRAIN_EVAL_EPISODES bash scripts/run_dexjoco_failure_task_once.sh 2>&1 | tee -a $train_log"
+if [[ "$TRAIN_USE_FALLBACK_SUPERVISOR" == "1" ]]; then
+  train_cmd="cd $ROOT && export PATH=/home/zhaoyc/.local/bin:/home/gzr1/miniconda3/bin:\$PATH && export PYTHONPATH=$ROOT/src:$ROOT/scripts:\${PYTHONPATH:-} && TASK=$TASK RESUME_CHECKPOINT=$RESUME_CHECKPOINT GPUS=$TRAIN_GPUS REQUIRE_FREE_MB=$TRAIN_REQUIRE_FREE_MB FIRST_MAX_STEPS=$TRAIN_MAX_STEPS SAVE_EVERY=$TRAIN_SAVE_EVERY EVAL_EVERY=$TRAIN_EVAL_EVERY EVAL_EPISODES=$TRAIN_EVAL_EPISODES WATCH_TASKS=\"$WATCH_TASKS\" bash scripts/run_dexjoco_fallback_supervisor.sh 2>&1 | tee -a $train_log"
+else
+  train_cmd="cd $ROOT && export PATH=/home/zhaoyc/.local/bin:/home/gzr1/miniconda3/bin:\$PATH && export PYTHONPATH=$ROOT/src:$ROOT/scripts:\${PYTHONPATH:-} && TASK=$TASK VARIANT=$TRAIN_VARIANT RESUME_CHECKPOINT=$RESUME_CHECKPOINT GPUS=$TRAIN_GPUS WAIT_FOR_GPUS=1 REQUIRE_FREE_MB=$TRAIN_REQUIRE_FREE_MB MAX_STEPS=$TRAIN_MAX_STEPS SAVE_EVERY=$TRAIN_SAVE_EVERY EVAL_EVERY=$TRAIN_EVAL_EVERY EVAL_EPISODES=$TRAIN_EVAL_EPISODES bash scripts/run_dexjoco_failure_task_once.sh 2>&1 | tee -a $train_log"
+fi
 tmux new-session -d -s "$TRAIN_SESSION" "$train_cmd"
 log "started train session=$TRAIN_SESSION log=$train_log"
