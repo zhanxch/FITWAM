@@ -218,6 +218,8 @@ tactile planning → future tactile prediction → tactile-refined action
 
 **单臂任务 sweep（M1 扩展）：** `hammer_nail` failure-embedding 50-episode rollout 已完成：baseline 36/50，failure-embedding step 6000 为 32/50，step 5500 为 **34/50**，step 5000 为 27/50。step 5500 通过本轮 gate（68.0% ≥ 66.3%），但仍低于同 seed baseline 72.0%；详见 [`results/dexjoco_hammer_nail_failure_embedding`](./results/dexjoco_hammer_nail_failure_embedding/)。
 
+**单臂 sweep 协议：** 按 `hammer_nail → click_mouse → pick_bucket → pinch_tongs → fold_glasses` 顺序处理。每个任务先用 success-only baseline rollout 50 个 episode 并采集 100 条 failure；随后训练 structure-up（代码中为 `failure_embedding`）到 6000 step，每 500 step 保留 checkpoint。若 6000 step 未达到该任务 `min(π₀.₅, GR00T N1.5) - 1pp` gate，则依次评估 5500/5000，再切到 text-concat（代码中为 `text_failure`）重复 6000、5500、5000；仍不过则继续 concat 到 12240，并评估 12240/12000/11000。自动化入口为 [`scripts/watch_next_single_arm_baseline_then_pipeline.sh`](./scripts/watch_next_single_arm_baseline_then_pipeline.sh) 和 [`scripts/run_dexjoco_fallback_supervisor.sh`](./scripts/run_dexjoco_fallback_supervisor.sh)。
+
 DexJoCo async rollout 代码位于 [`scripts/water_plant/dexjoco_async`](./scripts/water_plant/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
 
 ---
