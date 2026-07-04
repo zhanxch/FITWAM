@@ -4,7 +4,7 @@ This directory contains the 50-episode multi-GPU DexJoCo water_plant rollout swe
 
 ## Setup
 
-- Source run: `/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57`
+- Source run: `/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57`
 - Checkpoints: `step_007000.pt` to `step_012000.pt`, interval 1000
 - Episodes: 50 per checkpoint, seed 0
 - GPUs: `0,1,2,3`
@@ -42,4 +42,4 @@ The coarse trend rises from 50% at 7000 steps to 80% at 12000 steps. The best ch
 
 Remote source directory:
 
-`/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350`
+`/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350`

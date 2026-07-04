@@ -145,24 +145,24 @@ tactile planning → future tactile prediction → tactile-refined action
 
 ## DexJoCo 基准对比
 
-各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。
+各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。FastWAM 列为本仓库内部 rollout 记录。
 
 ### rand-obj
 
-| Task | DP-T | DP-C | ACT | π₀.₅ | GR00T N1.5 |
-|------|------|------|-----|------|------------|
-| Hammer Nail | 81.3±3.1 | 58.7±4.2 | 50.0±7.2 | **84.7±5.0** | 67.3±4.2 |
-| Click Mouse | 62.0±2.0 | 74.0±5.3 | 61.3±3.1 | 64.7±8.1 | **85.3±3.1** |
-| Pick Bucket | 83.3±3.1 | 70.0±2.0 | 64.0±4.0 | **84.0±7.2** | 72.0±6.0 |
-| Pinch Tongs | 22.7±5.8 | **57.3±6.4** | 31.3±3.1 | 24.0±6.9 | 12.7±2.3 |
-| Fold Glasses | 53.3±3.1 | 54.0±15.9 | 47.3±11.0 | **72.0±3.5** | 27.3±2.3 |
-| Water Plant | 84.0±3.5 | 63.3±3.1 | 47.3±4.6 | **88.7±3.1** | 72.7±1.2 |
-| Unlock iPad /B | 8.0±2.0 | **52.0±2.0** | 9.3±3.1 | 12.0±3.5 | 12.7±11.0 |
-| Hanoi /B | **24.7±4.6** | 12.7±3.1 | 6.0±2.0 | 15.3±3.1 | 0.7±1.2 |
-| Assembly /B | 4.7±3.1 | 3.3±1.2 | 0.0±0.0 | **5.3±1.2** | 0.7±1.2 |
-| Microwave /B | **73.3±11.6** | 54.0±12.5 | 66.0±2.0 | 70.0±3.5 | 50.7±4.6 |
-| Photograph /B | **56.7±4.6** | 24.0±8.7 | 7.3±1.2 | 56.7±5.0 | 40.7±7.0 |
-| **Avg.** | 50.4±1.4 | 47.6±2.0 | 35.5±2.0 | **52.5±1.4** | 40.2±0.3 |
+| Task | DP-T | DP-C | ACT | π₀.₅ | GR00T N1.5 | FastWAM success-only | FastWAM failure-data |
+|------|------|------|-----|------|------------|----------------------|----------------------|
+| Hammer Nail | 81.3±3.1 | 58.7±4.2 | 50.0±7.2 | **84.7±5.0** | 67.3±4.2 | 72.0 | 68.0 |
+| Click Mouse | 62.0±2.0 | 74.0±5.3 | 61.3±3.1 | 64.7±8.1 | **85.3±3.1** | — | — |
+| Pick Bucket | 83.3±3.1 | 70.0±2.0 | 64.0±4.0 | **84.0±7.2** | 72.0±6.0 | — | — |
+| Pinch Tongs | 22.7±5.8 | **57.3±6.4** | 31.3±3.1 | 24.0±6.9 | 12.7±2.3 | — | — |
+| Fold Glasses | 53.3±3.1 | 54.0±15.9 | 47.3±11.0 | **72.0±3.5** | 27.3±2.3 | — | — |
+| Water Plant | 84.0±3.5 | 63.3±3.1 | 47.3±4.6 | **88.7±3.1** | 72.7±1.2 | — | 82.0 |
+| Unlock iPad /B | 8.0±2.0 | **52.0±2.0** | 9.3±3.1 | 12.0±3.5 | 12.7±11.0 | — | — |
+| Hanoi /B | **24.7±4.6** | 12.7±3.1 | 6.0±2.0 | 15.3±3.1 | 0.7±1.2 | — | — |
+| Assembly /B | 4.7±3.1 | 3.3±1.2 | 0.0±0.0 | **5.3±1.2** | 0.7±1.2 | — | — |
+| Microwave /B | **73.3±11.6** | 54.0±12.5 | 66.0±2.0 | 70.0±3.5 | 50.7±4.6 | — | — |
+| Photograph /B | **56.7±4.6** | 24.0±8.7 | 7.3±1.2 | 56.7±5.0 | 40.7±7.0 | — | — |
+| **Avg.** | 50.4±1.4 | 47.6±2.0 | 35.5±2.0 | **52.5±1.4** | 40.2±0.3 | — | — |
 
 ### rand-full
 
@@ -221,6 +221,8 @@ tactile planning → future tactile prediction → tactile-refined action
 **单臂 sweep 协议：** 按 `hammer_nail → click_mouse → pick_bucket → pinch_tongs → fold_glasses` 顺序处理。每个任务先用 success-only baseline 在 `rand_obj`、`replan_steps=24`、`max_env_steps=600` 下 rollout 50 个 episode，并采集 100 条 failure；随后训练 structure-up（代码中为 `failure_embedding`）到 6000 step，每 500 step 保留 checkpoint。若 6000 step 未达到该任务 `min(π₀.₅, GR00T N1.5) - 1pp` gate，则依次评估 5500/5000，再切到 text-concat（代码中为 `text_failure`）重复 6000、5500、5000；仍不过则继续 concat 到 12240，并评估 12240/12000/11000。自动化入口为 [`scripts/watch_next_single_arm_baseline_then_pipeline.sh`](./scripts/watch_next_single_arm_baseline_then_pipeline.sh) 和 [`scripts/run_dexjoco_fallback_supervisor.sh`](./scripts/run_dexjoco_fallback_supervisor.sh)。
 
 DexJoCo async rollout 代码位于 [`scripts/water_plant/dexjoco_async`](./scripts/water_plant/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
+
+Failure datasets are indexed in [`results/dexjoco_failure_datasets`](./results/dexjoco_failure_datasets/).
 
 ---
 

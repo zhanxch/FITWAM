@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
+FAILURE_DATASET_ROOT=${FAILURE_DATASET_ROOT:-/data_all/share/dexjoco_failure_datasets}
 PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
 TASK=${TASK:?Set TASK, e.g. TASK=hammer_nail}
 RUN_DIR=${RUN_DIR:?Set RUN_DIR to the base policy training run directory}
@@ -13,7 +14,7 @@ MAX_ATTEMPTS=${MAX_ATTEMPTS:-260}
 SEED=${SEED:-10000}
 REPLAN_STEPS=${REPLAN_STEPS:-24}
 MAX_ENV_STEPS=${MAX_ENV_STEPS:-600}
-OUTPUT_DATASET=${OUTPUT_DATASET:-${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text}
+OUTPUT_DATASET=${OUTPUT_DATASET:-${FAILURE_DATASET_ROOT}/${TASK}_failure_fastwam_2cam_text}
 DATASET_STATS_PATH=${DATASET_STATS_PATH:-${ROOT}/artifacts/dataset_stats/dexjoco_${TASK}_success_action_state.json}
 LOGDIR=${ROOT}/artifacts/logs
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}

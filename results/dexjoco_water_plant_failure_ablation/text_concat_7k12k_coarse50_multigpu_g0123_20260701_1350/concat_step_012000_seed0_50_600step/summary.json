@@ -1,6 +1,6 @@
 {
   "label": "blocking_stride25_gpus4",
-  "run_dir": "/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57",
+  "run_dir": "/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57",
   "policy_host": "127.0.0.1",
   "policy_ports": [
     33291,
@@ -32,7 +32,7 @@
   "shards": [
     {
       "shard_id": 0,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/summary.json",
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_0/summary.json",
       "episodes": 13,
       "successes": 10,
       "success_rate": 0.7692307692307693,
@@ -41,7 +41,7 @@
     },
     {
       "shard_id": 1,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/summary.json",
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_1/summary.json",
       "episodes": 13,
       "successes": 11,
       "success_rate": 0.8461538461538461,
@@ -50,7 +50,7 @@
     },
     {
       "shard_id": 2,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/summary.json",
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_2/summary.json",
       "episodes": 12,
       "successes": 10,
       "success_rate": 0.8333333333333334,
@@ -59,7 +59,7 @@
     },
     {
       "shard_id": 3,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/summary.json",
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/shard_3/summary.json",
       "episodes": 12,
       "successes": 9,
       "success_rate": 0.75,

@@ -1,0 +1,4 @@
+dataset,episodes,frames,fps,videos,root
+water_plant_failure_fastwam_2cam_text,100,51417,30,200,/data_all/share/dexjoco_failure_datasets/water_plant_failure_fastwam_2cam_text
+hammer_nail_failure_fastwam_2cam_text,100,60000,30,200,/data_all/share/dexjoco_failure_datasets/hammer_nail_failure_fastwam_2cam_text
+fold_glasses_failure_fastwam_2cam_text,100,60000,30,200,/data_all/share/dexjoco_failure_datasets/fold_glasses_failure_fastwam_2cam_text

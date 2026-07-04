@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
-RESULT_ROOT=${RESULT_ROOT:-/data_all/share/dexjoco_fastwam_results}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
+RESULT_ROOT=${RESULT_ROOT:-/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703}
+FAILURE_DATASET_ROOT=${FAILURE_DATASET_ROOT:-/data_all/share/dexjoco_failure_datasets}
 PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
 ACCEL=${ACCEL:-/home/zhaoyc/.local/bin/accelerate}
 ACCEL_CFG=${ACCEL_CFG:-scripts/accelerate_configs/accelerate_zero1_ds.yaml}
@@ -38,7 +39,7 @@ LOGDIR="${ROOT}/artifacts/logs"
 TRAIN_LOG="${LOGDIR}/train_${TASK}_${VARIANT}_${RUN_ID}.log"
 EVAL_DIR="${ROOT}/artifacts/evals/${TASK}_${VARIANT}_step_${MAX_STEPS}_seed${EVAL_SEED}_${EVAL_EPISODES}ep_${RUN_ID}"
 SUCCESS_DATASET="/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/${TASK}"
-FAILURE_DATASET="${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text"
+FAILURE_DATASET="${FAILURE_DATASET_ROOT}/${TASK}_failure_fastwam_2cam_text"
 STATS_PATH="${ROOT}/artifacts/dataset_stats/dexjoco_${TASK}_success_action_state.json"
 
 if [[ "$VARIANT" == "success" || "$VARIANT" == "failure_embedding" ]]; then

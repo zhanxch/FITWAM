@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
+FAILURE_DATASET_ROOT=${FAILURE_DATASET_ROOT:-/data_all/share/dexjoco_failure_datasets}
 TASK=${TASK:?Set TASK, e.g. hammer_nail}
 TARGET_TOTAL_FAILURES=${TARGET_TOTAL_FAILURES:-100}
 CHECK_INTERVAL=${CHECK_INTERVAL:-120}
@@ -13,7 +14,7 @@ TRAIN_EVAL_EVERY=${TRAIN_EVAL_EVERY:-500}
 TRAIN_EVAL_EPISODES=${TRAIN_EVAL_EPISODES:-50}
 TRAIN_REQUIRE_FREE_MB=${TRAIN_REQUIRE_FREE_MB:-60000}
 RESUME_CHECKPOINT=${RESUME_CHECKPOINT:?Set RESUME_CHECKPOINT to the success checkpoint}
-DEFAULT_DATASET="${ROOT}/artifacts/datasets/${TASK}_failure_fastwam_2cam_text"
+DEFAULT_DATASET="${FAILURE_DATASET_ROOT}/${TASK}_failure_fastwam_2cam_text"
 SHARD_SUFFIXES=${SHARD_SUFFIXES:-s20000 s30000 s40000}
 COLLECT_SESSIONS=${COLLECT_SESSIONS:-fastwam_${TASK}_failure_collect fastwam_${TASK}_failure_collect_s20000 fastwam_${TASK}_failure_collect_s30000 fastwam_${TASK}_failure_collect_s40000}
 TRAIN_SESSION=${TRAIN_SESSION:-fastwam_${TASK}_${TRAIN_VARIANT}_train}

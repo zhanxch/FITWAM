@@ -2,7 +2,7 @@ train:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
     - /data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant
-    - /data_all/share/FastWAM_zhaoyc_failure/artifacts/datasets/water_plant_failure_fastwam_2cam_text
+    - /data_all/share/dexjoco_failure_datasets/water_plant_failure_fastwam_2cam_text
   shape_meta:
     images:
       - key: front
@@ -26,7 +26,7 @@ train:
   camera_key: null
   val_set_proportion: 0.01
   is_training_set: true
-  pretrained_norm_stats: /data_all/share/FastWAM_zhaoyc_failure/artifacts/dataset_stats/dexjoco_water_plant_success_action_state.json
+  pretrained_norm_stats: /data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/dataset_stats/dexjoco_water_plant_success_action_state.json
   skip_padding_as_possible: false
   concat_multi_camera: horizontal
   action_loss_zero_if_instruction_contains: "Failed to finish the whole process."
@@ -53,7 +53,7 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: /data_all/share/FastWAM_zhaoyc_failure/artifacts/text_embeds_cache/dexjoco_water_plant_2cam_success
+  text_embedding_cache_dir: /data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/text_embeds_cache/dexjoco_water_plant_2cam_success
   context_len: 128
 
 val:

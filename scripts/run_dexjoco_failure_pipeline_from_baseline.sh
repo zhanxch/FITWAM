@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
+FAILURE_DATASET_ROOT=${FAILURE_DATASET_ROOT:-/data_all/share/dexjoco_failure_datasets}
 PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
 TASK=${TASK:?Set TASK, e.g. click_mouse}
 RUN_DIR=${RUN_DIR:?Set RUN_DIR to the success-only baseline run directory}
@@ -28,7 +29,7 @@ OVERWRITE_FAILURE_DATASETS=${OVERWRITE_FAILURE_DATASETS:-0}
 RUN_ID=${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)}
 
 cd "$ROOT"
-mkdir -p artifacts/logs artifacts/evals artifacts/datasets
+mkdir -p artifacts/logs artifacts/evals "$FAILURE_DATASET_ROOT"
 export PATH="$(dirname "$PY")":/home/zhaoyc/.local/bin:/home/gzr1/miniconda3/bin:$PATH
 export PYTHONPATH="$ROOT/src:$ROOT/scripts:${PYTHONPATH:-}"
 export DIFFSYNTH_MODEL_BASE_PATH="$ROOT/checkpoints"
@@ -38,7 +39,7 @@ LOG="artifacts/logs/pipeline_${TASK}_${RUN_ID}.log"
 STATS_PATH="artifacts/dataset_stats/dexjoco_${TASK}_success_action_state.json"
 CKPT_TAG="$(basename "$CHECKPOINT" .pt)"
 BASELINE_OUT="artifacts/evals/${TASK}_baseline_${CKPT_TAG}_seed${BASELINE_SEED}_${BASELINE_EPISODES}ep_${RUN_ID}"
-DEFAULT_DATASET="artifacts/datasets/${TASK}_failure_fastwam_2cam_text"
+DEFAULT_DATASET="${FAILURE_DATASET_ROOT}/${TASK}_failure_fastwam_2cam_text"
 
 log() {
   echo "[$(date '+%F %T')] $*" | tee -a "$LOG"
@@ -130,7 +131,7 @@ for i in "${!GPU_LIST[@]}"; do
   collect_log="artifacts/logs/collect_${TASK}_${seed}_${RUN_ID}.log"
   log "starting collector session=$session gpu=$gpu seed=$seed output=$output"
   tmux new-session -d -s "$session" \
-    "cd $ROOT && TASK=$TASK RUN_DIR=$RUN_DIR CHECKPOINT=$CHECKPOINT GPU=$gpu PORT=$port TARGET_FAILURES=$COLLECT_TARGET_FAILURES MAX_ATTEMPTS=$COLLECT_MAX_ATTEMPTS SEED=$seed REPLAN_STEPS=$COLLECT_REPLAN_STEPS MAX_ENV_STEPS=$COLLECT_MAX_ENV_STEPS OUTPUT_DATASET=$ROOT/$output bash scripts/run_dexjoco_collect_failures_once.sh 2>&1 | tee -a $collect_log"
+    "cd $ROOT && TASK=$TASK RUN_DIR=$RUN_DIR CHECKPOINT=$CHECKPOINT GPU=$gpu PORT=$port TARGET_FAILURES=$COLLECT_TARGET_FAILURES MAX_ATTEMPTS=$COLLECT_MAX_ATTEMPTS SEED=$seed REPLAN_STEPS=$COLLECT_REPLAN_STEPS MAX_ENV_STEPS=$COLLECT_MAX_ENV_STEPS OUTPUT_DATASET=$output bash scripts/run_dexjoco_collect_failures_once.sh 2>&1 | tee -a $collect_log"
 done
 
 if (( ${#sessions[@]} == 0 )); then

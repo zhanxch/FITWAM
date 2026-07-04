@@ -5,42 +5,42 @@
       "episodes": 50,
       "successes": 25,
       "success_rate": 0.5,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_007000_seed0_50_600step/summary.json"
     },
     {
       "step": 8000,
       "episodes": 50,
       "successes": 35,
       "success_rate": 0.7,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_008000_seed0_50_600step/summary.json"
     },
     {
       "step": 9000,
       "episodes": 50,
       "successes": 35,
       "success_rate": 0.7,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_009000_seed0_50_600step/summary.json"
     },
     {
       "step": 10000,
       "episodes": 50,
       "successes": 37,
       "success_rate": 0.74,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_010000_seed0_50_600step/summary.json"
     },
     {
       "step": 11000,
       "episodes": 50,
       "successes": 39,
       "success_rate": 0.78,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_011000_seed0_50_600step/summary.json"
     },
     {
       "step": 12000,
       "episodes": 50,
       "successes": 40,
       "success_rate": 0.8,
-      "summary_path": "/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json"
+      "summary_path": "/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/text_concat_7k12k_coarse50_multigpu_g0123_20260701_1350/concat_step_012000_seed0_50_600step/summary.json"
     }
   ]
 }

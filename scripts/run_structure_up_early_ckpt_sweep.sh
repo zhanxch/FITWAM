@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
-RESULT_ROOT=${RESULT_ROOT:-/data_all/share/dexjoco_fastwam_results}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
+RESULT_ROOT=${RESULT_ROOT:-/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703}
 PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
 WANDB_NAME=${WANDB_NAME:-dexjoco_water_plant_structured_failure_2cam_proprio_1e-4}
 RUN_ID=${RUN_ID:-2026-06-30_02-41-07}

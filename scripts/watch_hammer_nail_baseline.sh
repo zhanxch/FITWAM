@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}"
+ROOT="${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}"
 SEARCH_ROOT="${SEARCH_ROOT:-/data_all/share}"
 OUT_DIR="${OUT_DIR:-${ROOT}/artifacts/baseline_watch}"
 TASK_PATTERN="${TASK_PATTERN:-*hammer*nail*}"

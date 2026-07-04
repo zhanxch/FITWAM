@@ -49,7 +49,7 @@ from policy_zmq_client import PolicyClient
 
 
 DEFAULT_SUCCESS_DATASET_ROOT = Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets")
-DEFAULT_FAILURE_DATASET_ROOT = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/datasets")
+DEFAULT_FAILURE_DATASET_ROOT = Path("/data_all/share/dexjoco_failure_datasets")
 DEFAULT_TASK_NAME = "water_plant"
 FAILURE_PHRASE = "Failed to finish the whole process."
 
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dataset",
         type=Path,
         default=None,
-        help="Output failure LeRobot dataset. Defaults to artifacts/datasets/<task_name>_failure_fastwam_2cam_text.",
+        help="Output failure LeRobot dataset. Defaults to the shared failure-dataset root.",
     )
     parser.add_argument("--target-failures", type=int, default=100)
     parser.add_argument("--max-attempts", type=int, default=260)

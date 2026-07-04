@@ -1,6 +1,6 @@
 {
   "label": "blocking_stride25",
-  "run_dir": "/data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57",
+  "run_dir": "/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703/dexjoco_water_plant_text_failure_2cam_proprio_1e-4/2026-06-29_00-21-57",
   "policy_host": "127.0.0.1",
   "policy_port": 40303,
   "control_mode": "blocking",

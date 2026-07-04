@@ -1,14 +1,14 @@
 artifact,label,remote_path,notes
-report,interactive HTML,/data_all/share/FastWAM_zhaoyc_failure/artifacts/reports/latest_fastwam_water_plant_failure_ablation.html,latest remote report copy
+report,interactive HTML,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/reports/latest_fastwam_water_plant_failure_ablation.html,latest remote report copy
 report,tracked HTML,results/dexjoco_water_plant_failure_ablation/interactive_report.html,lightweight copy committed in this repo
-summary,B mid merged,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_mid_006500_seed0_100_merged_600step/summary.json,38/100
-summary,B best merged,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_best_011000_seed0_100_merged_600step/summary.json,81/100
-summary,B final merged,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_final_12240_seed0_100_merged_600step/summary.json,82/100
-summary,C mid,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_mid_006500_seed0_100_600step/summary.json,74/100
-summary,C best,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_best_011500_seed0_100_600step/summary.json,59/100
-summary,C final,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_final_12240_seed0_100_600step/summary.json,4/100
-full_artifacts,B best seed25-99,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_best_011000_seed25_75_600step,75 mp4 files plus 75 action npz files
-full_artifacts,B final seed25-99,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/B_final_12240_seed25_75_600step,75 mp4 files plus 75 action npz files
-full_artifacts,C mid seed0-99,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_mid_006500_seed0_100_600step,100 mp4 files plus 100 action npz files
-full_artifacts,C best seed0-99,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_best_011500_seed0_100_600step,100 mp4 files plus 100 action npz files
-full_artifacts,C final seed0-99,/data_all/share/FastWAM_zhaoyc_failure/artifacts/evals/multigpu_BC_20260630_235500/C_final_12240_seed0_100_600step,100 mp4 files plus 100 action npz files
+summary,B mid merged,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/B_mid_006500_seed0_100_merged_600step/summary.json,38/100
+summary,B best merged,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/B_best_011000_seed0_100_merged_600step/summary.json,81/100
+summary,B final merged,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/B_final_12240_seed0_100_merged_600step/summary.json,82/100
+summary,C mid,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_mid_006500_seed0_100_600step/summary.json,74/100
+summary,C best,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_best_011500_seed0_100_600step/summary.json,59/100
+summary,C final,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_final_12240_seed0_100_600step/summary.json,4/100
+full_artifacts,B best seed25-99,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/B_best_011000_seed25_75_600step,75 mp4 files plus 75 action npz files
+full_artifacts,B final seed25-99,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/B_final_12240_seed25_75_600step,75 mp4 files plus 75 action npz files
+full_artifacts,C mid seed0-99,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_mid_006500_seed0_100_600step,100 mp4 files plus 100 action npz files
+full_artifacts,C best seed0-99,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_best_011500_seed0_100_600step,100 mp4 files plus 100 action npz files
+full_artifacts,C final seed0-99,/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/evals/multigpu_BC_20260630_235500/C_final_12240_seed0_100_600step,100 mp4 files plus 100 action npz files

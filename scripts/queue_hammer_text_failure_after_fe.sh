@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
 WAIT_SESSIONS=${WAIT_SESSIONS:-"fastwam_hammer_failure_embedding_long_12240 fastwam_hammer_fe_long_eval_watch"}
 GPUS=${GPUS:-4,5,6,7}
 POLL_SECONDS=${POLL_SECONDS:-300}
-BASELINE_CKPT=${BASELINE_CKPT:-/data_all/share/dexjoco_fastwam_results/hammer_nail_uncond_2cam_384_1e-4/2026-07-01_10-04-05/checkpoints/weights/step_006650.pt}
+BASELINE_CKPT=${BASELINE_CKPT:-/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703/hammer_nail_uncond_2cam_384_1e-4/2026-07-01_10-04-05/checkpoints/weights/step_006650.pt}
 RUN_ID=${RUN_ID:-2026-07-02_after_fe_hammer_text_failure_6000_g4567}
 LONG_RUN_ID=${LONG_RUN_ID:-2026-07-02_after_fe_hammer_text_failure_long_12240_g4567}
 RUN_ID_STEM=${RUN_ID_STEM:-2026-07-02_after_fe_hammer_text_failure_eval}

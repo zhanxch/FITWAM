@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=${ROOT:-/data_all/share/FastWAM_zhaoyc_failure}
+ROOT=${ROOT:-/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703}
 PY=${PY:-/home/gzr1/miniconda3/envs/residual/bin/python}
-SEARCH_ROOT=${SEARCH_ROOT:-/data_all/share/dexjoco_fastwam_results}
+SEARCH_ROOT=${SEARCH_ROOT:-/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703}
 TASKS=${TASKS:-"click_mouse pick_bucket pinch_tongs fold_glasses"}
 GPUS=${GPUS:-4,5,6,7}
 POLL_SECONDS=${POLL_SECONDS:-180}

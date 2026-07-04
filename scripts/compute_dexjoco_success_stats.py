@@ -29,7 +29,7 @@ DEFAULT_TASKS = [
     "fold_glasses",
 ]
 DEFAULT_DATASET_ROOT = Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets")
-DEFAULT_STATS_DIR = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/dataset_stats")
+DEFAULT_STATS_DIR = Path("/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/dataset_stats")
 
 
 def parse_args() -> argparse.Namespace:

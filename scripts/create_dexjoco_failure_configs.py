@@ -19,9 +19,9 @@ DEFAULT_TASKS = [
     "fold_glasses",
 ]
 DEFAULT_SUCCESS_ROOT = Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets")
-DEFAULT_FAILURE_ROOT = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/datasets")
-DEFAULT_STATS_DIR = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/dataset_stats")
-DEFAULT_TEXT_CACHE_ROOT = Path("/data_all/share/FastWAM_zhaoyc_failure/artifacts/text_embeds_cache")
+DEFAULT_FAILURE_ROOT = Path("/data_all/share/dexjoco_failure_datasets")
+DEFAULT_STATS_DIR = Path("/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/dataset_stats")
+DEFAULT_TEXT_CACHE_ROOT = Path("/data_all/zhaoyc/Summer2/FastWAM_zhaoyc_failure_moved_from_share_20260703/artifacts/text_embeds_cache")
 FAILURE_PHRASE = "Failed to finish the whole process."
 
 
@@ -219,7 +219,7 @@ def task_cfg(
             {"override /model": "fastwam"},
             "_self_",
         ],
-        "output_dir": "/data_all/share/dexjoco_fastwam_results/${wandb.name}/${now:%Y-%m-%d_%H-%M-%S}",
+        "output_dir": "/data_all/zhaoyc/Summer2/dexjoco_fastwam_results_moved_from_share_20260703/${wandb.name}/${now:%Y-%m-%d_%H-%M-%S}",
         "batch_size": batch_size,
         "num_workers": 4,
         "model": model_cfg,
