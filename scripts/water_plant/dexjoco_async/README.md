@@ -20,7 +20,7 @@ Main files:
 | `multi_gpu_eval_utils.py` | Reusable utils: episode sharding, free-port allocation, server ping, conda-env subprocess launch. |
 | `eval_summary_aggregator.py` | Reusable merger for per-shard `summary.json` files (library + CLI). |
 
-The committed result subset is in [`results/dexjoco_async_microwave`](../../results/dexjoco_async_microwave).
+The committed result subset is in [`results/dexjoco_async_microwave`](../../../results/dexjoco_async_microwave).
 
 ## Multi-GPU parallel evaluation
 
