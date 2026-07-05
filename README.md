@@ -145,7 +145,7 @@ tactile planning → future tactile prediction → tactile-refined action
 
 ## DexJoCo 基准对比
 
-各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。FastWAM 列为本仓库内部 rollout 记录。
+各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。FastWAM 列为本仓库内部 rollout 记录；带 †/‡ 的值为非同协议参考。
 
 ### rand-obj
 
@@ -216,7 +216,7 @@ tactile planning → future tactile prediction → tactile-refined action
 | 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
 |------|------------|--------------|-----------------|------|
 | B. Text failure | 38/100 → 81/100 → 82/100 | 6500 明显未训够；后期稳定 | step 006500 / 011000 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
-| A. Vanilla success | 外部参考 ~70–80% | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
+| A. Vanilla success | 外部参考 ~70–80% | — | zxc run（非同 pipeline） | 待补跑同 pipeline |
 | C. Structured failure | 74/100 → 59/100 → 4/100 | late/final checkpoint 退化 | step 006500 / 011500 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
 
 **单臂任务 sweep（M1 扩展）：** `hammer_nail` failure-embedding 50-episode rollout 已完成：baseline 36/50，failure-embedding step 6000 为 32/50，step 5500 为 **34/50**，step 5000 为 27/50。step 5500 通过本轮 gate（68.0% ≥ 66.3%），但仍低于同 seed baseline 72.0%；详见 [`results/dexjoco_hammer_nail_failure_embedding`](./results/dexjoco_hammer_nail_failure_embedding/)。
