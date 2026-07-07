@@ -5,7 +5,7 @@
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md)
+**文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
 ---
 
@@ -14,9 +14,9 @@
 研究路线按 5 个 Milestone 展开（详见 [实验设计](#实验设计)）：
 
 1. **Failure video 训练** — 论证 failure 轨迹纳入 video 预训练能提升闭环表现（M1）
-2. **Interaction-centric 数据构造** — event clip、subtask、structured failure text 及配套训练（M2）
+2. **EveRobot 数据格式** — LeRobot-compatible sidecar，记录 outcome、failure event、训练 manifest 与自进化 provenance（M2）
 3. **面向 failure 的架构** — 更好消费 failure 信号的模型设计（M3）
-4. **迭代闭环** — Train → Test → Retrain，含 RL token 等在线优化探索（M4）
+4. **失败轨迹自进化** — Train → Test → append rollout → manifest subset retrain，后续接 steer token / RL token（M4）
 5. **触觉（Tactile）** — 拓展 M2/M3 至接触期（M5，真机为主）：
 
 ```text
@@ -54,19 +54,27 @@ M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机�
 
 ### Milestone 2：Interaction-centric 数据构造与配套训练
 
-**目标：** 提出EveRobot 数据格式代替LeRobot数据格式，使训练纳入failure data
+**目标：** 提出 EveRobot，一种基于 LeRobot 的 failure/self-evolution sidecar 数据格式，使失败 rollout 能被系统地记录、筛选、切窗并纳入下一轮训练。
 
-**要论证：** 相比 M1 的 episode 级 text 拼接，**subtask 边界、event clip、structured failure text** 等更细粒度构造，能更有效地从 failure 中学习交互动态。
+**要论证：** 相比 M1 的 episode 级 text 拼接，EveRobot 用结构化 metadata 明确表达 rollout 来源、success/failure outcome、failure event window 和训练子集，从而更有效地把 failure 轨迹转成可训练样本。
 
 | 方向 | 内容 | 相对 M1 的增量 |
 |------|------|----------------|
-| **Event clip** | 按交互边界切段，替代固定长度 LeRobot clip | 样本对齐真实交互转移 |
-| **Subtask metadata** | 子任务阶段 / 进度标签 | 区分「哪一步失败」 |
-| **Structured failure text（C）** | 独立 outcome / failure flag / 结构化描述 | 替代纯 text 拼接 |
+| **Episode provenance** | `source_policy`、`collection_round`、`seed`、`episode_outcome` | 支持 Train → Test → Retrain 的可追踪数据闭环 |
+| **Failure event window** | 在完整 rollout 上用 `event_meta` 标注可训练窗口 | 不物理截断原始数据，训练时只采样 failure event 部分 |
+| **Training manifest** | 每轮训练显式选择 success episode / failure event 子集 | 支持 append-only 数据扩充和 round-specific retrain |
+| **Loss policy** | failure event 可设置 `action_loss=disabled` | failure 用于 video/proprio/context 学习，不直接模仿失败动作 |
 
-**消融顺序：** 
+**当前实现：** EveRobot v0.1 已在 `water_plant` 上落地为 sidecar 格式，保持 LeRobot 原始 `data/`、`videos/`、`meta/` 不变，只在 `data/water_plant_fastwam/eve/` 下生成：
 
-**当前状态：** C（structured failure）已完成同协议 rollout：`74 -> 59 -> 4`（step 6500 / 11500 / 12240）。早中期 checkpoint 可用，但 late/final 明显退化，后续优先诊断 checkpoint 稳定性。
+| 文件 | 用途 |
+|------|------|
+| `schema_version.json` | EveRobot 格式版本和 LeRobot 兼容说明 |
+| `episode_meta.jsonl` | episode 级 provenance、round、policy、success/failure、seed、length |
+| `event_meta.jsonl` | failure event window、failure type、action loss 策略、预留 steer token |
+| `manifests/train_round1_success_plus_failure_events.json` | round1 训练子集：100 条 success episode + 49 个 failure event |
+
+训练适配由 `fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset` 完成：success episode 按普通 LeRobot 固定窗口采样；failure event 只在 `start_frame <= window < end_frame` 内采样；`action_loss=disabled` 时返回 `action_loss_weight=0.0`。
 
 ---
 
@@ -106,7 +114,7 @@ Success 数据预训练 → Deploy / 闭环测试 → 采集 failure
 | DexJoCo | 先 | 低成本、可复现，主做迭代消融 |
 | 真机 `spray_water` | 后 | 与 deploy 链路对齐；RL 与触觉更依赖真机 |
 
-**当前状态：** 设计中；M1 B/C rollout 结果是第一条闭环信号。
+**当前状态：** round0 FastWAM 已完成 200 次 rollout，生成 151 条 success + 49 条 failure；EveRobot round1 manifest 默认只把 49 条 failure event 回灌训练，151 条 rollout success 仅记录 provenance。
 
 ---
 
@@ -134,9 +142,9 @@ tactile planning → future tactile prediction → tactile-refined action
 | Milestone | 依赖 | 状态 |
 |-----------|------|------|
 | **M1** | FastWAM 基线 / LoRA 基线 | **进行中**（B vs A） |
-| **M2** | M1 阳性结果 | C 100-ep 主结果完成（late checkpoint 退化待诊断）；event / subtask 未开始 |
+| **M2** | M1 阳性结果 | EveRobot v0.1 sidecar 已实现；round1 failure-event manifest 已生成 |
 | **M3** | M2 最优构造 | 未开始 |
-| **M4** | M1–M3 + deploy 链路 | 设计中 |
+| **M4** | M1–M3 + deploy 链路 | round0 rollout → round1 manifest 闭环已打通 |
 | **M5** | M2 + M3（真机） | 未开始 |
 
 **工程并行项（非 milestone 结论）：** `baseline_lora` 验证 video LoRA 能否作为更轻量的默认训练方式，服务于 M1 及之后各阶段的训练效率，不改变上述论证顺序。
@@ -145,44 +153,48 @@ tactile planning → future tactile prediction → tactile-refined action
 
 ## DexJoCo 基准对比
 
-各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。FastWAM 列为本仓库内部 rollout 记录；带 †/‡ 的值为非同协议参考。
+各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。
 
 ### rand-obj
 
-| Task | DP-T | DP-C | ACT | π₀.₅ | GR00T N1.5 | FastWAM success-only | FastWAM failure-data |
-|------|------|------|-----|------|------------|----------------------|----------------------|
-| Hammer Nail | 81.3±3.1 | 58.7±4.2 | 50.0±7.2 | **84.7±5.0** | 67.3±4.2 | 72.0 | 68.0 |
-| Click Mouse | 62.0±2.0 | 74.0±5.3 | 61.3±3.1 | 64.7±8.1 | **85.3±3.1** | — | — |
-| Pick Bucket | 83.3±3.1 | 70.0±2.0 | 64.0±4.0 | **84.0±7.2** | 72.0±6.0 | — | — |
-| Pinch Tongs | 22.7±5.8 | **57.3±6.4** | 31.3±3.1 | 24.0±6.9 | 12.7±2.3 | — | — |
-| Fold Glasses | 53.3±3.1 | 54.0±15.9 | 47.3±11.0 | **72.0±3.5** | 27.3±2.3 | 16.3† | — |
-| Water Plant | 84.0±3.5 | 63.3±3.1 | 47.3±4.6 | **88.7±3.1** | 72.7±1.2 | ~70–80‡ | 82.0 |
-| Unlock iPad /B | 8.0±2.0 | **52.0±2.0** | 9.3±3.1 | 12.0±3.5 | 12.7±11.0 | — | — |
-| Hanoi /B | **24.7±4.6** | 12.7±3.1 | 6.0±2.0 | 15.3±3.1 | 0.7±1.2 | — | — |
-| Assembly /B | 4.7±3.1 | 3.3±1.2 | 0.0±0.0 | **5.3±1.2** | 0.7±1.2 | — | — |
-| Microwave /B | **73.3±11.6** | 54.0±12.5 | 66.0±2.0 | 70.0±3.5 | 50.7±4.6 | — | — |
-| Photograph /B | **56.7±4.6** | 24.0±8.7 | 7.3±1.2 | 56.7±5.0 | 40.7±7.0 | — | — |
-| **Avg.** | 50.4±1.4 | 47.6±2.0 | 35.5±2.0 | **52.5±1.4** | 40.2±0.3 | — | — |
-
-† Fold Glasses 为采集 failure dataset 时的 baseline rollout 统计：20/123 success, 600 max env steps；不是固定 N eval。
-‡ Water Plant success-only 为外部 25-episode 参考，尚未混入本仓库同 pipeline 主证据。
-
-### rand-full
-
 | Task | DP-T | DP-C | ACT | π₀.₅ | GR00T N1.5 |
 |------|------|------|-----|------|------------|
-| Hammer Nail | 18.7±1.2 | 19.3±3.1 | 22.7±6.1 | 17.3±5.0 | **38.7±8.3** |
-| Click Mouse | 25.3±8.1 | 34.7±4.2 | 48.7±5.0 | 54.7±7.0 | **74.0±2.0** |
-| Pick Bucket | 58.7±15.0 | 68.0±3.5 | 36.0±5.3 | **78.7±6.1** | 69.3±6.1 |
-| Pinch Tongs | 18.7±1.2 | **28.7±11.7** | 23.3±7.0 | 18.7±1.2 | 5.3±2.3 |
-| Fold Glasses | 11.3±1.2 | 15.3±7.6 | 7.3±3.1 | **39.3±3.1** | 20.7±3.1 |
-| Water Plant | 56.0±8.7 | 54.0±5.3 | 52.7±8.1 | **75.3±6.4** | 66.0±5.3 |
-| Unlock iPad /B | 2.0±2.0 | **12.0±3.5** | 0.7±1.2 | 0.0±0.0 | 0.0±0.0 |
-| Hanoi /B | 0.7±1.2 | 9.3±6.1 | 4.7±2.3 | **15.3±2.3** | 0.0±0.0 |
-| Assembly /B | 0.0±0.0 | 0.0±0.0 | 0.0±0.0 | 0.0±0.0 | **1.3±1.2** |
-| Microwave /B | 21.3±4.6 | **62.7±6.4** | 50.0±6.9 | 54.7±6.1 | 42.0±7.2 |
-| Photograph /B | 7.3±1.2 | 8.7±4.2 | 3.3±1.2 | **21.3±2.3** | 18.7±7.0 |
-| **Avg.** | 20.0±1.4 | 28.4±1.5 | 22.7±1.3 | **34.1±2.9** | 30.5±1.1 |
+| Hammer Nail | 81.3±3.1 | 58.7±4.2 | 50.0±7.2 | **84.7±5.0** | 67.3±4.2 |
+| Click Mouse | 62.0±2.0 | 74.0±5.3 | 61.3±3.1 | 64.7±8.1 | **85.3±3.1** |
+| Pick Bucket | 83.3±3.1 | 70.0±2.0 | 64.0±4.0 | **84.0±7.2** | 72.0±6.0 |
+| Pinch Tongs | 22.7±5.8 | **57.3±6.4** | 31.3±3.1 | 24.0±6.9 | 12.7±2.3 |
+| Fold Glasses | 53.3±3.1 | 54.0±15.9 | 47.3±11.0 | **72.0±3.5** | 27.3±2.3 |
+| Water Plant | 84.0±3.5 | 63.3±3.1 | 47.3±4.6 | **88.7±3.1** | 72.7±1.2 |
+| **Avg. (单臂)** | 64.4 | 62.9 | 50.2 | **69.7** | 56.2 |
+
+### FastWAM / EveRobot water_plant
+
+`rand-obj` `water_plant` 上的 FastWAM 当前闭环结果：
+
+| Method | Success Rate | Successes / Trials | Notes |
+|--------|-------------:|-------------------:|-------|
+| FastWAM | 75.5% | 151 / 200 | success-only FastWAM rollout |
+| FastWAM + failure scratch | 82.0% | 82 / 100 | failure data from scratch |
+| FastWAM + LoRA continuation | 81.5% | 163 / 200 | continued training with rollout data |
+
+其中 `FastWAM 75.5% (151/200)` 同时作为 EveRobot round1 的 rollout provenance：
+`water_plant_rollout_200_step6500_raw` 中 151 条 success、49 条 failure。当前 round1
+manifest 只将 49 条 failure 转成 failure event 进入训练，rollout success 默认不进入训练子集。
+
+
+### multi-task
+
+多任务联合训练（%，Mean ± Std）。**加粗**表示该表内该行最优值。
+
+| Task | DP-T | π₀.₅ |
+|------|------|------|
+| Hammer Nail | 58.7±5.0 | **86.7±3.1** |
+| Click Mouse | 38.7±3.1 | **80.7±3.1** |
+| Pick Bucket | 55.3±7.6 | **83.3±8.1** |
+| Pinch Tongs | 6.0±5.3 | **45.3±6.1** |
+| Fold Glasses | 11.3±5.0 | **42.0±6.0** |
+| Water Plant | 60.0±6.9 | **84.0±4.0** |
+| **Avg. (单臂)** | 38.3 | **70.3** |
 
 ---
 
@@ -204,9 +216,9 @@ tactile planning → future tactile prediction → tactile-refined action
 | Milestone | 状态 |
 |-----------|------|
 | **M1** | **进行中**：B（Text failure）100-ep 主结果完成；A（Vanilla）外部参考 ~70–80%，同 pipeline 主结果待补 |
-| **M2** | C（Structured failure）100-ep 主结果完成；event / subtask 未开始 |
+| **M2** | EveRobot v0.1 已完成：sidecar schema、episode/event metadata、round1 manifest、manifest-driven dataset adapter |
 | M3 | 未开始 |
-| M4 | 设计中 |
+| M4 | round0 FastWAM 200 次 rollout 已回灌为 round1 failure-event manifest；多轮自进化待继续 |
 | M5 | 未开始（仿真触觉夹爪可选，非优先） |
 
 **工程并行：** 全参基线 step_6500 eval 完成；`baseline_lora` 训练中，用于确认 LoRA 可否作为后续 milestone 的默认训练后端。
@@ -216,16 +228,10 @@ tactile planning → future tactile prediction → tactile-refined action
 | 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
 |------|------------|--------------|-----------------|------|
 | B. Text failure | 38/100 → 81/100 → 82/100 | 6500 明显未训够；后期稳定 | step 006500 / 011000 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
-| A. Vanilla success | 外部参考 ~70–80% | — | zxc run（非同 pipeline） | 待补跑同 pipeline |
+| A. Vanilla success | 外部参考 ~70–80% | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
 | C. Structured failure | 74/100 → 59/100 → 4/100 | late/final checkpoint 退化 | step 006500 / 011500 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
 
-**单臂任务 sweep（M1 扩展）：** `hammer_nail` failure-embedding 50-episode rollout 已完成：baseline 36/50，failure-embedding step 6000 为 32/50，step 5500 为 **34/50**，step 5000 为 27/50。step 5500 通过本轮 gate（68.0% ≥ 66.3%），但仍低于同 seed baseline 72.0%；详见 [`results/dexjoco_hammer_nail_failure_embedding`](./results/dexjoco_hammer_nail_failure_embedding/)。
-
-**单臂 sweep 协议：** 按 `hammer_nail → click_mouse → pick_bucket → pinch_tongs → fold_glasses` 顺序处理。每个任务先用 success-only baseline 在 `rand_obj`、`replan_steps=24`、`max_env_steps=1500` 下 rollout 50 个 episode（同一 episode 在 600/1000/1500 步分别记录 success，主报数取 success@1000，例如 hammer_nail baseline 72.0% 即 success@1000），并采集 100 条 failure；随后训练 structure-up（代码中为 `failure_embedding`）到 6000 step，每 500 step 保留 checkpoint。若 6000 step 未达到该任务 `min(π₀.₅, GR00T N1.5) - 1pp` gate（按 success@1000 判定），则依次评估 5500/5000，再切到 text-concat（代码中为 `text_failure`）重复 6000、5500、5000；仍不过则继续 concat 到 12240，并评估 12240/12000/11000。详见 [`results/dexjoco_hammer_nail_failure_embedding/summary.md`](./results/dexjoco_hammer_nail_failure_embedding/summary.md)。自动化入口为 [`scripts/watch_next_single_arm_baseline_then_pipeline.sh`](./scripts/watch_next_single_arm_baseline_then_pipeline.sh) 和 [`scripts/run_dexjoco_fallback_supervisor.sh`](./scripts/run_dexjoco_fallback_supervisor.sh)。
-
-DexJoCo async rollout 代码位于 [`scripts/water_plant/dexjoco_async`](./scripts/water_plant/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
-
-Failure datasets are indexed in [`results/dexjoco_failure_datasets`](./results/dexjoco_failure_datasets/).
+DexJoCo async rollout 代码位于 [`scripts/dexjoco_async`](./scripts/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
 
 ---
 
@@ -256,7 +262,7 @@ python scripts/precompute_text_embeds.py task=water_plant_uncond_2cam_384_1e-4
 bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 ```
 
-**EveRobot 整 episode（DiffSynth 风格，可变 T）：**
+**Legacy EveRobot 整 episode（DiffSynth 风格，可变 T）：**
 
 ```bash
 python scripts/water_plant/convert_lerobot_to_everobot.py \
@@ -265,20 +271,20 @@ python scripts/water_plant/convert_lerobot_to_everobot.py \
 bash scripts/water_plant/train_everobot.sh task=everobot_water_plant_full_lora
 ```
 
-（EveRobot + LoRA 的 task / data 配置说明见 [`scripts/README.md`](./scripts/README.md)。）
+（这是早期整 episode 训练路径；failure self-evolution 使用上文的 EveRobot v0.1 sidecar。）
 
 **DexJoCo 闭环评估（与全参相同脚本，传入 LoRA run 目录即可）：**
 
 ```bash
-python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 0,1,2,3 \
-  --run-dir runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id> \
-  --checkpoint runs/water_plant_uncond_2cam_384_1e-4_lora/<run_id>/checkpoints/weights/step_XXXXX.pt \
+  --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/ \
+  --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \
   --no-load-text-encoder \
   --task-config-dir third_party/dexjoco/configs/rand_obj \
-  --tasks water_plant --episodes 100 --seed 25 \
-  --replan-steps 24 --control-mode blocking --max-env-steps 1500 \
-  --output-dir evaluate_results/dexjoco/baseline_lora/step_XXXXX
+  --tasks water_plant --episodes 200 --seed 0 \
+  --replan-steps 24 --control-mode blocking --max-env-steps 600 \
+  --output-dir evaluate_results/dexjoco/water_plant_200/step_006500
 ```
 
 依赖 `peft`（已写入 `pyproject.toml`，`pip install -e .` 即可）。更多细节见 [`scripts/README.md`](./scripts/README.md#video-lora--actiondit-full-fine-tune-optional)。
@@ -302,7 +308,9 @@ python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 ```text
 configs/          Hydra 配置（model/fastwam.yaml 与 model/fastwam_video_lora.yaml 并行）
 src/fastwam/      模型（video_lora.py 为独立 LoRA 模块）
+src/fastwam/datasets/eve/  EveRobot v0.1 manifest-driven dataset adapter
 scripts/train.py  训练（LeRobot 固定窗口，通用入口）
+scripts/everobot/ EveRobot v0.1 sidecar 构造工具
 scripts/water_plant/  water_plant 数据准备 / 训练 / DexJoCo eval
 scripts/spray_water_gr00tstyle/  真机 spray_water 训练 / deploy
 scripts/openloop/ 开环评估引擎
@@ -324,15 +332,15 @@ data/  runs/  evaluate_results/  logs/
 
 多卡dexjoco并行测试
 ```python
-python scripts/water_plant/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
-  --gpus 0,1,2,3 \
-  --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
-  --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \
-  --no-load-text-encoder \
-  --task-config-dir third_party/dexjoco/configs/rand_obj \
-  --tasks water_plant \
-  --episodes 100 --seed 25 \
-  --replan-steps 24 --control-mode blocking \
-  --max-env-steps 1500 \
-  --output-dir evaluate_results/dexjoco/water_plant/step_006500
+ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
+    --gpus 0,1 \
+    --run-dir runs/pinch_tongs_uncond_2cam_384_1e-4/2026-07-03_10-22-54 \
+    --checkpoint runs/pinch_tongs_uncond_2cam_384_1e-4/2026-07-03_10-22-54/checkpoints/weights/step_005000.pt \
+    --no-load-text-encoder \
+    --task-config-dir third_party/dexjoco/configs/rand_obj \
+    --tasks pinch_tongs\
+    --episodes 100 --seed 0 \
+    --replan-steps 25 --control-mode blocking \
+    --max-env-steps 600 \
+    --output-dir evaluate_results/dexjoco/pinch_tongs/step_005000    
 ```
