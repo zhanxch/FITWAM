@@ -1,4 +1,4 @@
-# InterWAM: Interaction-centric FastWAM
+# FITWAM: Failure-Improvement Tactile WAM
 
 > WAM learns state transitions. Physical understanding comes from interaction transitions.
 
