@@ -95,7 +95,14 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         if processor is not None:
             if isinstance(processor, DictConfig):
                 processor = instantiate(processor)
-            if not pretrained_norm_stats:
+            if processor.wants_modality_stats:
+                if PartialState().is_main_process:
+                    logger.info(
+                        "Loading modality stats from %s (GR00T-style).",
+                        processor.norm_stats_meta_dir,
+                    )
+                processor.set_normalizer_from_modality_stats()
+            elif not pretrained_norm_stats:
                 if not is_training_set:
                     raise ValueError("pretrained_norm_stats must be provided for validation/test sets since we don't want to calculate stats on them.")
                 if PartialState().is_main_process:
@@ -109,6 +116,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
                     obj_list = [dataset_stats]
                     torch.distributed.broadcast_object_list(obj_list, src=0)
                     dataset_stats = obj_list[0]
+                processor.set_normalizer_from_stats(dataset_stats)
             else:
                 dataset_stats = load_dataset_stats_from_json(pretrained_norm_stats)
                 logger.info(f"Using dataset stats: {pretrained_norm_stats}")
@@ -119,8 +127,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
                     and os.path.abspath(pretrained_norm_stats) != os.path.abspath(dest_path)
                 ):
                     save_dataset_stats_to_json(dataset_stats, dest_path)
-
-            processor.set_normalizer_from_stats(dataset_stats)
+                processor.set_normalizer_from_stats(dataset_stats)
             self.lerobot_dataset.set_processor(processor)
         
     def __len__(self):

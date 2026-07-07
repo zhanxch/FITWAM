@@ -2,7 +2,7 @@
 
 This is a compact artifact subset from a historical DexJoCo `bimanual_microwave_cook` async/LPF inference ablation.
 
-It is included as supporting engineering evidence only. The current Interaction-centric WAM experiment is the `water_plant` B/A/C failure-data sequence described in the root README.
+It is included as supporting engineering evidence only. The current FITWAM simulation focus is the `water_plant` and `hammer_nail` failure-video/self-evolution sequence described in the root README.
 
 ## What Is Included
 

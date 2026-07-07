@@ -90,12 +90,14 @@ def create_fastwam(
     action_scheduler=None,
     state_scheduler=None,
     loss=None,
+    video_lora=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
     model_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
 ):
     from .models.wan22.fastwam import FastWAM
+    from .models.wan22.video_lora import inject_video_lora, normalize_video_lora_config
 
     if isinstance(video_dit_config, DictConfig):
         video_dit_config = OmegaConf.to_container(video_dit_config, resolve=True)
@@ -149,7 +151,11 @@ def create_fastwam(
     if not isinstance(loss, dict):
         raise ValueError(f"`loss` must be dict-like, got {type(loss)}")
 
-    return FastWAM.from_wan22_pretrained(
+    if isinstance(video_lora, DictConfig):
+        video_lora = OmegaConf.to_container(video_lora, resolve=True)
+    video_lora_cfg = normalize_video_lora_config(video_lora)
+
+    model = FastWAM.from_wan22_pretrained(
         device=device,
         torch_dtype=model_dtype,
         model_id=model_id,
@@ -179,6 +185,17 @@ def create_fastwam(
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
         loss_lambda_state=float(loss.get("lambda_state", 1.0)),
     )
+    model.video_lora_enabled = bool(video_lora_cfg.get("enabled", False))
+    model.video_lora_config = video_lora_cfg
+    if model.video_lora_enabled:
+        inject_video_lora(
+            model.video_expert,
+            rank=int(video_lora_cfg["rank"]),
+            alpha=int(video_lora_cfg["alpha"]),
+            target_modules=video_lora_cfg["target_modules"],
+            checkpoint=video_lora_cfg.get("checkpoint"),
+        )
+    return model
 
 
 def create_fastwam_joint(

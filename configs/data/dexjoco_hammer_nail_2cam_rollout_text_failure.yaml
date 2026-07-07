@@ -1,7 +1,7 @@
 train:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
-    - /data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant
+    - ${oc.env:FASTWAM_ROLLOUT_DATASET,/data_all/xiangchengzhan/FastWAM/data/hammer_nail_rollout_200_step6500_trim8s}
   shape_meta:
     images:
       - key: front
@@ -25,10 +25,11 @@ train:
   camera_key: null
   val_set_proportion: 0.01
   is_training_set: true
-  pretrained_norm_stats: /data_all/share/FastWAM_zhaoyc_failure/artifacts/dataset_stats/dexjoco_water_plant_success_action_state.json
+  pretrained_norm_stats: null
   skip_padding_as_possible: false
   concat_multi_camera: horizontal
-  action_loss_zero_if_instruction_contains: null
+  video_backend: pyav
+  action_loss_zero_if_instruction_contains: "Failed to finish the whole process."
   processor:
     _target_: fastwam.datasets.lerobot.processors.fastwam_processor.FastWAMProcessor
     shape_meta: ${data.train.shape_meta}
@@ -40,6 +41,8 @@ train:
     use_stepwise_action_norm: false
     norm_default_mode: "min/max"
     norm_exception_mode: null
+    norm_stats_source: meta
+    norm_stats_meta_dir: /data_all/xiangchengzhan/FastWAM/data/dexjoco/dexjoco_lerobot_datasets/hammer_nail/meta
     action_state_merger:
       _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
     train_transforms:
@@ -50,13 +53,13 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: /data_all/share/FastWAM_zhaoyc_failure/artifacts/text_embeds_cache/dexjoco_water_plant_2cam_success
+  text_embedding_cache_dir: ${oc.env:FASTWAM_ROLLOUT_TEXT_CACHE,/data_all/xiangchengzhan/FastWAM/data/text_embeds_cache/dexjoco_hammer_nail_rollout_text_failure}
   context_len: 128
 
 val:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
-    - /data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant
+    - ${data.train.dataset_dirs.0}
   shape_meta: ${data.train.shape_meta}
   num_frames: ${data.train.num_frames}
   global_sample_stride: ${data.train.global_sample_stride}
@@ -65,10 +68,11 @@ val:
   camera_key: null
   val_set_proportion: ${data.train.val_set_proportion}
   is_training_set: false
-  pretrained_norm_stats: ${data.train.pretrained_norm_stats}
+  pretrained_norm_stats: null
   skip_padding_as_possible: false
   concat_multi_camera: ${data.train.concat_multi_camera}
-  action_loss_zero_if_instruction_contains: null
+  video_backend: ${data.train.video_backend}
+  action_loss_zero_if_instruction_contains: ${data.train.action_loss_zero_if_instruction_contains}
   processor:
     _target_: fastwam.datasets.lerobot.processors.fastwam_processor.FastWAMProcessor
     shape_meta: ${data.train.shape_meta}
@@ -80,6 +84,8 @@ val:
     use_stepwise_action_norm: ${data.train.processor.use_stepwise_action_norm}
     norm_default_mode: ${data.train.processor.norm_default_mode}
     norm_exception_mode: null
+    norm_stats_source: ${data.train.processor.norm_stats_source}
+    norm_stats_meta_dir: ${data.train.processor.norm_stats_meta_dir}
     action_state_merger:
       _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
     train_transforms: ${data.train.processor.train_transforms}

@@ -24,16 +24,11 @@ class LinearNormalizer:
             use_stepwise_action_norm,
             default_mode: NormMode, 
             exception_mode: Dict[str, Dict[str, NormMode]], 
-            stats: Dict[str, Dict[str, Dict[str, torch.Tensor]]],
-            skip_dims: Dict[str, Dict[str, List[int]]] | None = None,
-            per_dim_modes: Dict[str, Dict[str, Dict[str, List[int]]]] | None = None,
-            clip_to_unit: bool = False,
+            stats: Dict[str, Dict[str, Dict[str, torch.Tensor]]]
         ):
         super().__init__()
         self.normalizers = {"action": {}, "state": {}}
         self.stats = stats
-        skip_dims = skip_dims or {}
-        per_dim_modes = per_dim_modes or {}
 
         for meta in shape_meta["action"]:
             key = meta["key"]
@@ -48,15 +43,9 @@ class LinearNormalizer:
             else:
                 cur_mode = default_mode
 
-            cur_skip = skip_dims.get("action", {}).get(key)
-            cur_per_dim = per_dim_modes.get("action", {}).get(key)
-
             self.normalizers["action"][key] = SingleFieldLinearNormalizer(
                 stats=cur_stats, 
                 mode=cur_mode,
-                skip_dims=cur_skip,
-                per_dim_modes=cur_per_dim,
-                clip_to_unit=clip_to_unit,
             )
 
         for meta in shape_meta["state"]:
@@ -68,15 +57,9 @@ class LinearNormalizer:
             else:
                 cur_mode = default_mode
 
-            cur_skip = skip_dims.get("state", {}).get(key)
-            cur_per_dim = per_dim_modes.get("state", {}).get(key)
-
             self.normalizers["state"][key] = SingleFieldLinearNormalizer(
                 stats=cur_stats, 
                 mode=cur_mode,
-                skip_dims=cur_skip,
-                per_dim_modes=cur_per_dim,
-                clip_to_unit=clip_to_unit,
             )
 
     def get_stats(self):
@@ -85,122 +68,6 @@ class LinearNormalizer:
             "state": {key: norm.get_stats() for key, norm in self.normalizers["state"].items()}
         }
         return stats
-
-    @classmethod
-    def from_modality_stats(
-        cls,
-        shape_meta,
-        modality_meta,
-        stats_json_path,
-        relative_stats_json_path=None,
-        use_stepwise_action_norm=False,
-        default_mode="min/max",
-        exception_mode=None,
-        skip_dims=None,
-        per_dim_modes=None,
-        clip_to_unit=False,
-        relative_action_keys=None,
-    ):
-        """Build a LinearNormalizer from GR00T-style meta/stats.json + modality.json.
-
-        Args:
-            shape_meta: FastWAM shape_meta with per-key action/state entries.
-            modality_meta: contents of meta/modality.json ({state/action: {key: {start, end}}}).
-            stats_json_path: path to meta/stats.json (flat {action: {min:[58], ...}, observation.state: {...}}).
-            relative_stats_json_path: optional path to meta/relative_stats.json
-                (per-key stepwise {key: {min:[T,D], ...}}). Used for action keys listed in
-                `relative_action_keys`; flattened over the time axis to produce global stats.
-            relative_action_keys: action keys whose stats should come from relative_stats
-                (e.g. ["left_eef", "right_eef"] when those use SE(3) relative transforms).
-        """
-        import json as _json
-        from pathlib import Path as _Path
-
-        with open(stats_json_path, "r") as f:
-            meta_stats = _json.load(f)
-
-        rel_stats = {}
-        if relative_stats_json_path and _Path(relative_stats_json_path).exists():
-            with open(relative_stats_json_path, "r") as f:
-                rel_stats = _json.load(f)
-
-        relative_action_keys = set(relative_action_keys or [])
-
-        # Map FastWAM modality type -> GR00T parquet column name.
-        col_map = {"action": "action", "state": "observation.state"}
-
-        # Build FastWAM-format stats dict: {action/state: {key: {global_min, global_max, ...}}}
-        fw_stats = {"action": {}, "state": {}}
-        for modality in ("action", "state"):
-            col = col_map[modality]
-            col_stats = meta_stats[col]
-            mod_slices = modality_meta.get(modality, {})
-            for meta in shape_meta[modality]:
-                key = meta["key"]
-                if key not in mod_slices:
-                    # Fall back to treating the key as the full column (single-key mode).
-                    s, e = 0, meta["raw_shape"]
-                else:
-                    s, e = mod_slices[key]["start"], mod_slices[key]["end"]
-
-                # For relative action keys, use relative_stats (flatten time axis to global).
-                if modality == "action" and key in relative_action_keys and key in rel_stats:
-                    rs = rel_stats[key]
-                    # rs[stat] has shape (T, D); flatten to global (D,).
-                    g_min = torch.as_tensor(rs["min"], dtype=torch.float32).min(0).values
-                    g_max = torch.as_tensor(rs["max"], dtype=torch.float32).max(0).values
-                    g_mean_t = torch.as_tensor(rs["mean"], dtype=torch.float32)
-                    g_std_t = torch.as_tensor(rs["std"], dtype=torch.float32)
-                    g_mean = g_mean_t.mean(0)
-                    g_std = torch.sqrt(
-                        (g_std_t ** 2 + (g_mean_t - g_mean) ** 2).mean(0)
-                    )
-                    # q01/q99 not in relative_stats; derive from min/max as a safe fallback.
-                    g_q01 = g_min.clone()
-                    g_q99 = g_max.clone()
-                else:
-                    g_min = torch.as_tensor(col_stats["min"][s:e], dtype=torch.float32)
-                    g_max = torch.as_tensor(col_stats["max"][s:e], dtype=torch.float32)
-                    g_mean = torch.as_tensor(col_stats["mean"][s:e], dtype=torch.float32)
-                    g_std = torch.as_tensor(col_stats["std"][s:e], dtype=torch.float32)
-                    # q01/q99 may be absent in some stats.json; fall back to min/max.
-                    if "q01" in col_stats and "q99" in col_stats:
-                        g_q01 = torch.as_tensor(col_stats["q01"][s:e], dtype=torch.float32)
-                        g_q99 = torch.as_tensor(col_stats["q99"][s:e], dtype=torch.float32)
-                    else:
-                        g_q01 = g_min.clone()
-                        g_q99 = g_max.clone()
-
-                fw_stats[modality][key] = {
-                    "global_min": g_min,
-                    "global_max": g_max,
-                    "global_mean": g_mean,
-                    "global_std": g_std,
-                    "global_q01": g_q01,
-                    "global_q99": g_q99,
-                    # stepwise_* mirror global_* for compatibility (not used when
-                    # use_stepwise_action_norm=False).
-                    "stepwise_min": g_min,
-                    "stepwise_max": g_max,
-                    "stepwise_mean": g_mean,
-                    "stepwise_std": g_std,
-                    "stepwise_q01": g_q01,
-                    "stepwise_q99": g_q99,
-                }
-
-        fw_stats["num_episodes"] = 0
-        fw_stats["num_transition"] = 0
-        return cls(
-            shape_meta=shape_meta,
-            use_stepwise_action_norm=use_stepwise_action_norm,
-            default_mode=default_mode,
-            exception_mode=exception_mode,
-            stats=fw_stats,
-            skip_dims=skip_dims,
-            per_dim_modes=per_dim_modes,
-            clip_to_unit=clip_to_unit,
-        )
-
                 
     def forward(self, batch: Dict[str, Dict[str, torch.Tensor]]) -> torch.Tensor:
         if "action" in batch:
@@ -221,102 +88,101 @@ class LinearNormalizer:
         
         return batch
 
+    @classmethod
+    def from_modality_stats(
+        cls,
+        shape_meta,
+        modality_meta,
+        stats_json_path: str,
+        relative_stats_json_path: Optional[str] = None,
+        use_stepwise_action_norm: bool = False,
+        default_mode: NormMode = "min/max",
+        exception_mode: Optional[Dict[str, Dict[str, NormMode]]] = None,
+        skip_dims=None,
+        per_dim_modes=None,
+        clip_to_unit: bool = False,
+        relative_action_keys=None,
+    ):
+        del skip_dims, per_dim_modes, clip_to_unit, relative_action_keys, relative_stats_json_path
+        with open(stats_json_path, "r", encoding="utf-8") as f:
+            raw_stats = json.load(f)
+
+        def _slice_stats(feature_key: str, start: int, end: int) -> Dict[str, torch.Tensor]:
+            feature_stats = raw_stats[feature_key]
+            return {
+                f"global_{stat_key}": torch.as_tensor(feature_stats[stat_key][start:end], dtype=torch.float32)
+                for stat_key in ("min", "max", "mean", "std", "q01", "q99")
+                if stat_key in feature_stats
+            }
+
+        stats: Dict[str, Dict[str, Dict[str, torch.Tensor]]] = {"action": {}, "state": {}}
+        for group, shape_key in (("action", "action"), ("state", "state")):
+            for meta in shape_meta[group]:
+                key = meta["key"]
+                slices = modality_meta.get(group, {})
+                if not slices:
+                    raise ValueError(f"modality.json missing '{group}' entries.")
+                merged: Dict[str, torch.Tensor] = {}
+                for _slice_name, bounds in slices.items():
+                    start, end = int(bounds["start"]), int(bounds["end"])
+                    feature_key = "action" if group == "action" else "observation.state"
+                    part = _slice_stats(feature_key, start, end)
+                    for stat_key, tensor in part.items():
+                        merged[stat_key] = (
+                            tensor if stat_key not in merged else torch.cat([merged[stat_key], tensor], dim=0)
+                        )
+                stats[shape_key][key] = merged
+
+        return cls(
+            shape_meta=shape_meta,
+            use_stepwise_action_norm=use_stepwise_action_norm,
+            default_mode=default_mode,
+            exception_mode=exception_mode,
+            stats=stats,
+        )
+
 
 class SingleFieldLinearNormalizer:
     std_reg = 1e-8
     range_tol = 1e-4
     output_max = 1.0
     output_min = -1.0
-    def __init__(self, stats, mode: NormMode="min/max", skip_dims: List[int] | None = None,
-                 per_dim_modes: Dict[str, List[int]] | None = None,
-                 clip_to_unit: bool = False):
-        """Per-field linear normalizer.
-
-        Args:
-            stats: dict with min/max/mean/std/q01/q99 tensors.
-            mode: normalization mode for dims NOT covered by skip_dims or
-                per_dim_modes.
-            skip_dims: optional list of dimension indices that should NOT be
-                normalized (identity: scale=1, offset=0). Used for rot6d
-                components whose SO(3) geometry is destroyed by per-dim
-                min/max scaling (see H2 in the sim-vs-real analysis). Skipped
-                dims are expected to already live in a roughly [-1,1] range
-                (rot6d entries are in [-1,1] by construction).
-            per_dim_modes: optional mapping {NormMode: [dim_indices]} giving
-                different normalization modes to different dimension segments
-                of a single key. Used for GR00T-style per-modality
-                normalization on a merged action vector (e.g. EEF dims use
-                min/max, hand-joint dims use min/max with independent stats
-                computed only over those dims). Takes precedence over `mode`
-                for the listed dims; `skip_dims` takes precedence over both.
-            clip_to_unit: if True, forward() clips to [-1, 1] (matching GR00T's
-                normalize_values_minmax + clip_outliers behavior) instead of
-                the default [-5, 5] safety clamp.
-        """
+    def __init__(self, stats, mode: NormMode="min/max"):
         self.stats = stats
         self.mode = mode
-        self.clip_to_unit = clip_to_unit
 
-        # Start from the global `mode` for all dims, then override per-segment.
-        scale, offset = self._compute_scale_offset(stats, mode)
-
-        # per_dim_modes: override specific dims with their own mode.
-        if per_dim_modes:
-            for dim_mode, dim_indices in per_dim_modes.items():
-                idx = torch.as_tensor(dim_indices, dtype=torch.long)
-                seg_scale, seg_offset = self._compute_scale_offset(stats, dim_mode)
-                scale[idx] = seg_scale[idx]
-                offset[idx] = seg_offset[idx]
-        self.per_dim_modes = per_dim_modes
-
-        # H2 fix: identity (no normalization) for selected dims (e.g. rot6d).
-        if skip_dims:
-            skip_idx = torch.as_tensor(skip_dims, dtype=torch.long)
-            scale[skip_idx] = 1.0
-            offset[skip_idx] = 0.0
-        self.skip_dims = skip_dims
-
-        self.scale = scale
-        self.offset = offset
-
-    @classmethod
-    def _compute_scale_offset(cls, stats, mode: NormMode):
-        """Compute per-dim scale/offset for the given mode over all dims."""
         if mode == "z-score":
             input_mean, input_std = stats["mean"], stats["std"]
-            scale = 1.0 / (input_std + cls.std_reg)
-            offset = -input_mean / (input_std + cls.std_reg)
+            scale = 1.0 / (input_std + self.std_reg)
+            offset = - input_mean / (input_std + self.std_reg)
         else:
             if mode == "min/max":
                 input_min, input_max = stats["min"], stats["max"]
             elif mode == "q01/q99":
                 input_min, input_max = stats["q01"], stats["q99"]
             else:
+                # parse const_min/const_max
                 input_min, input_max = map(float, mode.split("/"))
                 input_min = torch.full_like(stats["min"], input_min)
                 input_max = torch.full_like(stats["max"], input_max)
 
             input_range = input_max - input_min
-            ignore_dim = input_range < cls.range_tol
-            input_range[ignore_dim] = cls.output_max - cls.output_min
-            scale = (cls.output_max - cls.output_min) / input_range
-            offset = cls.output_min - scale * input_min
-            offset[ignore_dim] = (cls.output_max + cls.output_min) / 2 - input_min[ignore_dim]
-        return scale, offset
+            ignore_dim = input_range < self.range_tol
+            input_range[ignore_dim] = self.output_max - self.output_min
+            scale = (self.output_max - self.output_min) / input_range
+            offset = self.output_min - scale * input_min
+            offset[ignore_dim] = (self.output_max + self.output_min) / 2 - input_min[ignore_dim]
 
+        self.scale = scale
+        self.offset = offset
     def get_stats(self):
         return self.stats
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x * self.scale + self.offset
-        if self.clip_to_unit:
-            x = torch.clamp(x, self.output_min, self.output_max)
-        else:
-            x = torch.clamp(x, -5.0, 5.0)
+        x = torch.clamp(x, -5.0, 5.0)
         return x
     def backward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.clip_to_unit:
-            x = torch.clamp(x, self.output_min, self.output_max)
         x = (x - self.offset) / self.scale
         return x
 

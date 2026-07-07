@@ -131,23 +131,13 @@ class FastWAMProcessor(BaseProcessor):
         return self
 
     def set_normalizer_from_stats(self, dataset_stats: Dict[str, Any] = None):
-        import inspect as _inspect
-
-        normalizer_kwargs = {
-            "use_stepwise_action_norm": self.use_stepwise_action_norm,
-            "shape_meta": self.shape_meta,
-            "default_mode": self.norm_default_mode,
-            "exception_mode": self.norm_exception_mode,
-            "stats": dataset_stats,
-        }
-        normalizer_params = _inspect.signature(LinearNormalizer.__init__).parameters
-        if "skip_dims" in normalizer_params:
-            normalizer_kwargs["skip_dims"] = self.norm_skip_dims
-        if "per_dim_modes" in normalizer_params:
-            normalizer_kwargs["per_dim_modes"] = self.norm_per_dim_modes
-        if "clip_to_unit" in normalizer_params:
-            normalizer_kwargs["clip_to_unit"] = self.norm_clip_to_unit
-        self._normalizer = LinearNormalizer(**normalizer_kwargs)
+        self._normalizer = LinearNormalizer(
+            use_stepwise_action_norm=self.use_stepwise_action_norm,
+            shape_meta=self.shape_meta,
+            default_mode=self.norm_default_mode,
+            exception_mode=self.norm_exception_mode,
+            stats=dataset_stats,
+        )
 
     def set_normalizer_from_modality_stats(self):
         """Build normalizer from meta/stats.json + meta/modality.json (GR00T-style)."""

@@ -1,12 +1,16 @@
 # Local-only experiment archives (not tracked in git)
 archive/
 paper/
+papers/refs/
+papers/*.tar.gz
+papers/II/iclr-template/
 outputs/
 logs/
 video_generation/
 scripts/diagnose/
 checkpoints
 data/*
+third_party/
 apex/
 assets/
 runs
@@ -30,11 +34,15 @@ evaluate_results/
 *.tar
 *.tar.gz
 *.gz
+*.mp4
+*.npz
+*.parquet
 *.pkl
 *.pt
 *.bin
 *.pickle
 *.txt
+*.pdf
 
 # Other uncheckable file types
 *.zip
@@ -46,6 +54,16 @@ evaluate_results/
 *.pyc
 *Thumbs.db
 *.patch
+
+# LaTeX build products
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
 
 # Credential information that should never be checked in
 credentials
@@ -77,10 +95,6 @@ results/
 results/*
 !results/dexjoco_async_microwave/
 !results/dexjoco_async_microwave/**
-!results/dexjoco_hammer_nail_failure_embedding/
-!results/dexjoco_hammer_nail_failure_embedding/**
-!results/dexjoco_failure_datasets/
-!results/dexjoco_failure_datasets/**
 sdist/
 var/
 wheels/

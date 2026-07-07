@@ -1,10 +1,11 @@
 # @package _global_
 
 defaults:
-- override /data: dexjoco_water_plant_2cam_text_failure
+- override /data: dexjoco_hammer_nail_2cam_rollout_text_failure
 - override /model: fastwam
 - _self_
-output_dir: /data_all/share/dexjoco_fastwam_results/${wandb.name}/${now:%Y-%m-%d_%H-%M-%S}
+
+output_dir: ./runs/dexjoco_hammer_nail_rollout_text_failure_2cam_proprio_1e-4/${now:%Y-%m-%d_%H-%M-%S}
 batch_size: 4
 num_workers: 4
 model:
@@ -21,11 +22,11 @@ save_every: 500
 eval_every: 500
 gradient_accumulation_steps: 2
 weight_decay: 0.01
-resume: /data_all/share/dexjoco_fastwam_results/dexjoco_water_plant_uncond_1cam_384_1e-4/2026-06-09_12-14-10/checkpoints/weights/step_002150.pt
+resume: /data_all/xiangchengzhan/FastWAM/runs/hammer_nail_uncond_2cam_384_1e-4/2026-07-01_10-04-05/checkpoints/weights/step_006500.pt
 wandb:
   enabled: true
   workspace: null
   project: fast-wam
-  name: dexjoco_water_plant_text_failure_2cam_proprio_1e-4
-  group: dexjoco_water_plant_failure_ablation
+  name: dexjoco_hammer_nail_rollout_text_failure_2cam_proprio_1e-4
+  group: dexjoco_hammer_nail_failure_ablation
   mode: online

@@ -87,13 +87,9 @@ class Wan22Trainer:
         # Freeze non-trainable modules before optimizer/deepspeed initialization.
         # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
         self._apply_dit_only_train_mode(self.model)
-        trainable_params = list(self.model.dit.parameters())
-        proprio_encoder = getattr(self.model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            trainable_params.extend(list(proprio_encoder.parameters()))
-        outcome_encoder = getattr(self.model, "outcome_encoder", None)
-        if outcome_encoder is not None:
-            trainable_params.extend(list(outcome_encoder.parameters()))
+        trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+        if not trainable_params:
+            raise ValueError("No trainable parameters found after applying training mode.")
         self.optimizer = torch.optim.AdamW(
             trainable_params,
             lr=self.learning_rate,
@@ -316,6 +312,12 @@ class Wan22Trainer:
 
     @staticmethod
     def _apply_dit_only_train_mode(model):
+        if getattr(model, "video_lora_enabled", False):
+            from fastwam.models.wan22.video_lora import apply_video_lora_training_mode
+
+            apply_video_lora_training_mode(model)
+            return
+
         model.eval()
         model.requires_grad_(False)
         model.dit.train()

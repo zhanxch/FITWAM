@@ -291,51 +291,6 @@ def _resolve_run_dir(run_dir: Path) -> Path:
     )
 
 
-def _maybe_resolve_norm_stats_meta_dir(processor_cfg: Any, cfg: Any, run_dir: Path) -> None:
-    """Repair training-machine relative meta paths for deployed DexJoCo runs."""
-    if not hasattr(processor_cfg, "get"):
-        return
-    raw_meta_dir = processor_cfg.get("norm_stats_meta_dir")
-    if raw_meta_dir in (None, "", "null"):
-        return
-
-    raw_path = Path(str(raw_meta_dir)).expanduser()
-    candidates: list[Path] = []
-    if raw_path.is_absolute():
-        candidates.append(raw_path)
-    else:
-        candidates.extend([Path.cwd() / raw_path, run_dir / raw_path])
-
-    train_data = cfg.get("data", {}).get("train", {}) if hasattr(cfg, "get") else {}
-    dataset_dirs = train_data.get("dataset_dirs", []) if hasattr(train_data, "get") else []
-    if isinstance(dataset_dirs, (str, Path)):
-        dataset_dirs = [dataset_dirs]
-    for dataset_dir in dataset_dirs:
-        dataset_path = Path(str(dataset_dir)).expanduser()
-        if dataset_path.is_absolute():
-            candidates.append(dataset_path / "meta")
-        else:
-            candidates.extend([Path.cwd() / dataset_path / "meta", run_dir / dataset_path / "meta"])
-
-        name = dataset_path.name
-        task = name[:-8] if name.endswith("_fastwam") else name
-        if task:
-            candidates.append(
-                Path("/data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets") / task / "meta"
-            )
-
-    for candidate in candidates:
-        if candidate.exists():
-            processor_cfg.norm_stats_meta_dir = str(candidate.resolve())
-            if str(raw_meta_dir) != processor_cfg.norm_stats_meta_dir:
-                print(
-                    f"  Resolved norm_stats_meta_dir from {raw_meta_dir} "
-                    f"to {processor_cfg.norm_stats_meta_dir}",
-                    flush=True,
-                )
-            return
-
-
 DEFAULT_INFER_NUM_FRAMES = 33
 
 
@@ -433,10 +388,9 @@ def _build_policy_from_run(
     model.eval()
 
     processor_cfg = cfg.data.train.processor
-    _maybe_resolve_norm_stats_meta_dir(processor_cfg, cfg, run_dir)
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
-    if processor.wants_modality_stats and dataset_stats_path is None:
+    if processor.wants_modality_stats:
         # GR00T/meta path: rebuild normalizer from meta/stats.json + modality.json.
         processor.set_normalizer_from_modality_stats()
         print(f"  Modality stats (GR00T-style) from: {processor.norm_stats_meta_dir}", flush=True)

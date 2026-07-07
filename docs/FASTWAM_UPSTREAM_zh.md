@@ -1,7 +1,6 @@
-# FastWAM（上游官方文档 · 中文）
+# FastWAM
 
-> **说明：** 本文件为 [Fast-WAM 官方仓库](https://github.com/yuanty/FastWAM) 中文 README 的副本，供本 fork 查阅环境安装、LIBERO/RoboTwin 训练与评测。
-> **本仓库主线规划** 见根目录 [`README.md`](../README.md)（Interaction-centric WAM）。
+**Fast-WAM: Do World Action Models Need Test-time Future Imagination?** 的官方代码仓库。
 
 [![English](https://img.shields.io/badge/README-English-111111.svg)](./README.md)
 [![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./README_zh.md)
@@ -217,7 +216,7 @@ python experiments/robotwin/run_robotwin_manager.py \
   MULTIRUN.num_gpus=8
 ```
 
-为了加速 RoboTwin 评测，我们在 [`configs/sim_robotwin.yaml`](../configs/sim_robotwin.yaml) 中打开了 `EVALUATION.skip_get_obs_within_replan=true`。
+为了加速 RoboTwin 评测，我们在 [`configs/sim_robotwin.yaml`](./configs/sim_robotwin.yaml) 中打开了 `EVALUATION.skip_get_obs_within_replan=true`。
 它会在一次 replan 窗口内连续执行一个 action chunk 时跳过 RGB 渲染，评测更快，但保存下来的视频帧率会低。
 如果想保存完整视频，可以把它设为 `false`。
 
