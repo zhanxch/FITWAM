@@ -1,323 +1,270 @@
-# Interaction-centric WAM
+# InterWAM: Interaction-centric FastWAM
 
-> *WAM learns from state transitions, while physical understanding emerges from interaction transitions.*  
-> 世界行动模型从状态转移中学习；物理理解来自交互转移。
+> WAM learns state transitions. Physical understanding comes from interaction transitions.
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
+**相关文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
----
+本仓库是在 FastWAM 上做的 failure / self-evolution / tactile 方向 fork。当前主线不是重新做一个通用 WAM，而是围绕失败和交互事件回答一个问题：
 
-## 核心贡献
+**成功数据只告诉模型“怎么做对”，失败轨迹和接触反馈能不能让 WAM 学到“为什么会失败、下一轮怎么避免”。**
 
-研究路线按 5 个 Milestone 展开（详见 [实验设计](#实验设计)）：
+当前仿真主战场是 DexJoCo `water_plant`（front + wrist 双视角，proprio 23d）。真机主战场是 `spray_water`（3cam rot6d，已有 FastWAM server/client deploy 链路）。
 
-1. **Failure video 训练** — 论证 failure 轨迹纳入 video 预训练能提升闭环表现（M1）
-2. **EveRobot 数据格式** — LeRobot-compatible sidecar，记录 outcome、failure event、训练 manifest 与自进化 provenance（M2）
-3. **面向 failure 的架构** — 更好消费 failure 信号的模型设计（M3）
-4. **失败轨迹自进化** — Train → Test → append rollout → manifest subset retrain，后续接 steer token / RL token（M4）
-5. **触觉（Tactile）** — 拓展 M2/M3 至接触期（M5，真机为主）：
+## 当前结论
 
-```text
-tactile planning → future tactile prediction → tactile-refined action
-```
+DexJoCo `water_plant` 已经能支撑前几步叙事：
 
----
-
-## 实验设计
-
-研究按 **5 个 Milestone** 递进：先证明 failure 数据对 video 训练有价值，再改进数据构造与模型架构，最后建立可迭代闭环并在真机引入触觉。仿真主战场为 DexJoCo `water_plant`（双视角 + proprio）；真机主战场为 `spray_water`（现有 FastWAM deploy 链路）。
-
-```text
-M1  failure video 有用？  →  M2  怎么构造数据？  →  M3  什么架构更好？
-                                      ↓                        ↓
-M5  触觉拓展 M2/M3（真机）  ←  M4  迭代闭环 + RL（仿真/真机，架构最后验证）
-```
-
-### Milestone 1：Failure video 训练是否有效
-
-**目标：** 鉴于现在的提升较为明显，所以想充分论证failure video 效果，后续更好开展。
-
-**要论证：** 将 failure 轨迹纳入 **video 预训练**（failure 只训 video、不训 action）能否提升闭环表现，优于纯 success 训练。
-
-| 组别 | 训练数据 | 文本 / metadata | Loss | 对应假设 |
-|------|----------|---------------|------|----------|
-| **Vanilla success（A）** | Success only | 原始 task text | video + action | 基线 |
-| **Text failure（B）** | Success + Failure | failure 样本 text 后追加 `Failed to finish the whole process.` | Success: video + action；Failure: **video only**（action loss weight = 0） | failure 视觉动态有助于后续 action |
-
-**控制变量：** 同模型、同数据划分、同 eval 脚本、同双视角与 proprio；failure 不参与 action loss，分母只统计 success 样本。
-
-**当前状态（DexJoCo）：** B 已完成 100-episode 主评估：`38 -> 81 -> 82`（step 6500 / 11000 / 12240）；A 为外部参考约 `70-80%`，暂不混入本次 B/C 主证据。
-
----
-
-### Milestone 2：Interaction-centric 数据构造与配套训练
-
-**目标：** 提出 EveRobot，一种基于 LeRobot 的 failure/self-evolution sidecar 数据格式，使失败 rollout 能被系统地记录、筛选、切窗并纳入下一轮训练。
-
-**要论证：** 相比 M1 的 episode 级 text 拼接，EveRobot 用结构化 metadata 明确表达 rollout 来源、success/failure outcome、failure event window 和训练子集，从而更有效地把 failure 轨迹转成可训练样本。
-
-| 方向 | 内容 | 相对 M1 的增量 |
-|------|------|----------------|
-| **Episode provenance** | `source_policy`、`collection_round`、`seed`、`episode_outcome` | 支持 Train → Test → Retrain 的可追踪数据闭环 |
-| **Failure event window** | 在完整 rollout 上用 `event_meta` 标注可训练窗口 | 不物理截断原始数据，训练时只采样 failure event 部分 |
-| **Training manifest** | 每轮训练显式选择 success episode / failure event 子集 | 支持 append-only 数据扩充和 round-specific retrain |
-| **Loss policy** | failure event 可设置 `action_loss=disabled` | failure 用于 video/proprio/context 学习，不直接模仿失败动作 |
-
-**当前实现：** EveRobot v0.1 已在 `water_plant` 上落地为 sidecar 格式，保持 LeRobot 原始 `data/`、`videos/`、`meta/` 不变，只在 `data/water_plant_fastwam/eve/` 下生成：
-
-| 文件 | 用途 |
-|------|------|
-| `schema_version.json` | EveRobot 格式版本和 LeRobot 兼容说明 |
-| `episode_meta.jsonl` | episode 级 provenance、round、policy、success/failure、seed、length |
-| `event_meta.jsonl` | failure event window、failure type、action loss 策略、预留 steer token |
-| `manifests/train_round1_success_plus_failure_events.json` | round1 训练子集：100 条 success episode + 49 个 failure event |
-
-训练适配由 `fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset` 完成：success episode 按普通 LeRobot 固定窗口采样；failure event 只在 `start_frame <= window < end_frame` 内采样；`action_loss=disabled` 时返回 `action_loss_weight=0.0`。
-
----
-
-### Milestone 3：面向 failure 学习的模型架构
-
-**目标：** 架构上，为failure data的学习专门设计点模块，能涨点就行，主要是为了叙事上完整。
-
-**要论证：** 在 M2 的最优数据构造之上，新架构比标准 FastWAM MoT **更能利用 failure 信号**（而非仅堆数据）。
-
-候选方向（与 M2 解耦、逐步验证）：
-
-- **Adaptive context：** 按当前交互状态决定是否启用 metadata / planning / 直接 action
-- **Failure-aware video–action 耦合：** 接触期、失败边界处的差异化监督或推理路径
-- 其他待 M2 结果收敛后选定的架构变体
-
-**原则：** M3 只在 M2 确定「怎么喂 failure」之后启动；每次只改架构，数据与 eval 协议不变。
-
----
-
-### Milestone 4：Train → Test → Retrain 迭代闭环
-
-**目标：** 迭代闭环，参考Pi 0.6 的RECAP。他们的是RL，需要执行过程中的人工纠正，失败数据用于更新advantage计算。先做仿真，再做真机。
-
-**要论证：** 部署失败样本回灌 + 多轮迭代，能否持续提升性能上限；并消融迭代轮数、回灌比例、checkpoint 选择策略。
-
-```text
-Success 数据预训练 → Deploy / 闭环测试 → 采集 failure
-        ↑                                      ↓
-        └──────────── Retrain（video ± action）┘
-                      （重复 K 轮，测上限）
-```
-
-**RL 扩展（探索方向）：** 真机 RL 上限较高，拟在闭环稳定后引入 **RL token / 在线微调** 等机制，把 failure 轨迹转为可优化信号；架构改动放在 **M4 后期**，需 M1–M3 在仿真与真机均验证后再做。
-
-| 验证场 | 优先级 | 说明 |
-|--------|--------|------|
-| DexJoCo | 先 | 低成本、可复现，主做迭代消融 |
-| 真机 `spray_water` | 后 | 与 deploy 链路对齐；RL 与触觉更依赖真机 |
-
-**当前状态：** round0 FastWAM 已完成 200 次 rollout，生成 151 条 success + 49 条 failure；EveRobot round1 manifest 默认只把 49 条 failure event 回灌训练，151 条 rollout success 仅记录 provenance。
-
----
-
-### Milestone 5：触觉（Tactile）
-
-**目标：** 加入触觉，计划参考周哥他们即将推出的基模，感觉不需要搞太复杂，就在他们基础上能基于触觉去更好区分成功失败轨迹就行。这个后面再议，而且估计只做真机。
-
-**要论证：** 在接触密集阶段，触觉观测与预测能否拓展 M2 的 event 构造与 M3 的架构，进一步提升 failure 边界处的表现。
-
-```text
-tactile planning → future tactile prediction → tactile-refined action
-```
-
-| 范围 | 计划 |
-|------|------|
-| **真机** | 主战场；`TouchAnything` 等已有数据，与 M2 event / M3 架构联合设计 |
-| **仿真** | 触觉夹爪环境可选，非必须；优先保证真机链路 |
-
-**依赖：** M2（接触期 event 切段）与 M3（触觉分支架构）就绪后再系统推进；可与 M4 迭代闭环在真机侧汇合。
-
----
-
-### 里程碑依赖与当前焦点
-
-| Milestone | 依赖 | 状态 |
-|-----------|------|------|
-| **M1** | FastWAM 基线 / LoRA 基线 | **进行中**（B vs A） |
-| **M2** | M1 阳性结果 | EveRobot v0.1 sidecar 已实现；round1 failure-event manifest 已生成 |
-| **M3** | M2 最优构造 | 未开始 |
-| **M4** | M1–M3 + deploy 链路 | round0 rollout → round1 manifest 闭环已打通 |
-| **M5** | M2 + M3（真机） | 未开始 |
-
-**工程并行项（非 milestone 结论）：** `baseline_lora` 验证 video LoRA 能否作为更轻量的默认训练方式，服务于 M1 及之后各阶段的训练效率，不改变上述论证顺序。
-
----
-
-## DexJoCo 基准对比
-
-各方法在 DexJoCo 任务上的闭环成功率（%，Mean ± Std）。**加粗**表示该表内该行最优值；`/B` 表示 blocking 控制模式。
-
-### rand-obj
-
-| Task | DP-T | DP-C | ACT | π₀.₅ | GR00T N1.5 |
-|------|------|------|-----|------|------------|
-| Hammer Nail | 81.3±3.1 | 58.7±4.2 | 50.0±7.2 | **84.7±5.0** | 67.3±4.2 |
-| Click Mouse | 62.0±2.0 | 74.0±5.3 | 61.3±3.1 | 64.7±8.1 | **85.3±3.1** |
-| Pick Bucket | 83.3±3.1 | 70.0±2.0 | 64.0±4.0 | **84.0±7.2** | 72.0±6.0 |
-| Pinch Tongs | 22.7±5.8 | **57.3±6.4** | 31.3±3.1 | 24.0±6.9 | 12.7±2.3 |
-| Fold Glasses | 53.3±3.1 | 54.0±15.9 | 47.3±11.0 | **72.0±3.5** | 27.3±2.3 |
-| Water Plant | 84.0±3.5 | 63.3±3.1 | 47.3±4.6 | **88.7±3.1** | 72.7±1.2 |
-| **Avg. (单臂)** | 64.4 | 62.9 | 50.2 | **69.7** | 56.2 |
-
-### FastWAM / EveRobot water_plant
-
-`rand-obj` `water_plant` 上的 FastWAM 当前闭环结果：
-
-| Method | Success Rate | Successes / Trials | Notes |
-|--------|-------------:|-------------------:|-------|
-| FastWAM | 75.5% | 151 / 200 | success-only FastWAM rollout |
-| FastWAM + failure scratch | 82.0% | 82 / 100 | failure data from scratch |
-| FastWAM + LoRA continuation | 81.5% | 163 / 200 | continued training with rollout data |
-
-其中 `FastWAM 75.5% (151/200)` 同时作为 EveRobot round1 的 rollout provenance：
-`water_plant_rollout_200_step6500_raw` 中 151 条 success、49 条 failure。当前 round1
-manifest 只将 49 条 failure 转成 failure event 进入训练，rollout success 默认不进入训练子集。
-
-
-### multi-task
-
-多任务联合训练（%，Mean ± Std）。**加粗**表示该表内该行最优值。
-
-| Task | DP-T | π₀.₅ |
+| 结论 | 证据 | 位置 |
 |------|------|------|
-| Hammer Nail | 58.7±5.0 | **86.7±3.1** |
-| Click Mouse | 38.7±3.1 | **80.7±3.1** |
-| Pick Bucket | 55.3±7.6 | **83.3±8.1** |
-| Pinch Tongs | 6.0±5.3 | **45.3±6.1** |
-| Fold Glasses | 11.3±5.0 | **42.0±6.0** |
-| Water Plant | 60.0±6.9 | **84.0±4.0** |
-| **Avg. (单臂)** | 38.3 | **70.3** |
+| **M1：failure video 有用** | Text failure 从 `38/100 -> 81/100 -> 82/100`，failure 样本只训 video/context，不训 action | [`results/dexjoco_water_plant_failure_ablation/summary.csv`](./results/dexjoco_water_plant_failure_ablation/summary.csv) |
+| **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`evaluate_results/dexjoco/water_plant/step_006500/summary.json`](./evaluate_results/dexjoco/water_plant/step_006500/summary.json), `data/water_plant_rollout_200_step6500_raw/collection_summary.json` |
+| **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`evaluate_results/dexjoco/failure-concate-lora/step_006500/summary.json`](./evaluate_results/dexjoco/failure-concate-lora/step_006500/summary.json) |
+| **EveRobot sidecar 已落地** | round1 manifest = 100 条 base success episode + 49 个 failure event；49 个 failure 来自 200 次 rollout | [`src/fastwam/datasets/eve/manifest_dataset.py`](./src/fastwam/datasets/eve/manifest_dataset.py), [`scripts/everobot/build_eve_sidecar.py`](./scripts/everobot/build_eve_sidecar.py) |
+| **structured failure 需要稳定性诊断** | C 组 `74/100 -> 59/100 -> 4/100`，中期可用但 late checkpoint 崩 | [`results/dexjoco_water_plant_failure_ablation/README.md`](./results/dexjoco_water_plant_failure_ablation/README.md) |
 
----
+注意：`70/100`、`82/100`、`151/200`、`163/200` 的 episode 数和 seed 起点不完全一致。README 里只把它们作为当前工程证据和趋势，不把它们写成最终 paper 里的严格同 seed A/B 表。
 
-## 当前进展
+## 五个 Milestone
 
-三大贡献在方法上通用，但**真机与仿真需分别实现**（数据格式、采集与 deploy 链路不同）。下表按 **Milestone** 对齐当前状态。
+| Milestone | 要证明什么 | 当前状态 |
+|-----------|------------|----------|
+| **M1 Failure video** | failure 轨迹即使不学失败动作，也能通过 video/context 监督提升闭环 | 已有阳性结果：Text failure best `82/100`；action loss mask 已接入 |
+| **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | sidecar v0.1 已实现；round1 数据闭环已构造；Eve manifest 专项 eval 仍需补 |
+| **M3 Steer token + contrastive/RLT** | 模型需要显式消费 success/failure outcome，而不只是靠 text 后缀 | outcome/steer token 代码路径已接入但默认未启用；contrastive/RLT loss 尚未落地 |
+| **M4 Iterative self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | round0 -> round1 已跑通；rollout continuation 当前 `163/200` |
+| **M5 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 规划阶段；`spray_water` deploy 和开环链路已在仓库，触觉分支未实现 |
 
-### 真机（`spray_water`）
+整体顺序：
 
-| Milestone | 状态 |
-|-----------|------|
-| M1 | FastWAM 基线训练 / deploy / 开环进行中；failure 对照未开始 |
-| M2–M3 | 未开始 |
-| M4 | 设计中（deploy 链路已有 ZMQ server/client） |
-| M5 | 未开始（`TouchAnything` 数据本地已有） |
+```text
+M1 证明 failure video 有用
+  -> M2 用 EveRobot 把 rollout / event / manifest 管起来
+  -> M3 用 steer token + contrastive/RLT 让模型显式利用 outcome
+  -> M4 多轮 rollout 回灌，验证持续自进化
+  -> M5 真机触觉，把 contact-rich failure 接进同一套 event 叙事
+```
 
-### 仿真（DexJoCo `water_plant`）
+## 已实现内容
 
-| Milestone | 状态 |
-|-----------|------|
-| **M1** | **进行中**：B（Text failure）100-ep 主结果完成；A（Vanilla）外部参考 ~70–80%，同 pipeline 主结果待补 |
-| **M2** | EveRobot v0.1 已完成：sidecar schema、episode/event metadata、round1 manifest、manifest-driven dataset adapter |
-| M3 | 未开始 |
-| M4 | round0 FastWAM 200 次 rollout 已回灌为 round1 failure-event manifest；多轮自进化待继续 |
-| M5 | 未开始（仿真触觉夹爪可选，非优先） |
+### 1. Failure data training
 
-**工程并行：** 全参基线 step_6500 eval 完成；`baseline_lora` 训练中，用于确认 LoRA 可否作为后续 milestone 的默认训练后端。
+普通 LeRobot 数据路径支持用文本 marker 控制 loss：
 
-### M1 结果记录（DexJoCo）
+- `action_loss_zero_if_instruction_contains: "Failed to finish the whole process."`
+- 命中 marker 的 failure 样本返回 `action_loss_weight=0.0`
+- prompt 会去掉 failure 后缀，避免模型只靠句子字面记忆 failure
 
-| 组别 | 闭环成功率 | 主要失败模式 | checkpoint 依据 | 报告 |
-|------|------------|--------------|-----------------|------|
-| B. Text failure | 38/100 → 81/100 → 82/100 | 6500 明显未训够；后期稳定 | step 006500 / 011000 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
-| A. Vanilla success | 外部参考 ~70–80% | — | 学长 run（非同 pipeline） | 待补跑同 pipeline |
-| C. Structured failure | 74/100 → 59/100 → 4/100 | late/final checkpoint 退化 | step 006500 / 011500 / 012240 | [`results/dexjoco_water_plant_failure_ablation`](./results/dexjoco_water_plant_failure_ablation/) |
+关键实现：
 
-DexJoCo async rollout 代码位于 [`scripts/dexjoco_async`](./scripts/dexjoco_async/)；这里只作为评估工具链使用，不是项目的主要方法贡献。
+- [`src/fastwam/datasets/lerobot/robot_video_dataset.py`](./src/fastwam/datasets/lerobot/robot_video_dataset.py)
+- [`src/fastwam/models/wan22/fastwam.py`](./src/fastwam/models/wan22/fastwam.py)
+- [`configs/data/dexjoco_water_plant_2cam_text_failure.yaml`](./configs/data/dexjoco_water_plant_2cam_text_failure.yaml)
+- [`configs/data/dexjoco_water_plant_2cam_rollout_text_failure.yaml`](./configs/data/dexjoco_water_plant_2cam_rollout_text_failure.yaml)
 
----
+### 2. EveRobot sidecar v0.1
 
-## Video LoRA（独立可选路径）
+EveRobot 不改 LeRobot 原始 `data/`、`videos/`、`meta/`，只在 `eve/` 下增加 sidecar：
 
-LoRA 是**与默认全参训练完全解耦**的可选模块，不影响现有 `fastwam` 基线：
+| 文件 | 作用 |
+|------|------|
+| `schema_version.json` | EveRobot 版本和兼容说明 |
+| `episode_meta.jsonl` | episode 级 provenance：source policy、round、seed、outcome、length |
+| `event_meta.jsonl` | failure event window、failure type、action loss 策略、预留 `steer_token` |
+| `manifests/*.json` | 每轮训练显式选择 success episode / failure event 子集 |
 
-| 维度 | 默认全参 (`model=fastwam`) | Video LoRA (`model=fastwam_video_lora`) |
-|------|---------------------------|----------------------------------------|
-| Video DiT | 全参微调 | **仅 LoRA adapter**（rank 32，self-attn + FFN） |
-| ActionDiT / proprio | 全参微调 | 全参微调（不变） |
-| 默认配置 | `configs/model/fastwam.yaml` | `configs/model/fastwam_video_lora.yaml` |
-| Checkpoint | 标准 MoT 权重 | `checkpoint_format: video_lora_v1`（LoRA + action + proprio） |
-| 实现 | — | `src/fastwam/models/wan22/video_lora.py` |
+当前 round1：
 
-切换方式：在 task 配置里 `override /model: fastwam_video_lora`，或命令行传 `model=fastwam_video_lora`。训练入口（`train.py` / `train_everobot.py`）、数据 pipeline、DexJoCo deploy 均不变；推理时 run 的 `config.yaml` 含 `model.video_lora.enabled=true` 即自动加载 LoRA checkpoint。
+| 项 | 数量 / 策略 |
+|----|-------------|
+| base success episode | 100 |
+| rollout episode | 200 = 151 success + 49 failure |
+| round1 train manifest | 100 success episode + 49 failure event |
+| 600 帧 timeout failure | trim 8s，event window 变成 `[0, 360)` |
+| 短 failure | 使用完整 failure episode window |
+| failure action loss | `disabled` |
 
-### 使用
+关键实现：
 
-**LeRobot 固定窗口（当前 baseline_lora 对照实验）：**
+- [`scripts/everobot/build_eve_sidecar.py`](./scripts/everobot/build_eve_sidecar.py)
+- [`scripts/water_plant/build_eve_round1_sidecar.sh`](./scripts/water_plant/build_eve_round1_sidecar.sh)
+- [`src/fastwam/datasets/eve/manifest_dataset.py`](./src/fastwam/datasets/eve/manifest_dataset.py)
+- [`configs/data/eve_water_plant_round1_failure_events.yaml`](./configs/data/eve_water_plant_round1_failure_events.yaml)
+
+### 3. Steer / outcome token plumbing
+
+模型里已经有 outcome token 的接线：
+
+- dataset 返回 `outcome_flag`
+- `FastWAM._append_outcome_to_context()` 将 outcome embedding 追加到 text context
+- checkpoint save/load 支持 `outcome_encoder`
+
+当前默认配置里 `model.outcome_num_classes: 0`，所以这条路径还没在主实验中打开。下一步 M3 应该把它正式变成 steer token，并补：
+
+1. `model.outcome_num_classes: 2`
+2. Eve `event_meta.steer_token` 到 `outcome_flag` / steer id 的映射
+3. success/failure paired event 的 contrastive loss
+4. RLT 或 reward-labeled training，把 rollout outcome 转成额外优化信号
+
+### 4. Rollout collect / retrain
+
+DexJoCo eval 和 rollout collect 共用 async ZMQ server/client：
+
+- [`scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py`](./scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py)
+- [`scripts/dexjoco_async/run_multi_gpu_dexjoco_collect.py`](./scripts/dexjoco_async/run_multi_gpu_dexjoco_collect.py)
+- [`scripts/collect_dexjoco_rollouts.py`](./scripts/collect_dexjoco_rollouts.py)
+- [`scripts/build_rollout_datasets.py`](./scripts/build_rollout_datasets.py)
+
+默认 water_plant 一键路径：
 
 ```bash
-# 数据准备（与全参基线相同）
-bash scripts/water_plant/prepare_2cam.sh
-python scripts/precompute_text_embeds.py task=water_plant_uncond_2cam_384_1e-4
+bash scripts/water_plant/collect_rollout_200_trim8s_and_train.sh
+```
 
-# 训练：Video LoRA + ActionDiT 全参
+这条路径会采集 rollout、保存 success/failure、trim timeout failure 的尾部，然后用 rollout text failure 配置继续训练。
+
+### 5. Video LoRA
+
+Video LoRA 是独立可选训练后端，不改变 failure/self-evolution 逻辑：
+
+| 维度 | 全参 FastWAM | Video LoRA |
+|------|--------------|------------|
+| Video DiT | 全参微调 | LoRA adapter，rank 32 |
+| ActionDiT / proprio | 全参微调 | 全参微调 |
+| 配置 | [`configs/model/fastwam.yaml`](./configs/model/fastwam.yaml) | [`configs/model/fastwam_video_lora.yaml`](./configs/model/fastwam_video_lora.yaml) |
+| 实现 | FastWAM 原路径 | [`src/fastwam/models/wan22/video_lora.py`](./src/fastwam/models/wan22/video_lora.py) |
+
+使用：
+
+```bash
 bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 ```
 
-**Legacy EveRobot 整 episode（DiffSynth 风格，可变 T）：**
+## 复现实验入口
+
+### Water plant baseline
 
 ```bash
-python scripts/water_plant/convert_lerobot_to_everobot.py \
-  --dataset-dir data/water_plant_fastwam --video-keys front wrist
-
-bash scripts/water_plant/train_everobot.sh task=everobot_water_plant_full_lora
+bash scripts/water_plant/prepare_2cam.sh
+bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4
 ```
 
-（这是早期整 episode 训练路径；failure self-evolution 使用上文的 EveRobot v0.1 sidecar。）
+### M1 text failure
 
-**DexJoCo 闭环评估（与全参相同脚本，传入 LoRA run 目录即可）：**
+```bash
+python scripts/precompute_text_embeds.py task=dexjoco/dexjoco_water_plant_text_failure_2cam_proprio_1e-4
+bash scripts/train_zero1.sh 4 task=dexjoco/dexjoco_water_plant_text_failure_2cam_proprio_1e-4
+```
+
+### M2 EveRobot round1
+
+```bash
+bash scripts/water_plant/build_eve_round1_sidecar.sh
+bash scripts/water_plant/train_eve_round1.sh
+```
+
+### M4 rollout continuation
+
+```bash
+bash scripts/water_plant/collect_rollout_200_trim8s_and_train.sh
+```
+
+### DexJoCo closed-loop eval
 
 ```bash
 python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 0,1,2,3 \
-  --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/ \
-  --checkpoint runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39/checkpoints/weights/step_006500.pt \
+  --run-dir runs/<task_name>/<run_id> \
+  --checkpoint runs/<task_name>/<run_id>/checkpoints/weights/step_006500.pt \
   --no-load-text-encoder \
   --task-config-dir third_party/dexjoco/configs/rand_obj \
-  --tasks water_plant --episodes 200 --seed 0 \
-  --replan-steps 24 --control-mode blocking --max-env-steps 600 \
-  --output-dir evaluate_results/dexjoco/water_plant_200/step_006500
+  --tasks water_plant \
+  --episodes 100 --seed 0 \
+  --replan-steps 24 --control-mode blocking \
+  --max-env-steps 600 \
+  --output-dir evaluate_results/dexjoco/<name>/step_006500
 ```
 
-依赖 `peft`（已写入 `pyproject.toml`，`pip install -e .` 即可）。更多细节见 [`scripts/README.md`](./scripts/README.md#video-lora--actiondit-full-fine-tune-optional)。
+## 结果记录
 
-### baseline_lora 验证进展
+### DexJoCo water_plant
 
-对照组为同数据、同双视角、同 proprio 的全参 run `water_plant_uncond_2cam_384_1e-4`（step_6500）。
+| Method / setting | Success | Notes |
+|------------------|--------:|-------|
+| FastWAM success-only, local same pipeline | 70/100 | step 6500, seed 25, blocking stride 24 |
+| FastWAM success-only rollout provenance | 151/200 | round0 rollout used to build failure pool |
+| M1 Text failure | 38/100 -> 81/100 -> 82/100 | step 6500 / 11000 / 12240 |
+| Structured failure C | 74/100 -> 59/100 -> 4/100 | unstable late checkpoint |
+| M4 rollout text failure continuation | 163/200 | continued from success-only step 6500 |
+| External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
+| External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
-| 实验 | Task / 采样 | Run | 状态 |
-|------|-------------|-----|------|
-| 全参基线 | LeRobot 固定窗口 | `runs/water_plant_uncond_2cam_384_1e-4/` | eval 完成（`evaluate_results/dexjoco/water_plant/step_006500`） |
-| **baseline_lora** | LeRobot 固定窗口 + video LoRA | `runs/water_plant_uncond_2cam_384_1e-4_lora/` | **训练中**，训完即跑同配置闭环 eval |
-| everobot_full_lora | EveRobot 整 episode + video LoRA | `runs/everobot/everobot_water_plant_full_lora/` | step_475 已 eval（`evaluate_results/dexjoco/everobot_full_lora/step_000475`），待与 baseline_lora 横向对比 |
+更完整的 M1 ablation 见 [`results/dexjoco_water_plant_failure_ablation/`](./results/dexjoco_water_plant_failure_ablation/)。
 
-目标：确认 video LoRA 能否在显著减少 video 侧可训练参数的同时，达到或接近全参基线的闭环成功率，作为 M1 及之后各 milestone 的默认训练后端候选。
+### 其他任务
 
----
+仓库里已有 hammer_nail、pinch_tongs、fold_glasses 的 2cam 配置和部分 eval 输出，但主线 README 暂不把它们写成方法结论：
+
+- `hammer_nail` success-only step 6500：`135/200`
+- `pinch_tongs` step 5000：结果在 `evaluate_results/dexjoco/pinch_tongs/step_005000/`
+- event transition probe：[`results/event_transition_probe/`](./results/event_transition_probe/)
+
+## 真机与触觉
+
+真机当前以 `spray_water` 为主：
+
+- 训练配置：[`configs/task/spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4.yaml`](./configs/task/spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4.yaml)
+- 脚本：[`scripts/spray_water_gr00tstyle/`](./scripts/spray_water_gr00tstyle/)
+- deploy：[`scripts/spray_water_gr00tstyle/wuji/`](./scripts/spray_water_gr00tstyle/wuji/)
+- 开环 smoke eval：[`evaluate_results/openloop_smoke_gr00tstyle/`](./evaluate_results/openloop_smoke_gr00tstyle/)
+
+M5 的目标不是在仿真里强行加触觉，而是在真机接触期补上 RGB 难以区分的状态：
+
+```text
+tactile planning -> future tactile prediction -> tactile-refined action
+```
+
+计划接入方式：
+
+1. 把 tactile episode / contact window 写进 EveRobot event metadata
+2. 在 MoT 中加 tactile expert 或 tactile token
+3. 在接触期预测 future tactile，并用 tactile outcome 改善 action
+4. 与 M3 steer token 和 M4 self-evolution 汇合
 
 ## 代码地图
 
 ```text
-configs/          Hydra 配置（model/fastwam.yaml 与 model/fastwam_video_lora.yaml 并行）
-src/fastwam/      模型（video_lora.py 为独立 LoRA 模块）
-src/fastwam/datasets/eve/  EveRobot v0.1 manifest-driven dataset adapter
-scripts/train.py  训练（LeRobot 固定窗口，通用入口）
-scripts/everobot/ EveRobot v0.1 sidecar 构造工具
-scripts/water_plant/  water_plant 数据准备 / 训练 / DexJoCo eval
-scripts/spray_water_gr00tstyle/  真机 spray_water 训练 / deploy
-scripts/openloop/ 开环评估引擎
-data/  runs/  evaluate_results/  logs/
+configs/
+  data/                         数据配置，含 text failure / rollout failure / Eve manifest
+  model/fastwam*.yaml            FastWAM 与 Video LoRA
+  task/dexjoco/                  DexJoCo water_plant failure/self-evolution 实验
+
+src/fastwam/
+  datasets/lerobot/              原始 LeRobot 固定窗口数据集和 processor
+  datasets/eve/                  EveRobot manifest-driven dataset adapter
+  models/wan22/fastwam.py        WAM 主模型、action loss mask、outcome token plumbing
+  models/wan22/video_lora.py     Video LoRA
+
+scripts/
+  train.py                       通用训练入口
+  everobot/build_eve_sidecar.py  EveRobot sidecar 构造
+  dexjoco_async/                 多卡 DexJoCo eval / collect
+  water_plant/                   water_plant 训练、Eve、rollout wrapper
+  spray_water_gr00tstyle/        真机训练、开环 eval、deploy
+
+results/
+  dexjoco_water_plant_failure_ablation/
+  event_transition_probe/
 ```
 
----
+## 当前 TODO
+
+1. 补严格同 seed、同 episode 数的 M1 success-only vs text failure 表。
+2. 跑 EveRobot manifest round1 的闭环 eval，和 rollout text failure continuation 分开报告。
+3. 打开 `outcome_num_classes=2`，把 `outcome_flag` 作为 steer token 做 M3 ablation。
+4. 加 paired success/failure contrastive loss 与 RLT/reward-labeled objective。
+5. 真机 `spray_water` 补 failure collect、touch metadata 和 tactile branch。
 
 ## 引用
 
@@ -328,19 +275,4 @@ data/  runs/  evaluate_results/  logs/
   journal={arXiv preprint arXiv:2603.16666},
   year={2026}
 }
-```
-
-多卡dexjoco并行测试
-```python
- python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
-    --gpus 0,1 \
-    --run-dir runs/pinch_tongs_uncond_2cam_384_1e-4/2026-07-03_10-22-54 \
-    --checkpoint runs/pinch_tongs_uncond_2cam_384_1e-4/2026-07-03_10-22-54/checkpoints/weights/step_005000.pt \
-    --no-load-text-encoder \
-    --task-config-dir third_party/dexjoco/configs/rand_obj \
-    --tasks pinch_tongs\
-    --episodes 100 --seed 0 \
-    --replan-steps 25 --control-mode blocking \
-    --max-env-steps 600 \
-    --output-dir evaluate_results/dexjoco/pinch_tongs/step_005000    
 ```
