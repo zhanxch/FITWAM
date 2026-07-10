@@ -4,7 +4,7 @@
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**相关文档：** [`docs/OFFLINE_SELF_IMPROVING_PLAN.md`](./docs/OFFLINE_SELF_IMPROVING_PLAN.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
+**相关文档：** [`docs/OFFLINE_SELF_IMPROVING_PLAN.md`](./docs/OFFLINE_SELF_IMPROVING_PLAN.md) · [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
 本仓库是在 FastWAM 上做的 failure / self-evolution / tactile 方向 fork。当前主线不是重新做一个通用 WAM，而是围绕失败和交互事件回答一个问题：
 
@@ -18,20 +18,20 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 
 | 结论 | 证据 | 位置 |
 |------|------|------|
-| **M1：failure video 有用** | Text failure 从 `38/100 -> 81/100 -> 82/100`，failure 样本只训 video/context，不训 action | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
+| **M1：failure video pilot** | Text failure 从 `38/100 -> 81/100 -> 82/100`；failure 样本的直接 action loss 为零 | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
-| **EveRobot sidecar 已落地** | round1 manifest = 100 条 base success episode + 49 个 failure event；49 个 failure 来自 200 次 rollout | [`src/fastwam/datasets/eve/manifest_dataset.py`](./src/fastwam/datasets/eve/manifest_dataset.py), [`scripts/everobot/build_eve_sidecar.py`](./scripts/everobot/build_eve_sidecar.py) |
+| **EveRobot sidecar v0.1 已落地** | round1 manifest = 100 条 base success episode + 49 个 tail-trimmed failure window；真实 failure interval 仍待标注 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
 
-注意：`water_plant` 的 M1 success-only vs text failure 已完成；`151/200` 和 `163/200` 属于 M4 rollout/continuation 证据，不和 M1 100-episode A/B 表混成同一张最终表。
+注意：这些是 mixed-protocol 历史 pilot。`151/200` 和 `163/200` 属于 rollout/continuation 证据，不与 100-episode checkpoint 结果混成最终受控主表。
 
 ## 五个 Milestone
 
 | Milestone | 要证明什么 | 当前状态 |
 |-----------|------------|----------|
-| **M1 Failure video** | failure 轨迹即使不学失败动作，也能通过 video/context 监督提升闭环 | `water_plant` 已完成；下一步只补 `hammer_nail` 同协议 |
+| **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | `water_plant` 有历史 pilot；同协议主表待重测 |
 | **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | sidecar v0.1 已实现；不是全部重头做，而是用 EveRobot manifest 入口重跑/对齐 round1 |
-| **M3 Steer token** | 模型需要显式消费 success/failure outcome，而不只是靠 text 后缀 | steer token 本体尚未实现；现有 `outcome_flag` 只是底层 plumbing |
+| **M3 Steer token** | 从局部成功/失败动作学习固定的 success-directed steer | steer token 本体尚未实现；现有 `outcome_flag` 不能作为主方法 |
 | **M4 Iterative self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | round0 -> round1 已跑通；rollout continuation 当前 `163/200` |
 | **M5 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 真机实验和触觉模块 |
 
@@ -40,7 +40,7 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 ```text
 M1 证明 failure video 有用
   -> M2 用 EveRobot 把 rollout / event / manifest 管起来
-  -> M3 实现 steer token，让模型显式利用 outcome
+  -> M3 用局部失败动作训练 contrastive steer
   -> M4 多轮 rollout 回灌，验证持续自进化
   -> M5 真机触觉，把 contact-rich failure 接进同一套 event 叙事
 ```
@@ -53,7 +53,7 @@ M1 证明 failure video 有用
 
 - `action_loss_zero_if_instruction_contains: "Failed to finish the whole process."`
 - 命中 marker 的 failure 样本返回 `action_loss_weight=0.0`
-- prompt 会去掉 failure 后缀，避免模型只靠句子字面记忆 failure
+- EveRobot 主实验会去掉 failure 后缀；旧 text-failure pilot 保留了该后缀，只作为历史证据
 
 关键实现：
 
@@ -70,7 +70,7 @@ EveRobot 不改 LeRobot 原始 `data/`、`videos/`、`meta/`，只在 `eve/` 下
 |------|------|
 | `schema_version.json` | EveRobot 版本和兼容说明 |
 | `episode_meta.jsonl` | episode 级 provenance：source policy、round、seed、outcome、length |
-| `event_meta.jsonl` | failure event window、failure type、action loss 策略、预留 `steer_token` |
+| `event_meta.jsonl` | failure/event window、failure type、标注来源和 action loss 策略 |
 | `manifests/*.json` | 每轮训练显式选择 success episode / failure event 子集 |
 
 当前 round1：
@@ -93,17 +93,17 @@ EveRobot 不改 LeRobot 原始 `data/`、`videos/`、`meta/`，只在 `eve/` 下
 
 ### 3. Steer token
 
-Steer token 本体还没实现。当前代码里只有后续实现会用到的 outcome plumbing：
+Steer token 本体还没实现。当前代码里只有 outcome plumbing：
 
 - dataset 返回 `outcome_flag`
 - `FastWAM._append_outcome_to_context()` 将 outcome embedding 追加到 text context
 - checkpoint save/load 支持 `outcome_encoder`
 
-当前默认配置里 `model.outcome_num_classes: 0`，所以这条路径还没在主实验中打开。M3 的目标是实现 steer token，而不是做消融：
+当前默认配置里 `model.outcome_num_classes: 0`。M3 不直接打开这条路径，因为真实 outcome 进入 shared context 会造成训练/推理接口不一致。目标是：
 
-1. 定义 success/failure steer token schema
-2. 打通 Eve `event_meta.steer_token` 到 dataset sample 的映射
-3. 在 FastWAM context 中真正启用 steer token embedding
+1. 用 EveRobot 局部 event 配对 success/failure action chunk
+2. 加 trajectory encoder 和 contrastive objective
+3. 将固定 `S_improve` 只接入 action expert；推理不输入 outcome
 4. 跑 `water_plant` 与 `hammer_nail` 的闭环评测
 
 ### 4. Rollout collect / retrain
@@ -205,7 +205,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 当前仿真任务范围只保留 `water_plant` 和 `hammer_nail`：
 
 - `hammer_nail` success-only step 6500：`135/200`
-- state-line transition probe：[`scripts/probe_state_line_distance.py`](./scripts/probe_state_line_distance.py) + [`scripts/everobot/build_state_line_probe_action_dataset.py`](./scripts/everobot/build_state_line_probe_action_dataset.py)
+- state-line transition probe：[`scripts/probe_state_line_distance.py`](./scripts/probe_state_line_distance.py)；action-prefix converter 只用于旧 probe，不属于 EveRobot 标准格式
 
 ## 真机与触觉
 
@@ -246,7 +246,7 @@ src/fastwam/
 scripts/
   train.py                       通用训练入口
   probe_state_line_distance.py   唯一保留的 transition-score 探针（state-line）
-  everobot/build_state_line_probe_action_dataset.py  将 state-line score 写入 action[0]
+  everobot/build_state_line_probe_action_dataset.py  旧 probe converter；不用于标准训练数据
   everobot/build_eve_sidecar.py  EveRobot sidecar 构造
   dexjoco_async/                 多卡 DexJoCo eval / collect
   water_plant/                   water_plant 训练、Eve、rollout wrapper
@@ -258,10 +258,10 @@ papers/II/
 
 ## 当前 TODO
 
-1. M1：`water_plant` 已完成；补 `hammer_nail` 的 success-only vs text failure 同协议结果。
+1. M1：保留 `water_plant` 历史 pilot；在 M3 的统一 continuation protocol 中重测 B0/B1。
 2. M2：用 EveRobot sidecar/manifest 入口重跑 `water_plant`/`hammer_nail` round1，并和现有 rollout text failure continuation 分开报告；不是全部重头做。
-3. M3：实现 steer token，包括 metadata schema、dataset 映射、model context token、训练配置和闭环评测。
-4. M4：做 steer token 的优化版，引入 contrastive / RLT / reward-labeled objective。
+3. M3：实现 offline contrastive steer，包括 action trajectory encoder、固定 action-side token、训练配置和闭环评测。
+4. M4：offline 通过后再做 RL Token / AdaJEPA 路线的 online update。
 5. M5：真机实验和触觉模块。
 
 ## 引用
