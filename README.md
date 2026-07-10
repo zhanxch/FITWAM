@@ -205,7 +205,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 当前仿真任务范围只保留 `water_plant` 和 `hammer_nail`：
 
 - `hammer_nail` success-only step 6500：`135/200`
-- event transition probe：[`results/event_transition_probe/`](./results/event_transition_probe/)
+- state-line transition probe：[`scripts/probe_state_line_distance.py`](./scripts/probe_state_line_distance.py) + [`scripts/everobot/build_state_line_probe_action_dataset.py`](./scripts/everobot/build_state_line_probe_action_dataset.py)
 
 ## 真机与触觉
 
@@ -245,6 +245,8 @@ src/fastwam/
 
 scripts/
   train.py                       通用训练入口
+  probe_state_line_distance.py   唯一保留的 transition-score 探针（state-line）
+  everobot/build_state_line_probe_action_dataset.py  将 state-line score 写入 action[0]
   everobot/build_eve_sidecar.py  EveRobot sidecar 构造
   dexjoco_async/                 多卡 DexJoCo eval / collect
   water_plant/                   water_plant 训练、Eve、rollout wrapper
@@ -252,7 +254,6 @@ scripts/
 
 results/
   dexjoco_water_plant_failure_ablation/
-  event_transition_probe/
 ```
 
 ## 当前 TODO

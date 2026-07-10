@@ -20,16 +20,35 @@ from fastwam.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-FAILURE_PHRASE = "Failed to finish the whole process."
-
-
 def _load_json(path: str | Path) -> dict[str, Any]:
     with Path(path).expanduser().open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
+def _load_optional_json(path: str | Path) -> dict[str, Any] | None:
+    path = Path(path).expanduser()
+    if not path.exists():
+        return None
+    return _load_json(path)
+
+
 def _resolve_root(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+def _load_eve_action_schema(dataset_dirs: list[str]) -> dict[str, Any] | None:
+    schemas: list[dict[str, Any]] = []
+    for dataset_dir in dataset_dirs:
+        schema = _load_optional_json(Path(dataset_dir) / "meta" / "eve" / "action_schema.json")
+        if schema is not None:
+            schemas.append(schema)
+    if not schemas:
+        return None
+    first = schemas[0]
+    for schema in schemas[1:]:
+        if int(schema.get("policy_action_prefix_dim", 0)) != int(first.get("policy_action_prefix_dim", 0)):
+            raise ValueError(f"Inconsistent EveRobot action schemas across dataset_dirs: {dataset_dirs}")
+    return first
 
 
 class EveManifestRobotVideoDataset(RobotVideoDataset):
@@ -46,6 +65,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         manifest_path: str,
         dataset_dirs: Optional[list[str]] = None,
         manifest_splits: Optional[list[str]] = None,
+        manifest_collection_iters: Optional[list[int]] = None,
+        policy_action_prefix_dim: Optional[int] = None,
         event_sample_stride: Optional[int] = None,
         episode_sample_stride: Optional[int] = None,
         max_load_retry: int = 3,
@@ -63,17 +84,28 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         if not dataset_dirs:
             raise ValueError("Eve manifest dataset requires at least one dataset root.")
         dataset_dirs = [_resolve_root(path) for path in dataset_dirs]
+        self.eve_action_schema = _load_eve_action_schema(dataset_dirs)
+        self.policy_action_prefix_dim = int(
+            (self.eve_action_schema or {}).get("policy_action_prefix_dim", 0)
+        )
+        if policy_action_prefix_dim is not None and int(policy_action_prefix_dim) != self.policy_action_prefix_dim:
+            raise ValueError(
+                "policy_action_prefix_dim must come from meta/eve/action_schema.json; "
+                f"config={policy_action_prefix_dim}, meta={self.policy_action_prefix_dim}"
+            )
 
         # The manifest is the split/subset authority.  The underlying LeRobot
         # loader must include all referenced episodes so event windows can be
         # resolved exactly.
         self.requested_val_set_proportion = kwargs.pop("val_set_proportion", 0.0)
         kwargs["val_set_proportion"] = 0.0
-        kwargs.setdefault("strip_instruction_suffix_if_contains", FAILURE_PHRASE)
 
         super().__init__(*args, dataset_dirs=dataset_dirs, **kwargs)
 
         self.manifest_splits = None if manifest_splits is None else set(manifest_splits)
+        self.manifest_collection_iters = (
+            None if manifest_collection_iters is None else {int(item) for item in manifest_collection_iters}
+        )
         self.event_sample_stride = event_sample_stride
         self.episode_sample_stride = episode_sample_stride
         self.max_load_retry = int(max_load_retry)
@@ -120,9 +152,15 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         return 1
 
     def _include_unit(self, unit: dict[str, Any]) -> bool:
-        if self.manifest_splits is None:
-            return True
-        return str(unit.get("split", "train")) in self.manifest_splits
+        if self.manifest_splits is not None and str(unit.get("split", "train")) not in self.manifest_splits:
+            return False
+        if self.manifest_collection_iters is not None:
+            collection_iter = unit.get("collection_iter")
+            if collection_iter is None:
+                collection_iter = unit.get("collection_round")
+            if collection_iter is None or int(collection_iter) not in self.manifest_collection_iters:
+                return False
+        return True
 
     def _expand_manifest_samples(self) -> list[dict[str, Any]]:
         expanded: list[dict[str, Any]] = []
@@ -223,6 +261,7 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         data["eve_sample_id"] = unit.get("sample_id", unit.get("event_id", ""))
         data["eve_sample_type"] = unit.get("sample_type", "")
         data["eve_dataset_id"] = unit.get("dataset_id", "")
+        data["eve_collection_iter"] = int(unit.get("collection_iter", unit.get("collection_round", -1)))
         data["eve_episode_index"] = int(sample_ref["episode_index"])
         data["eve_window_start"] = int(sample_ref["window_start"])
         data["eve_window_end"] = int(sample_ref["window_end"])

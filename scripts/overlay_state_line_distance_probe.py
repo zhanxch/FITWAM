@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render event-transition probe p values on top of LeRobot episode videos."""
+"""Render state line-distance event scores on top of LeRobot episode videos."""
 
 from __future__ import annotations
 
@@ -11,6 +11,12 @@ from pathlib import Path
 import av
 import cv2
 import numpy as np
+
+
+def float_or_nan(value: str) -> float:
+    if value == "":
+        return float("nan")
+    return float(value)
 
 
 def read_probe_csv(path: Path) -> dict[int, dict[str, np.ndarray]]:
@@ -26,26 +32,10 @@ def read_probe_csv(path: Path) -> dict[int, dict[str, np.ndarray]]:
         out[ep] = {
             "frame_index": np.asarray([int(r["frame_index"]) for r in rows], dtype=np.int64),
             "timestamp": np.asarray([float(r["timestamp"]) for r in rows], dtype=np.float32),
-            "p": np.asarray([float_or_nan(r["event_transition_p"]) for r in rows], dtype=np.float32),
-            "p_lpf": np.asarray(
-                [float_or_nan(r.get("event_transition_p_lpf", "")) for r in rows],
-                dtype=np.float32,
-            ),
-            "p_smooth": np.asarray(
-                [float_or_nan(r["event_transition_p_smooth"]) for r in rows],
-                dtype=np.float32,
-            ),
-            "eef_error": np.asarray([float_or_nan(r["eef_error"]) for r in rows], dtype=np.float32),
-            "hand_error": np.asarray([float_or_nan(r["hand_error"]) for r in rows], dtype=np.float32),
-            "is_peak": np.asarray([int(r["is_peak"]) for r in rows], dtype=np.int64),
+            "distance": np.asarray([float_or_nan(r["state_line_distance"]) for r in rows], dtype=np.float32),
+            "score": np.asarray([float_or_nan(r["event_transition_score"]) for r in rows], dtype=np.float32),
         }
     return out
-
-
-def float_or_nan(value: str) -> float:
-    if value == "":
-        return float("nan")
-    return float(value)
 
 
 def select_episodes(args: argparse.Namespace) -> list[int]:
@@ -73,14 +63,14 @@ def decode_video(path: Path) -> tuple[list[np.ndarray], float]:
     return frames, fps
 
 
-def color_for_p(p: float) -> tuple[int, int, int]:
-    if not np.isfinite(p):
+def color_for_score(score: float) -> tuple[int, int, int]:
+    if not np.isfinite(score):
         return (160, 160, 160)
-    p = float(np.clip(p, 0.0, 1.0))
-    if p < 0.5:
-        a = p / 0.5
+    score = float(np.clip(score, 0.0, 1.0))
+    if score < 0.5:
+        a = score / 0.5
         return (0, int(210 * a + 170 * (1 - a)), int(60 * (1 - a)))
-    a = (p - 0.5) / 0.5
+    a = (score - 0.5) / 0.5
     return (0, int(210 * (1 - a) + 60 * a), int(255 * a + 60 * (1 - a)))
 
 
@@ -90,39 +80,24 @@ def resize_height(frame: np.ndarray, height: int) -> np.ndarray:
     return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
 
 
-def draw_panel(
-    width: int,
-    height: int,
-    probe: dict[str, np.ndarray],
-    idx: int,
-    trail: int,
-) -> np.ndarray:
+def draw_panel(width: int, height: int, probe: dict[str, np.ndarray], idx: int, trail: int) -> np.ndarray:
     panel = np.full((height, width, 3), 248, dtype=np.uint8)
-    left, right = 52, width - 20
-    top, bottom = 16, height - 30
+    left, right = 72, width - 20
+    top, bottom = 20, height - 34
     cv2.rectangle(panel, (left, top), (right, bottom), (215, 215, 215), 1)
 
     for y_value in [0.25, 0.5, 0.75]:
         y = int(bottom - y_value * (bottom - top))
         cv2.line(panel, (left, y), (right, y), (232, 232, 232), 1)
-        cv2.putText(
-            panel,
-            f"{y_value:.2f}",
-            (8, y + 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.38,
-            (90, 90, 90),
-            1,
-            cv2.LINE_AA,
-        )
+        cv2.putText(panel, f"{y_value:.2f}", (18, y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (90, 90, 90), 1, cv2.LINE_AA)
 
-    p = probe["p_smooth"]
+    score = probe["score"]
     start = max(0, idx - trail + 1)
-    end = min(len(p), idx + 1)
+    end = min(len(score), idx + 1)
     if end - start >= 2:
         xs = np.linspace(left, right, end - start)
         ys = []
-        for value in p[start:end]:
+        for value in score[start:end]:
             if np.isfinite(value):
                 ys.append(int(bottom - np.clip(value, 0.0, 1.0) * (bottom - top)))
             else:
@@ -130,27 +105,16 @@ def draw_panel(
         for i in range(1, len(xs)):
             if ys[i - 1] is None or ys[i] is None:
                 continue
-            cv2.line(
-                panel,
-                (int(xs[i - 1]), ys[i - 1]),
-                (int(xs[i]), ys[i]),
-                (45, 85, 220),
-                2,
-                cv2.LINE_AA,
-            )
+            cv2.line(panel, (int(xs[i - 1]), ys[i - 1]), (int(xs[i]), ys[i]), (45, 85, 220), 2, cv2.LINE_AA)
 
-    current_p = float(p[idx]) if idx < len(p) else float("nan")
-    bar_w = int(np.clip(current_p if np.isfinite(current_p) else 0.0, 0.0, 1.0) * (right - left))
-    cv2.rectangle(panel, (left, height - 18), (left + bar_w, height - 8), color_for_p(current_p), -1)
-    cv2.rectangle(panel, (left, height - 18), (right, height - 8), (190, 190, 190), 1)
-
-    label = "p=nan" if not np.isfinite(current_p) else f"p={current_p:.3f}"
+    current_score = float(score[idx]) if idx < len(score) else float("nan")
     frame_index = int(probe["frame_index"][idx]) if idx < len(probe["frame_index"]) else idx
     timestamp = float(probe["timestamp"][idx]) if idx < len(probe["timestamp"]) else idx / 30.0
+    label = "score=nan" if not np.isfinite(current_score) else f"score={current_score:.3f}"
     cv2.putText(
         panel,
-        f"frame {frame_index}  t={timestamp:.2f}s  {label}",
-        (left, 12),
+        f"frame {frame_index}  t={timestamp:.2f}s  state_all {label}",
+        (left, 14),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.42,
         (40, 40, 40),
@@ -174,25 +138,19 @@ def render_episode(
     videos = []
     fps_values = []
     for key in camera_keys:
-        path = (
-            dataset_dir
-            / "videos"
-            / f"chunk-{chunk:03d}"
-            / f"observation.images.{key}"
-            / f"episode_{episode:06d}.mp4"
-        )
+        path = dataset_dir / "videos" / f"chunk-{chunk:03d}" / f"observation.images.{key}" / f"episode_{episode:06d}.mp4"
         frames, fps = decode_video(path)
         videos.append(frames)
         fps_values.append(fps)
 
-    n = min([len(v) for v in videos] + [len(probe["p_smooth"])])
+    n = min([len(v) for v in videos] + [len(probe["score"])])
     if n == 0:
         raise ValueError(f"No frames to render for episode {episode}")
 
     resized_first = [resize_height(v[0], video_height) for v in videos]
     video_width = sum(frame.shape[1] for frame in resized_first)
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"episode_{episode:06d}_p_overlay.mp4"
+    out_path = output_dir / f"episode_{episode:06d}_state_line_distance_overlay.mp4"
     writer = cv2.VideoWriter(
         str(out_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -204,18 +162,9 @@ def render_episode(
 
     for i in range(n):
         video_row = np.concatenate([resize_height(v[i], video_height) for v in videos], axis=1)
-        p_value = float(probe["p_smooth"][i])
-        cv2.putText(
-            video_row,
-            f"episode {episode:03d}",
-            (16, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.75,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.circle(video_row, (video_width - 28, 26), 12, color_for_p(p_value), -1)
+        score = float(probe["score"][i])
+        cv2.putText(video_row, f"episode {episode:03d}", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.circle(video_row, (video_width - 28, 26), 12, color_for_score(score), -1)
         panel = draw_panel(video_width, panel_height, probe, i, trail)
         writer.write(np.concatenate([video_row, panel], axis=0))
     writer.release()
@@ -224,22 +173,10 @@ def render_episode(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-dir", type=Path, default=Path("data/hammer_nail_fastwam"))
-    parser.add_argument(
-        "--probe-csv",
-        type=Path,
-        default=Path("results/event_transition_probe/hammer_nail_fastwam/event_transition_probe.csv"),
-    )
-    parser.add_argument(
-        "--summary-json",
-        type=Path,
-        default=Path("results/event_transition_probe/hammer_nail_fastwam/summary.json"),
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("results/event_transition_probe/hammer_nail_fastwam/videos"),
-    )
+    parser.add_argument("--dataset-dir", type=Path, required=True)
+    parser.add_argument("--probe-csv", type=Path, required=True)
+    parser.add_argument("--summary-json", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--episodes", type=int, nargs="*", default=None)
     parser.add_argument("--num-episodes", type=int, default=6)
     parser.add_argument("--cameras", nargs="+", default=["front", "wrist"])
@@ -271,7 +208,7 @@ def main() -> None:
         print(out_path)
 
     manifest = args.output_dir / "overlay_manifest.json"
-    manifest.write_text(json.dumps({"videos": rendered}, indent=2), encoding="utf-8")
+    manifest.write_text(json.dumps({"score": "state_all", "videos": rendered}, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

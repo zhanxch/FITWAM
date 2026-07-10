@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -294,6 +295,58 @@ def _resolve_run_dir(run_dir: Path) -> Path:
 DEFAULT_INFER_NUM_FRAMES = 33
 
 
+def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
+    if hasattr(cfg, "get"):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
+
+
+def _as_path_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _resolve_config_path(value: Any, *, run_dir: Path) -> Path:
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    for base in (Path.cwd(), run_dir):
+        candidate = (base / path).resolve()
+        if candidate.exists():
+            return candidate
+    return (Path.cwd() / path).resolve()
+
+
+def _resolve_train_dataset_roots(train_data: Any, *, run_dir: Path) -> list[Path]:
+    dataset_dirs = _cfg_get(train_data, "dataset_dirs")
+    roots = [_resolve_config_path(path, run_dir=run_dir) for path in _as_path_list(dataset_dirs)]
+    if roots:
+        return roots
+
+    manifest_path = _cfg_get(train_data, "manifest_path")
+    if manifest_path:
+        path = _resolve_config_path(manifest_path, run_dir=run_dir)
+        if path.exists():
+            with path.open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            return [
+                _resolve_config_path(root, run_dir=run_dir)
+                for root in manifest.get("dataset_roots", {}).values()
+            ]
+    return []
+
+
+def _resolve_train_meta_dir(train_data: Any, *, run_dir: Path) -> Path | None:
+    for root in _resolve_train_dataset_roots(train_data, run_dir=run_dir):
+        meta_dir = root / "meta"
+        if (meta_dir / "stats.json").exists() and (meta_dir / "modality.json").exists():
+            return meta_dir
+    return None
+
+
 def _resolve_inference_horizons(
     train_data: Any,
     *,
@@ -387,7 +440,11 @@ def _build_policy_from_run(
     model.load_checkpoint(str(checkpoint_path))
     model.eval()
 
-    processor_cfg = cfg.data.train.processor
+    processor_cfg = OmegaConf.create(OmegaConf.to_container(cfg.data.train.processor, resolve=True))
+    if str(processor_cfg.get("norm_stats_source", "")) == "meta":
+        train_meta_dir = _resolve_train_meta_dir(cfg.data.train, run_dir=run_dir)
+        if train_meta_dir is not None:
+            processor_cfg.norm_stats_meta_dir = str(train_meta_dir)
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
     if processor.wants_modality_stats:

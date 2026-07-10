@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,54 @@ def resolve_eval_action_horizon(
         )
 
     return DEFAULT_SLIDING_WINDOW_ACTION_HORIZON
+
+
+def _path_from_config(value: Any, *, run_dir: Path) -> Path:
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    for base in (Path.cwd(), run_dir):
+        candidate = (base / path).resolve()
+        if candidate.exists():
+            return candidate
+    return (Path.cwd() / path).resolve()
+
+
+def _as_path_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _resolve_train_dataset_roots(train_data: dict[str, Any], *, run_dir: Path) -> list[Path]:
+    roots = [_path_from_config(path, run_dir=run_dir) for path in _as_path_list(train_data.get("dataset_dirs"))]
+    if roots:
+        return roots
+
+    manifest_path = train_data.get("manifest_path")
+    if manifest_path:
+        path = _path_from_config(manifest_path, run_dir=run_dir)
+        if path.exists():
+            with path.open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            return [
+                _path_from_config(root, run_dir=run_dir)
+                for root in manifest.get("dataset_roots", {}).values()
+            ]
+    return []
+
+
+def _load_eve_action_schema(train_data: dict[str, Any], *, run_dir: Path) -> dict[str, Any]:
+    for root in _resolve_train_dataset_roots(train_data, run_dir=run_dir):
+        schema_path = root / "meta" / "eve" / "action_schema.json"
+        if schema_path.exists():
+            with schema_path.open("r", encoding="utf-8") as f:
+                schema = json.load(f)
+            schema["_schema_path"] = str(schema_path)
+            return schema
+    return {}
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -196,6 +245,12 @@ def load_dexjoco_eval_settings(
     image_keys = [str(item["key"]) for item in shape_meta["images"]]
     image_sizes_wh = [(int(item["shape"][2]), int(item["shape"][1])) for item in shape_meta["images"]]
     everobot_full_episode = is_everobot_full_episode_train(train_data)
+    action_schema = _load_eve_action_schema(train_data, run_dir=run_dir)
+    policy_action_output_dim = int(action_schema.get("policy_action_dim", processor["action_output_dim"]))
+    control_action_slice = action_schema.get("control_action_slice")
+    if control_action_slice is None:
+        prefix_dim = int(action_schema.get("policy_action_prefix_dim", 0))
+        control_action_slice = [prefix_dim, policy_action_output_dim]
     return {
         "image_size_wh": (image_size[1], image_size[0]),
         "action_horizon": resolve_eval_action_horizon(
@@ -203,7 +258,10 @@ def load_dexjoco_eval_settings(
             action_horizon_override=action_horizon_override,
         ),
         "everobot_full_episode": everobot_full_episode,
-        "action_output_dim": int(processor["action_output_dim"]),
+        "action_output_dim": policy_action_output_dim,
+        "policy_action_prefix_dim": int(action_schema.get("policy_action_prefix_dim", 0)),
+        "policy_action_control_slice": [int(control_action_slice[0]), int(control_action_slice[1])],
+        "eve_action_schema_path": action_schema.get("_schema_path"),
         "proprio_output_dim": int(processor["proprio_output_dim"]),
         "text_embedding_cache_dir": train_data.get("text_embedding_cache_dir"),
         "context_len": int(train_data.get("context_len", 128)),
@@ -450,7 +508,27 @@ class DexJoCoFastWAMAdapter:
     def __init__(self, eval_settings: dict[str, Any]) -> None:
         self.image_size_wh: tuple[int, int] = eval_settings["image_size_wh"]
         self.action_horizon = int(eval_settings["action_horizon"])
-        self.action_output_dim = int(eval_settings["action_output_dim"])
+        self.policy_action_output_dim = int(eval_settings["action_output_dim"])
+        self.policy_action_prefix_dim = int(eval_settings.get("policy_action_prefix_dim", 0))
+        control_slice = eval_settings.get("policy_action_control_slice")
+        if control_slice is None:
+            control_slice = [self.policy_action_prefix_dim, self.policy_action_output_dim]
+        if not isinstance(control_slice, (list, tuple)) or len(control_slice) != 2:
+            raise ValueError(f"Invalid policy_action_control_slice: {control_slice}")
+        self.policy_action_control_start = int(control_slice[0])
+        self.policy_action_control_end = int(control_slice[1])
+        if not (0 <= self.policy_action_control_start < self.policy_action_control_end <= self.policy_action_output_dim):
+            raise ValueError(
+                "Invalid policy action control slice: "
+                f"{control_slice}, policy_action_output_dim={self.policy_action_output_dim}"
+            )
+        self.action_output_dim = self.policy_action_control_end - self.policy_action_control_start
+        if self.action_output_dim <= 0:
+            raise ValueError(
+                "Invalid action dims: "
+                f"policy_action_output_dim={self.policy_action_output_dim}, "
+                f"policy_action_control_slice={control_slice}"
+            )
         self.proprio_output_dim = int(eval_settings["proprio_output_dim"])
         self.text_embedding_cache_dir = eval_settings.get("text_embedding_cache_dir")
         self.context_len = int(eval_settings["context_len"])
@@ -550,10 +628,12 @@ class DexJoCoFastWAMAdapter:
         chunk = np.asarray(action_dict[KEY_ACTION], dtype=np.float32)
         if chunk.ndim == 1:
             chunk = chunk.reshape(1, -1)
-        if chunk.shape[-1] != self.action_output_dim:
+        if chunk.shape[-1] != self.policy_action_output_dim:
             raise ValueError(
-                f"Policy action dim {chunk.shape[-1]} != expected {self.action_output_dim}"
+                f"Policy action dim {chunk.shape[-1]} != expected {self.policy_action_output_dim}"
             )
+        if self.policy_action_control_start != 0 or self.policy_action_control_end != self.policy_action_output_dim:
+            chunk = chunk[:, self.policy_action_control_start : self.policy_action_control_end]
         return chunk
 
     def rotvec_to_env_action(self, rotvec_action: np.ndarray, *, dual_arm: bool) -> np.ndarray:
