@@ -4,7 +4,7 @@
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**相关文档：** [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
+**相关文档：** [`docs/OFFLINE_SELF_IMPROVING_PLAN.md`](./docs/OFFLINE_SELF_IMPROVING_PLAN.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
 本仓库是在 FastWAM 上做的 failure / self-evolution / tactile 方向 fork。当前主线不是重新做一个通用 WAM，而是围绕失败和交互事件回答一个问题：
 
@@ -18,9 +18,9 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 
 | 结论 | 证据 | 位置 |
 |------|------|------|
-| **M1：failure video 有用** | Text failure 从 `38/100 -> 81/100 -> 82/100`，failure 样本只训 video/context，不训 action | [`results/dexjoco_water_plant_failure_ablation/summary.csv`](./results/dexjoco_water_plant_failure_ablation/summary.csv) |
-| **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`evaluate_results/dexjoco/water_plant/step_006500/summary.json`](./evaluate_results/dexjoco/water_plant/step_006500/summary.json), `data/water_plant_rollout_200_step6500_raw/collection_summary.json` |
-| **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`evaluate_results/dexjoco/failure-concate-lora/step_006500/summary.json`](./evaluate_results/dexjoco/failure-concate-lora/step_006500/summary.json) |
+| **M1：failure video 有用** | Text failure 从 `38/100 -> 81/100 -> 82/100`，failure 样本只训 video/context，不训 action | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
+| **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
+| **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **EveRobot sidecar 已落地** | round1 manifest = 100 条 base success episode + 49 个 failure event；49 个 failure 来自 200 次 rollout | [`src/fastwam/datasets/eve/manifest_dataset.py`](./src/fastwam/datasets/eve/manifest_dataset.py), [`scripts/everobot/build_eve_sidecar.py`](./scripts/everobot/build_eve_sidecar.py) |
 
 注意：`water_plant` 的 M1 success-only vs text failure 已完成；`151/200` 和 `163/200` 属于 M4 rollout/continuation 证据，不和 M1 100-episode A/B 表混成同一张最终表。
@@ -198,7 +198,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
 | External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
-更完整的 M1 ablation 见 [`results/dexjoco_water_plant_failure_ablation/`](./results/dexjoco_water_plant_failure_ablation/)。
+当前候选论文结果统一记录在 [`papers/II/experiment_results.md`](./papers/II/experiment_results.md)。
 
 ### 其他任务
 
@@ -214,7 +214,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 - 训练配置：[`configs/task/spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4.yaml`](./configs/task/spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4.yaml)
 - 脚本：[`scripts/spray_water_gr00tstyle/`](./scripts/spray_water_gr00tstyle/)
 - deploy：[`scripts/spray_water_gr00tstyle/wuji/`](./scripts/spray_water_gr00tstyle/wuji/)
-- 开环 smoke eval：[`evaluate_results/openloop_smoke_gr00tstyle/`](./evaluate_results/openloop_smoke_gr00tstyle/)
+- 开环 smoke eval 由 `scripts/spray_water_gr00tstyle/` 下的对应脚本生成，结果不在 Git 中保存。
 
 M5 的目标不是在仿真里强行加触觉，而是在真机接触期补上 RGB 难以区分的状态：
 
@@ -252,8 +252,8 @@ scripts/
   water_plant/                   water_plant 训练、Eve、rollout wrapper
   spray_water_gr00tstyle/        真机训练、开环 eval、deploy
 
-results/
-  dexjoco_water_plant_failure_ablation/
+papers/II/
+  experiment_results.md            候选论文结果表
 ```
 
 ## 当前 TODO
