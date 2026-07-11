@@ -15,6 +15,10 @@ from typing import Any, Optional
 import torch
 
 from fastwam.datasets.lerobot.robot_video_dataset import RobotVideoDataset
+from fastwam.everobot_schema import (
+    resolve_manifest_dataset_root,
+    validate_manifest,
+)
 from fastwam.utils.logging_config import get_logger
 
 
@@ -66,6 +70,9 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         dataset_dirs: Optional[list[str]] = None,
         manifest_splits: Optional[list[str]] = None,
         manifest_collection_iters: Optional[list[int]] = None,
+        dataset_root_overrides: dict[str, str] | None = None,
+        strict_manifest_references: bool = True,
+        verify_manifest_hash: bool = True,
         policy_action_prefix_dim: Optional[int] = None,
         event_sample_stride: Optional[int] = None,
         episode_sample_stride: Optional[int] = None,
@@ -74,13 +81,37 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
     ):
         self.manifest_path = str(Path(manifest_path).expanduser().resolve())
         self.manifest = _load_json(self.manifest_path)
-        if self.manifest.get("format") != "EveRobotTrainManifest":
-            raise ValueError(
-                f"Unsupported Eve manifest format: {self.manifest.get('format')}"
-            )
+        self.dataset_root_overrides = dict(dataset_root_overrides or {})
+        self.strict_manifest_references = bool(strict_manifest_references)
+        self.manifest_splits = None if manifest_splits is None else set(manifest_splits)
+        self.manifest_collection_iters = (
+            None
+            if manifest_collection_iters is None
+            else {int(item) for item in manifest_collection_iters}
+        )
+        validate_manifest(
+            self.manifest,
+            strict=True,
+            verify_hash=bool(verify_manifest_hash),
+        )
 
-        if dataset_dirs is None:
-            dataset_dirs = list(self.manifest.get("dataset_roots", {}).values())
+        configured_dataset_dirs = dataset_dirs
+        dataset_dirs = []
+        seen_roots: set[str] = set()
+        for unit in self.manifest.get("samples", []):
+            if not self._include_unit(unit):
+                continue
+            root = self._resolve_unit_dataset_root(unit)
+            if root not in seen_roots:
+                dataset_dirs.append(root)
+                seen_roots.add(root)
+        if configured_dataset_dirs is not None:
+            configured_roots = {_resolve_root(path) for path in configured_dataset_dirs}
+            if configured_roots != seen_roots:
+                logger.warning(
+                    "Ignoring dataset_dirs that disagree with selected manifest roots; "
+                    "use dataset_root_overrides to relocate EveRobot datasets."
+                )
         if not dataset_dirs:
             raise ValueError("Eve manifest dataset requires at least one dataset root.")
         dataset_dirs = [_resolve_root(path) for path in dataset_dirs]
@@ -102,10 +133,6 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
 
         super().__init__(*args, dataset_dirs=dataset_dirs, **kwargs)
 
-        self.manifest_splits = None if manifest_splits is None else set(manifest_splits)
-        self.manifest_collection_iters = (
-            None if manifest_collection_iters is None else {int(item) for item in manifest_collection_iters}
-        )
         self.event_sample_stride = event_sample_stride
         self.episode_sample_stride = episode_sample_stride
         self.max_load_retry = int(max_load_retry)
@@ -142,6 +169,14 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             frame_offset += int(dataset.num_frames)
         return episode_index
 
+    def _resolve_unit_dataset_root(self, unit: dict[str, Any]) -> str:
+        root = resolve_manifest_dataset_root(
+            self.manifest,
+            unit,
+            self.dataset_root_overrides,
+        )
+        return _resolve_root(root)
+
     def _unit_stride(self, unit: dict[str, Any]) -> int:
         if "sample_stride" in unit and unit["sample_stride"] is not None:
             return max(int(unit["sample_stride"]), 1)
@@ -169,24 +204,41 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         for unit in self.manifest.get("samples", []):
             if not self._include_unit(unit):
                 continue
-            dataset_root = _resolve_root(unit["dataset_root"])
+            dataset_root = self._resolve_unit_dataset_root(unit)
             episode_index = int(unit["episode_index"])
             ep_key = (dataset_root, episode_index)
             if ep_key not in self._episode_index:
+                if self.strict_manifest_references:
+                    raise ValueError(
+                        "Eve manifest references an episode absent from the loaded "
+                        f"datasets: dataset_root={dataset_root!r}, "
+                        f"episode_index={episode_index}. Set "
+                        "strict_manifest_references=False to warn and skip it."
+                    )
                 skipped_missing += 1
                 logger.warning("Skipping missing Eve episode reference: %s", ep_key)
                 continue
 
             global_ep_start, ep_length = self._episode_index[ep_key]
-            start_frame = max(int(unit.get("start_frame", 0)), 0)
-            end_frame = min(int(unit.get("end_frame", ep_length)), ep_length)
-            if end_frame - start_frame < self.num_frames:
+            source_span = (self.num_frames - 1) * int(self.global_sample_stride) + 1
+            unit_start = max(int(unit.get("start_frame", 0)), 0)
+            unit_end = min(int(unit.get("end_frame", ep_length)), ep_length)
+            intervals = unit.get("valid_intervals") or [[unit_start, unit_end]]
+            stride = self._unit_stride(unit)
+            unit_window_starts: set[int] = set()
+            for interval_start, interval_end in intervals:
+                start_frame = max(int(interval_start), unit_start)
+                end_frame = min(int(interval_end), unit_end)
+                if end_frame - start_frame < source_span:
+                    continue
+                max_start = end_frame - source_span
+                for window_start in range(start_frame, max_start + 1, stride):
+                    unit_window_starts.add(window_start)
+
+            if not unit_window_starts:
                 skipped_short += 1
                 continue
-
-            max_start = end_frame - self.num_frames
-            stride = self._unit_stride(unit)
-            for window_start in range(start_frame, max_start + 1, stride):
+            for window_start in sorted(unit_window_starts):
                 expanded.append(
                     {
                         "unit": unit,
@@ -194,7 +246,7 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
                         "episode_index": episode_index,
                         "global_frame_idx": global_ep_start + window_start,
                         "window_start": window_start,
-                        "window_end": window_start + self.num_frames,
+                        "window_end": window_start + source_span,
                     }
                 )
 
@@ -240,7 +292,9 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         action_len = int(action.shape[0])
         valid_start = int(action_loss_window[0])
         valid_end = int(action_loss_window[1])
-        frame_ids = torch.arange(window_start, window_start + action_len)
+        frame_ids = window_start + torch.arange(action_len) * int(
+            self.global_sample_stride
+        )
         invalid = (frame_ids < valid_start) | (frame_ids >= valid_end)
         data["action_is_pad"] = action_is_pad.to(dtype=torch.bool).clone() | invalid.to(
             device=action_is_pad.device

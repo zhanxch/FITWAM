@@ -19,9 +19,9 @@ bash scripts/water_plant/train_2cam.sh
 bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 ```
 
-**EveRobot sidecar v0.1（failure self-evolution）：**
+**EveRobot sidecar v0.2（failure self-evolution）：**
 
-EveRobot v0.1 是一个 **LeRobot-compatible sidecar**，用于失败轨迹自进化训练。
+EveRobot 是一个 **LeRobot-compatible sidecar**，用于失败轨迹自进化训练。
 它不改动 LeRobot 原始 `data/`、`videos/`、`meta/`，只在
 `data/water_plant_fastwam/eve/` 下维护 episode provenance、failure event
 window 和训练 manifest。训练时由 manifest 决定使用哪些数据子集，以及 failure
@@ -31,6 +31,9 @@ episode 只采样哪些 event window。
 bash scripts/water_plant/build_eve_round1_sidecar.sh
 bash scripts/water_plant/train_eve_round1.sh
 ```
+
+已有 v0.1 sidecar 时应指定新的目录，例如
+`EVE_ROOT=data/water_plant_fastwam/eve_v02 bash scripts/water_plant/build_eve_round1_sidecar.sh`；loader 仍可读取旧 manifest。
 
 默认构造：
 
@@ -45,8 +48,9 @@ bash scripts/water_plant/train_eve_round1.sh
 | 文件 | 说明 |
 |------|------|
 | `eve/schema_version.json` | EveRobot 格式版本和兼容说明 |
+| `eve/round_meta.jsonl` | 不可变 round provenance |
 | `eve/episode_meta.jsonl` | episode 级 metadata：来源、round、policy、success/failure、seed、length |
-| `eve/event_meta.jsonl` | event 级 metadata：failure window、failure type、action loss 策略、预留 steer token |
+| `eve/event_meta.jsonl` | event 级 metadata：failure window、failure type、标注来源和 action loss 策略 |
 | `eve/manifests/train_round1_success_plus_failure_events.json` | round1 训练子集：100 条 success episode + 49 个 failure event |
 | `eve/reports/*.json` | 构造统计报告 |
 
@@ -61,7 +65,7 @@ bash scripts/water_plant/train_eve_round1.sh
 | 600 帧 timeout failure | 使用 `trim8s` 标注出的 `[0, 360)` window |
 | 短 failure | 使用完整 failure episode window |
 | failure action loss | `disabled`，即 failure event 用于 video/proprio/context 学习，不模仿失败动作 |
-| steer token | 当前未启用，字段保留为 `null` |
+| steer token | 模型参数，不写入 EveRobot metadata |
 
 训练适配由 `fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset`
 完成。它复用现有 FastWAM 的视频解码、processor、text embedding cache 和 loss
@@ -125,7 +129,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 |------|------|
 | `prepare_2cam.sh` | 数据准备 + text embed + 样本校验 |
 | `train_2cam.sh` | LeRobot 窗口训练 launcher |
-| `build_eve_round1_sidecar.sh` | 构造 EveRobot v0.1 sidecar 和 round1 training manifest |
+| `build_eve_round1_sidecar.sh` | 构造 EveRobot v0.2 sidecar 和 round1 training manifest |
 | `train_eve_round1.sh` | 使用 EveRobot manifest 训练 round1 failure self-evolution 模型 |
 | `collect_rollout_200_trim8s_and_train.sh` | water_plant 默认参数 wrapper，实际调用 `../collect_rollout_trim_and_train.sh` |
 | `train_everobot.py` / `train_everobot.sh` | Legacy EveRobot 整 episode 训练 |

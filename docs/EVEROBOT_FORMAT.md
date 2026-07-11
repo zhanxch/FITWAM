@@ -17,7 +17,7 @@ EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作
     manifests/<name>.json
 ```
 
-帧区间统一使用左闭右开 `[start_frame, end_frame)`。标准记录只保存稳定 ID 和 hash；本机路径在读取 manifest 时映射，不参与数据身份计算。
+帧区间统一使用左闭右开 `[start_frame, end_frame)`。sidecar 中的本机路径只是兼容提示，不参与 manifest 和 source-ledger hash；换机器时用 `dataset_root_overrides` 显式重映射。
 
 ## 各文件含义
 
@@ -47,6 +47,8 @@ base expert success
 
 因此无需复制视频，就能复现 base-only、单轮、累计多轮、按 outcome 平衡或人工挑选的训练集。
 
+builder 默认对 `data/`、`videos/` 和 `meta/` 做内容 SHA-256；大数据集可传入已审计的 `--dataset-fingerprint-sha256`。ledger 更新先统一预检，再在 sidecar 锁内原子替换单个文件，ID 冲突不会留下半轮 metadata。
+
 ## Auto Soft Subtask Annotation
 
 自动标注不输出一个生硬的 clip label，而是对每帧输出：
@@ -75,12 +77,11 @@ p_t(subtask_0 ... subtask_K-1), boundary_score_t, confidence_t
 - train/validation manifest 不重叠；
 - `action_loss=disabled` 的 failure event 对直接 action imitation loss 贡献为零。
 
-## 当前实现缺口
+## 实现状态
 
-v0.1 已支持 episode/event sidecar、manifest window、round filter、outcome flag 和 sample-level action-loss mask。要称为稳定格式，还需补齐：
+v0.2 已实现不可变 `round/episode/event` ledger、路径无关 manifest hash、round/split/sample 筛选、dataset root 重映射、source-stride-aware window、interval 与 missing-reference 严格校验，以及 synthetic multi-round 测试。loader 继续读取已有 v0.1 manifest；v0.2 builder 不会覆盖 v0.1 sidecar，迁移时需写入新的 `eve_root`。
 
-1. 不可变 round ledger 和内容 hash；
-2. interval 校验及与本机路径无关的 dataset root；
-3. task/subtask schema 和逐帧 soft-score 文件；
-4. missing-reference 与 train/validation 严格检查；
-5. multi-round builder/loader 测试。
+剩余两项：
+
+1. 固化 `task_schema.json`，实现逐帧 `subtask_scores.parquet` 生成与质量评估；
+2. 增加独立 train/validation manifest 的 episode-overlap 检查。

@@ -21,7 +21,7 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 | **M1：failure video pilot** | Text failure 从 `38/100 -> 81/100 -> 82/100`；failure 样本的直接 action loss 为零 | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
-| **EveRobot sidecar v0.1 已落地** | round1 manifest = 100 条 base success episode + 49 个 tail-trimmed failure window；真实 failure interval 仍待标注 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
+| **EveRobot sidecar v0.2 已实现** | 不可变 round ledger、可复核 manifest hash、round/split/sample 子集和路径重映射已覆盖测试；历史 round1 数据仍是 v0.1 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
 
 注意：这些是 mixed-protocol 历史 pilot。`151/200` 和 `163/200` 属于 rollout/continuation 证据，不与 100-episode checkpoint 结果混成最终受控主表。
 
@@ -30,7 +30,7 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 | Milestone | 要证明什么 | 当前状态 |
 |-----------|------------|----------|
 | **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | `water_plant` 有历史 pilot；同协议主表待重测 |
-| **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | sidecar v0.1 已实现；不是全部重头做，而是用 EveRobot manifest 入口重跑/对齐 round1 |
+| **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 builder/loader 已实现；历史 round1 数据待重建和对齐 |
 | **M3 Steer token** | 从局部成功/失败动作学习固定的 success-directed steer | steer token 本体尚未实现；现有 `outcome_flag` 不能作为主方法 |
 | **M4 Iterative self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | round0 -> round1 已跑通；rollout continuation 当前 `163/200` |
 | **M5 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 真机实验和触觉模块 |
@@ -62,18 +62,19 @@ M1 证明 failure video 有用
 - [`configs/data/dexjoco_water_plant_2cam_text_failure.yaml`](./configs/data/dexjoco_water_plant_2cam_text_failure.yaml)
 - [`configs/data/dexjoco_water_plant_2cam_rollout_text_failure.yaml`](./configs/data/dexjoco_water_plant_2cam_rollout_text_failure.yaml)
 
-### 2. EveRobot sidecar v0.1
+### 2. EveRobot sidecar v0.2
 
 EveRobot 不改 LeRobot 原始 `data/`、`videos/`、`meta/`，只在 `eve/` 下增加 sidecar：
 
 | 文件 | 作用 |
 |------|------|
 | `schema_version.json` | EveRobot 版本和兼容说明 |
+| `round_meta.jsonl` | 不可变采集轮次及 checkpoint/config/code/dataset provenance |
 | `episode_meta.jsonl` | episode 级 provenance：source policy、round、seed、outcome、length |
 | `event_meta.jsonl` | failure/event window、failure type、标注来源和 action loss 策略 |
-| `manifests/*.json` | 每轮训练显式选择 success episode / failure event 子集 |
+| `manifests/*.json` | 显式选择 round/split/outcome/event 子集，记录路径无关的内容 hash |
 
-当前 round1：
+历史 v0.1 round1 数据：
 
 | 项 | 数量 / 策略 |
 |----|-------------|
@@ -240,6 +241,7 @@ configs/
 src/fastwam/
   datasets/lerobot/              原始 LeRobot 固定窗口数据集和 processor
   datasets/eve/                  EveRobot manifest-driven dataset adapter
+  everobot_schema.py             v0.1/v0.2 校验、manifest hash 和路径重映射
   models/wan22/fastwam.py        WAM 主模型、action loss mask、outcome token plumbing
   models/wan22/video_lora.py     Video LoRA
 
@@ -259,7 +261,7 @@ papers/II/
 ## 当前 TODO
 
 1. M1：保留 `water_plant` 历史 pilot；在 M3 的统一 continuation protocol 中重测 B0/B1。
-2. M2：用 EveRobot sidecar/manifest 入口重跑 `water_plant`/`hammer_nail` round1，并和现有 rollout text failure continuation 分开报告；不是全部重头做。
+2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
 3. M3：实现 offline contrastive steer，包括 action trajectory encoder、固定 action-side token、训练配置和闭环评测。
 4. M4：offline 通过后再做 RL Token / AdaJEPA 路线的 online update。
 5. M5：真机实验和触觉模块。
