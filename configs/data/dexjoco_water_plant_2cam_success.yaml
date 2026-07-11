@@ -25,7 +25,7 @@ train:
   camera_key: null
   val_set_proportion: 0.01
   is_training_set: true
-  pretrained_norm_stats: /data_all/share/FastWAM_zhaoyc_failure/artifacts/dataset_stats/dexjoco_water_plant_success_action_state.json
+  pretrained_norm_stats: ${oc.env:FITWAM_ARTIFACT_ROOT,/data_all/share/FITWAM_failure}/dataset_stats/dexjoco_water_plant_success_action_state.json
   skip_padding_as_possible: false
   concat_multi_camera: horizontal
   action_loss_zero_if_instruction_contains: null
@@ -50,7 +50,7 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: /data_all/share/FastWAM_zhaoyc_failure/artifacts/text_embeds_cache/dexjoco_water_plant_2cam_success
+  text_embedding_cache_dir: ${oc.env:FITWAM_ARTIFACT_ROOT,/data_all/share/FITWAM_failure}/text_embeds_cache/dexjoco_water_plant_2cam_success
   context_len: 128
 
 val:
