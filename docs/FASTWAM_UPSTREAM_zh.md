@@ -2,8 +2,8 @@
 
 **Fast-WAM: Do World Action Models Need Test-time Future Imagination?** 的官方代码仓库。
 
-[![English](https://img.shields.io/badge/README-English-111111.svg)](./README.md)
-[![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./README_zh.md)
+[![English](https://img.shields.io/badge/README-English-111111.svg)](./FASTWAM_UPSTREAM.md)
+[![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./FASTWAM_UPSTREAM_zh.md)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2603.16666-b31b1b.svg)](https://arxiv.org/abs/2603.16666)
 [![Project Page](https://img.shields.io/badge/Project_Page-Fast--WAM-2ea44f.svg)](https://yuantianyuan01.github.io/FastWAM/)
@@ -182,8 +182,7 @@ pip install mujoco==3.3.2
 
 `mujoco` 环境和 LIBERO 数据版本相关，最好保持一致。
 
-我们已经把 `RoboTwin` 评测相关代码copy到了 `third_party/RoboTwin`。
-但仍需按 [RoboTwin 官方仓库](https://github.com/RoboTwin-Platform/RoboTwin) 中的教程完成环境安装并下载相关assets：
+本 fork 不跟踪第三方 benchmark 代码。请按 [RoboTwin 官方仓库](https://github.com/RoboTwin-Platform/RoboTwin) 的教程，将其 clone 到 `third_party/RoboTwin`，完成环境安装并下载相关 assets：
 再创建 policy 软链接：
 
 ```bash
@@ -216,7 +215,7 @@ python experiments/robotwin/run_robotwin_manager.py \
   MULTIRUN.num_gpus=8
 ```
 
-为了加速 RoboTwin 评测，我们在 [`configs/sim_robotwin.yaml`](./configs/sim_robotwin.yaml) 中打开了 `EVALUATION.skip_get_obs_within_replan=true`。
+为了加速 RoboTwin 评测，我们在 [`configs/sim_robotwin.yaml`](../configs/sim_robotwin.yaml) 中打开了 `EVALUATION.skip_get_obs_within_replan=true`。
 它会在一次 replan 窗口内连续执行一个 action chunk 时跳过 RGB 渲染，评测更快，但保存下来的视频帧率会低。
 如果想保存完整视频，可以把它设为 `false`。
 

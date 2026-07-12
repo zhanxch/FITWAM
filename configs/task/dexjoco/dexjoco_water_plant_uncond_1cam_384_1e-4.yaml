@@ -28,7 +28,7 @@ resume: null
 wandb:
   enabled: true
   workspace: null
-  project: fast-wam
+  project: fitwam
   name: dexjoco_water_plant_uncond_1cam_384_1e-4
   group: dexjoco_water_plant
   mode: online

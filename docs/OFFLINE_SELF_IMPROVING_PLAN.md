@@ -2,7 +2,7 @@
 
 ## 当前目标
 
-我负责两件事：
+本阶段交付两项内容：
 
 1. 完成 [`EveRobot`](./EVEROBOT_FORMAT.md)，让每轮 rollout 和 event 标注可追溯、可取任意子集；
 2. 验证局部失败动作能否为 Fast-WAM 学出一个 success-directed steer。
@@ -20,6 +20,8 @@ Online RL、test-time world-model update 和 tactile 都放在这一步通过之
 ```text
 S_improve = LayerNorm(P+ + alpha * (P+ - P-))
 ```
+
+Steer 接口参考 Sparsh-X 用少量 bottleneck token 压缩交互信息的思路，但首版只实现一个 action-side token，不复刻其多模态 encoder。是否扩展为多个 token 由最小模型的受控实验决定。
 
 训练和推理始终使用同一个 `S_improve`，推理不传 outcome。
 

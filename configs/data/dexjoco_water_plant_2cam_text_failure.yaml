@@ -1,8 +1,8 @@
 train:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
-    - /data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant
-    - ${oc.env:FITWAM_ARTIFACT_ROOT,/data_all/share/FITWAM_failure}/datasets/water_plant_failure_fastwam_2cam_text
+    - ${oc.env:DEXJOCO_WATER_PLANT_DATASET,data/dexjoco/dexjoco_lerobot_datasets/water_plant}
+    - ${oc.env:FITWAM_ARTIFACT_ROOT,data/fitwam_artifacts}/datasets/water_plant_failure_fastwam_2cam_text
   shape_meta:
     images:
       - key: front
@@ -26,7 +26,7 @@ train:
   camera_key: null
   val_set_proportion: 0.01
   is_training_set: true
-  pretrained_norm_stats: ${oc.env:FITWAM_ARTIFACT_ROOT,/data_all/share/FITWAM_failure}/dataset_stats/dexjoco_water_plant_success_action_state.json
+  pretrained_norm_stats: ${oc.env:FITWAM_ARTIFACT_ROOT,data/fitwam_artifacts}/dataset_stats/dexjoco_water_plant_success_action_state.json
   skip_padding_as_possible: false
   concat_multi_camera: horizontal
   action_loss_zero_if_instruction_contains: "Failed to finish the whole process."
@@ -51,13 +51,13 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: ${oc.env:FITWAM_ARTIFACT_ROOT,/data_all/share/FITWAM_failure}/text_embeds_cache/dexjoco_water_plant_2cam_text_failure
+  text_embedding_cache_dir: ${oc.env:FITWAM_ARTIFACT_ROOT,data/fitwam_artifacts}/text_embeds_cache/dexjoco_water_plant_2cam_text_failure
   context_len: 128
 
 val:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
-    - /data_all/share/datasets/dexjoco/dexjoco_lerobot_datasets/water_plant
+    - ${oc.env:DEXJOCO_WATER_PLANT_DATASET,data/dexjoco/dexjoco_lerobot_datasets/water_plant}
   shape_meta: ${data.train.shape_meta}
   num_frames: ${data.train.num_frames}
   global_sample_stride: ${data.train.global_sample_stride}

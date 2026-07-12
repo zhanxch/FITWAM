@@ -1,7 +1,7 @@
 train:
   _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
   dataset_dirs:
-    - ${oc.env:FASTWAM_ROLLOUT_DATASET,/data_all/xiangchengzhan/FastWAM/data/water_plant_rollout_200_step6500_trim8s}
+    - ${oc.env:FASTWAM_ROLLOUT_DATASET,data/water_plant_rollout_200_step6500_trim8s}
   shape_meta:
     images:
       - key: front
@@ -42,7 +42,7 @@ train:
     norm_default_mode: "min/max"
     norm_exception_mode: null
     norm_stats_source: meta
-    norm_stats_meta_dir: /data_all/xiangchengzhan/FastWAM/data/dexjoco/dexjoco_lerobot_datasets/water_plant/meta
+    norm_stats_meta_dir: ${oc.env:FASTWAM_NORM_STATS_META_DIR,data/dexjoco/dexjoco_lerobot_datasets/water_plant/meta}
     action_state_merger:
       _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
     train_transforms:
@@ -53,7 +53,7 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: ${oc.env:FASTWAM_ROLLOUT_TEXT_CACHE,/data_all/xiangchengzhan/FastWAM/data/text_embeds_cache/dexjoco_water_plant_rollout_text_failure}
+  text_embedding_cache_dir: ${oc.env:FASTWAM_ROLLOUT_TEXT_CACHE,data/text_embeds_cache/dexjoco_water_plant_rollout_text_failure}
   context_len: 128
 
 val:

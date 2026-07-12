@@ -1,4 +1,4 @@
-# Interaction-centric WAM
+# FITWAM: Failure-Improvement Tactile WAM
 
 主文档：[`README.md`](./README.md)
 

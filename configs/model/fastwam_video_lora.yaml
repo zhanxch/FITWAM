@@ -3,7 +3,7 @@
 # Usage (LeRobot sliding-window):
 #   bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 # Usage (EveRobot):
-#   bash scripts/water_plant/train_everobot.sh task=everobot_water_plant_lora
+#   bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
 
 defaults:
   - fastwam

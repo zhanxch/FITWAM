@@ -21,9 +21,9 @@
 set -o pipefail
 
 REPO_ROOT="${FASTWAM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-SDK="${ASTRIBOT_SDK_ROOT:-/home/zxc/cenyj/astribot_sdk/astribot_sdk_ros2-master}"
-SHIM="${ASTRIBOT_PYTHON_SHIMS:-/home/zxc/cenyj/astribot_sdk/python_shims}"
-WUJI_SETUP="${WUJI_HAND_SETUP:-/home/zxc/Desktop/wuji/wuji-teleop/wujihandros2/install/setup.bash}"
+SDK="${ASTRIBOT_SDK_ROOT:?Set ASTRIBOT_SDK_ROOT to the Astribot SDK root}"
+SHIM="${ASTRIBOT_PYTHON_SHIMS:?Set ASTRIBOT_PYTHON_SHIMS to the Python shims directory}"
+WUJI_SETUP="${WUJI_HAND_SETUP:?Set WUJI_HAND_SETUP to the Wuji ROS setup.bash}"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 CLIENT="${REPO_ROOT}/scripts/spray_water_gr00tstyle/wuji/run_fastwam_client.py"
 RESET_RAN=0

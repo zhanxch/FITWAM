@@ -14,26 +14,27 @@
 
 ## 当前结论
 
-DexJoCo `water_plant` 已经能支撑前几步叙事：
+DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 
 | 结论 | 证据 | 位置 |
 |------|------|------|
 | **M1：failure video pilot** | Text failure 从 `38/100 -> 81/100 -> 82/100`；failure 样本的直接 action loss 为零 | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
-| **success-only 基线可复现** | 同 pipeline step 6500 为 `70/100`；另一次 200-episode rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
-| **M2/M4：rollout 回灌能涨点** | 基于 step 6500 rollout 继续训练后，闭环为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
-| **EveRobot sidecar v0.2 已实现** | 不可变 round ledger、可复核 manifest hash、round/split/sample 子集和路径重映射已覆盖测试；历史 round1 数据仍是 v0.1 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
+| **success-only 历史参考** | step 6500 为 `70/100`；另一次 source-policy rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
+| **rollout continuation pilot** | rollout text-failure LoRA continuation 为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
+| **EveRobot sidecar v0.2 已实现** | 不可变 round ledger、可复核 manifest hash、round/sample 子集和路径重映射已覆盖测试；历史 round1 数据仍是 v0.1 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
 
-注意：这些是 mixed-protocol 历史 pilot。`151/200` 和 `163/200` 属于 rollout/continuation 证据，不与 100-episode checkpoint 结果混成最终受控主表。
+注意：这些是 mixed-protocol 历史 pilot，当前 checkout 没有保存全部 raw summary。`151/200` 和 `163/200` 属于 source-policy rollout 与 LoRA continuation 计数，不能据此单独归因于 EveRobot 或 M4，也不与 100-episode checkpoint 结果混成最终受控主表。
 
-## 五个 Milestone
+## 六个 Milestone
 
 | Milestone | 要证明什么 | 当前状态 |
 |-----------|------------|----------|
 | **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | `water_plant` 有历史 pilot；同协议主表待重测 |
 | **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 builder/loader 已实现；历史 round1 数据待重建和对齐 |
 | **M3 Steer token** | 从局部成功/失败动作学习固定的 success-directed steer | steer token 本体尚未实现；现有 `outcome_flag` 不能作为主方法 |
-| **M4 Iterative self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | round0 -> round1 已跑通；rollout continuation 当前 `163/200` |
-| **M5 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 真机实验和触觉模块 |
+| **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 数据闭环已跑通；统一协议下的增益待验证 |
+| **M5 Online self-improvement** | 在线更新 steer，并用新观测校正 world expert | 待 offline steer 通过后开展 |
+| **M6 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
 
 整体顺序：
 
@@ -41,8 +42,9 @@ DexJoCo `water_plant` 已经能支撑前几步叙事：
 M1 证明 failure video 有用
   -> M2 用 EveRobot 把 rollout / event / manifest 管起来
   -> M3 用局部失败动作训练 contrastive steer
-  -> M4 多轮 rollout 回灌，验证持续自进化
-  -> M5 真机触觉，把 contact-rich failure 接进同一套 event 叙事
+  -> M4 多轮 rollout 回灌，验证 offline self-evolution
+  -> M5 在线更新 steer / world expert
+  -> M6 真机触觉，把 contact-rich failure 接进同一套 event 叙事
 ```
 
 ## 已实现内容
@@ -150,7 +152,7 @@ bash scripts/water_plant/prepare_2cam.sh
 bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4
 ```
 
-### M1 text failure
+### M1 text failure（当前 6500-step 配置）
 
 ```bash
 python scripts/precompute_text_embeds.py task=dexjoco/dexjoco_water_plant_text_failure_2cam_proprio_1e-4
@@ -180,7 +182,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --no-load-text-encoder \
   --task-config-dir third_party/dexjoco/configs/rand_obj \
   --tasks water_plant \
-  --episodes 100 --seed 0 \
+  --episodes 100 --seed 25 \
   --replan-steps 24 --control-mode blocking \
   --max-env-steps 600 \
   --output-dir evaluate_results/dexjoco/<name>/step_006500
@@ -195,7 +197,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | FastWAM success-only, local same pipeline | 70/100 | step 6500, seed 25, blocking stride 24 |
 | FastWAM success-only rollout provenance | 151/200 | round0 rollout used to build failure pool |
 | M1 Text failure | 38/100 -> 81/100 -> 82/100 | step 6500 / 11000 / 12240 |
-| M4 rollout text failure continuation | 163/200 | continued from success-only step 6500 |
+| Historical rollout text-failure LoRA continuation | 163/200 | continued from success-only step 6500 |
 | External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
 | External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
@@ -217,7 +219,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 - deploy：[`scripts/spray_water_gr00tstyle/wuji/`](./scripts/spray_water_gr00tstyle/wuji/)
 - 开环 smoke eval 由 `scripts/spray_water_gr00tstyle/` 下的对应脚本生成，结果不在 Git 中保存。
 
-M5 的目标不是在仿真里强行加触觉，而是在真机接触期补上 RGB 难以区分的状态：
+M6 的目标不是在仿真里强行加触觉，而是在真机接触期补上 RGB 难以区分的状态：
 
 ```text
 tactile planning -> future tactile prediction -> tactile-refined action
@@ -228,7 +230,7 @@ tactile planning -> future tactile prediction -> tactile-refined action
 1. 把 tactile episode / contact window 写进 EveRobot event metadata
 2. 在 MoT 中加 tactile expert 或 tactile token
 3. 在接触期预测 future tactile，并用 tactile outcome 改善 action
-4. 与 M3 steer token 和 M4 self-evolution 汇合
+4. 与 M3 steer token、M4 offline loop 和 M5 online update 汇合
 
 ## 代码地图
 
@@ -263,8 +265,9 @@ papers/II/
 1. M1：保留 `water_plant` 历史 pilot；在 M3 的统一 continuation protocol 中重测 B0/B1。
 2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
 3. M3：实现 offline contrastive steer，包括 action trajectory encoder、固定 action-side token、训练配置和闭环评测。
-4. M4：offline 通过后再做 RL Token / AdaJEPA 路线的 online update。
-5. M5：真机实验和触觉模块。
+4. M4：用冻结协议完成多轮 rollout -> append -> retrain，验证 offline self-evolution。
+5. M5：M3/M4 通过后，再参考 RL Token 更新 online steer，并参考 World Guidance / AdaJEPA 做 adaptive key-frame 或 tactile prediction 与 world-expert update。
+6. M6：真机实验和触觉模块。
 
 ## 引用
 

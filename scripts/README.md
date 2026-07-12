@@ -28,7 +28,7 @@ scripts/
 
 | 数据集 | 目录 | 说明 |
 |--------|------|------|
-| **water_plant** | [`water_plant/`](water_plant/) | 双视角 + proprio 23d；LeRobot 窗口 / EveRobot 整 episode；DexJoCo 闭环 |
+| **water_plant** | [`water_plant/`](water_plant/) | 双视角 + proprio 23d；LeRobot 窗口 / EveRobot event sidecar；DexJoCo 闭环 |
 | **spray_water_gr00tstyle** | [`spray_water_gr00tstyle/`](spray_water_gr00tstyle/) | 真机 3cam rot6d；训练、开环 eval、Wuji deploy |
 
 ## 通用训练流程

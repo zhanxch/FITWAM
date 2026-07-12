@@ -17,12 +17,6 @@ runs
 runs/
 evaluate_results/
 .deepspeed*
-
-
-# ai coding
-.codex/
-.claude/
-
 # Data types
 *.jit
 *.pt

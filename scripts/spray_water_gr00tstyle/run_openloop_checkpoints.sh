@@ -6,7 +6,7 @@ cd "${ROOT_DIR}"
 export PYTHONPATH="${PWD}/src:${PWD}:${PYTHONPATH:-}"
 LOG_DIR="${ROOT_DIR}/logs/openloop"
 mkdir -p "${LOG_DIR}"
-PYTHON="/home/xiangchengzhan/anaconda3/envs/fastwam/bin/python"
+PYTHON="${PYTHON:-python}"
 unset CUDA_VISIBLE_DEVICES
 # GPU 1 typically has the most headroom beside occupied training jobs.
 export CUDA_VISIBLE_DEVICES=1

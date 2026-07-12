@@ -1,11 +1,11 @@
 # FastWAM（上游官方文档）
 
-> **说明：** 本文件为 [Fast-WAM 官方仓库](https://github.com/yuanty/FastWAM) 的 README 副本，供本 fork 查阅环境安装、LIBERO/RoboTwin 训练与评测。  
+> **说明：** 本文件为 [Fast-WAM 官方仓库](https://github.com/yuantianyuan01/FastWAM) 的 README 副本，供本 fork 查阅环境安装、LIBERO/RoboTwin 训练与评测。
 > **本仓库主线规划** 见根目录 [`README.md`](../README.md)（Interaction-centric WAM）。
 
 
-[![English](https://img.shields.io/badge/README-English-111111.svg)](./README.md)
-[![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./README_zh.md)
+[![English](https://img.shields.io/badge/README-English-111111.svg)](./FASTWAM_UPSTREAM.md)
+[![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-d14836.svg)](./FASTWAM_UPSTREAM_zh.md)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2603.16666-b31b1b.svg)](https://arxiv.org/abs/2603.16666)
 [![Project Page](https://img.shields.io/badge/Project_Page-Fast--WAM-2ea44f.svg)](https://yuantianyuan01.github.io/FastWAM/)
@@ -185,9 +185,10 @@ pip install mujoco==3.3.2
 
 The `mujoco` environment should ideally stay consistent with the LIBERO data version.
 
-We have already copied the `RoboTwin` evaluation-related code into `third_party/RoboTwin`.
-You still need to follow the official RoboTwin instructions from the
-[RoboTwin repository](https://github.com/RoboTwin-Platform/RoboTwin) to finish environment installation and download the required assets, then create the policy symlink:
+This fork does not track third-party benchmark code. Follow the official
+[RoboTwin repository](https://github.com/RoboTwin-Platform/RoboTwin), clone it
+into `third_party/RoboTwin`, install its environment and assets, then create
+the policy symlink:
 
 ```bash
 ln -sfn "$(pwd)/experiments/robotwin/fastwam_policy" "$(pwd)/third_party/RoboTwin/policy/fastwam_policy"
@@ -218,7 +219,7 @@ python experiments/robotwin/run_robotwin_manager.py \
   MULTIRUN.num_gpus=8
 ```
 
-For faster RoboTwin evaluation, we have enabled `EVALUATION.skip_get_obs_within_replan=true` in [`configs/sim_robotwin.yaml`](./configs/sim_robotwin.yaml).
+For faster RoboTwin evaluation, we have enabled `EVALUATION.skip_get_obs_within_replan=true` in [`configs/sim_robotwin.yaml`](../configs/sim_robotwin.yaml).
 This skips RGB rendering while consecutively executing an action chunk within one replan window, which speeds up evaluation but makes the saved video look very low-FPS.
 Set it to `false` if you want to save a fully rendered video.
 

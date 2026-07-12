@@ -30,6 +30,8 @@ bash scripts/spray_water_gr00tstyle/run_openloop_checkpoints.sh
 
 ## 真机 deploy（Wuji/Astribot）
 
+`run_*_with_env.sh` 不包含机器私有路径。运行前设置 `ASTRIBOT_SDK_ROOT`、`ASTRIBOT_PYTHON_SHIMS` 和 `WUJI_HAND_SETUP`；GR00T client 还需设置 `GR00T_REPO_ROOT`。
+
 ```bash
 # GPU 机器
 bash scripts/spray_water_gr00tstyle/wuji/run_fastwam_server_with_env.sh \

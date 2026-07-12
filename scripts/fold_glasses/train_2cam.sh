@@ -8,7 +8,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fastwam
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 export HF_HOME="${HF_HOME:-${ROOT_DIR}/data/.cache/huggingface}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-/data_all/xiangchengzhan/.cache/huggingface/hub}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}/hub}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-${HF_HOME}/datasets}"
 mkdir -p "${HF_DATASETS_CACHE}"
 

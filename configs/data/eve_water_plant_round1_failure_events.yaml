@@ -1,10 +1,10 @@
 train:
   _target_: fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset
-  manifest_path: /data_all/xiangchengzhan/FastWAM/data/water_plant_fastwam/eve/manifests/train_round1_success_plus_failure_events.json
+  manifest_path: ${oc.env:EVE_MANIFEST_PATH,data/water_plant_fastwam/eve/manifests/train_round1_success_plus_failure_events.json}
   manifest_splits: [train]
   dataset_dirs:
-    - /data_all/xiangchengzhan/FastWAM/data/water_plant_fastwam
-    - /data_all/xiangchengzhan/FastWAM/data/water_plant_rollout_200_step6500_raw
+    - ${oc.env:BASE_DATASET,data/water_plant_fastwam}
+    - ${oc.env:ROLLOUT_RAW,data/water_plant_rollout_200_step6500_raw}
   shape_meta:
     images:
       - key: front
@@ -47,7 +47,7 @@ train:
     norm_default_mode: "min/max"
     norm_exception_mode: null
     norm_stats_source: meta
-    norm_stats_meta_dir: /data_all/xiangchengzhan/FastWAM/data/dexjoco/dexjoco_lerobot_datasets/water_plant/meta
+    norm_stats_meta_dir: ${oc.env:NORM_STATS_META_DIR,data/water_plant_fastwam/meta}
     action_state_merger:
       _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
     train_transforms:
@@ -58,7 +58,7 @@ train:
       - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
       - _target_: torchvision.transforms.Resize
         size: [384, 384]
-  text_embedding_cache_dir: /data_all/xiangchengzhan/FastWAM/data/text_embeds_cache/dexjoco_water_plant_rollout_text_failure
+  text_embedding_cache_dir: ${oc.env:TEXT_EMBEDDING_CACHE_DIR,data/text_embeds_cache/dexjoco_water_plant_rollout_text_failure}
   context_len: 128
 
 val:

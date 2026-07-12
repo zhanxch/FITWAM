@@ -26,7 +26,7 @@ resume: null
 wandb:
   enabled: true
   workspace: null
-  project: fast-wam
+  project: fitwam
   name: pinch_tongs_uncond_2cam_384_1e-4
   group: pinch_tongs
   mode: online

@@ -2,6 +2,8 @@
 
 FastWAM DexJoCo 仿真闭环的**唯一入口**。eval 与 collect 共用 async ZMQ 协议（`PolicyServerAsync` + `PolicyClientAsync`）。
 
+DexJoCo 不随本仓库分发。按 [官方仓库](https://github.com/brave-eai/dexjoco) 安装，并将 checkout 放在 `third_party/dexjoco` 或通过命令行传入对应的 task config 路径。
+
 ## 文件
 
 | File | Role |
@@ -19,7 +21,7 @@ FastWAM DexJoCo 仿真闭环的**唯一入口**。eval 与 collect 共用 async 
 ## 多卡 eval 示例
 
 ```bash
-cd /data_all/xiangchengzhan/FastWAM
+cd /path/to/FITWAM
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fastwam
 

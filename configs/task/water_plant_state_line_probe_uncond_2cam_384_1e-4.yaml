@@ -26,7 +26,7 @@ resume: null
 wandb:
   enabled: true
   workspace: null
-  project: fast-wam
+  project: fitwam
   name: water_plant_state_line_probe_uncond_2cam_384_1e-4
   group: water_plant_state_line_probe
   mode: online

@@ -9,11 +9,11 @@ EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作
   data/  videos/  meta/                 # 原始 LeRobot 数据
   eve/
     schema_version.json
-    task_schema.json
+    task_schema.json                      # planned annotation layer
     round_meta.jsonl
     episode_meta.jsonl
     event_meta.jsonl
-    annotations/subtask_scores.parquet
+    annotations/subtask_scores.parquet    # planned annotation layer
     manifests/<name>.json
 ```
 
@@ -23,16 +23,16 @@ EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作
 
 | 文件 | 内容 |
 |---|---|
-| `task_schema.json` | 一个 task 的 subtask 词表、顺序约束，以及 `left/right/bimanual/global` 执行者标签 |
+| `task_schema.json`（planned） | 一个 task 的 subtask 词表、顺序约束，以及 `left/right/bimanual/global` 执行者标签 |
 | `round_meta.jsonl` | 采集轮次、来源 policy/checkpoint、code/config/dataset hash、时间和父轮次 |
 | `episode_meta.jsonl` | 全局 episode ID、task、round、seed、长度、split、outcome 和 outcome 来源 |
 | `event_meta.jsonl` | episode ID、event/subtask、左右手、帧区间、outcome/failure type、标注来源、置信度和 action-loss 策略 |
-| `subtask_scores.parquet` | 逐帧 soft subtask 分布、boundary score，可选 failure/contact score，以及方法版本和置信度 |
-| `manifests/*.json` | 一次训练使用的 round、dataset、split、outcome、event、采样权重、排除项和内容 hash |
+| `subtask_scores.parquet`（planned） | 逐帧 soft subtask 分布、boundary score，可选 failure/contact score，以及方法版本和置信度 |
+| `manifests/*.json` | 一次训练使用的 round、dataset、split、outcome、event、采样 stride、包含/排除项和内容 hash |
 
 左右手 event 可以重叠。例如左手持续抓取、右手同时开门，不应被强行压成同一个 hard segment。
 
-`steer_token` 是模型参数，不是数据 metadata。EveRobot 保存学习 token 所需的 event 标签和 provenance；token 本身跟随 checkpoint 保存。
+`steer_token` 是计划中的模型参数，不是数据 metadata。EveRobot 只保存学习 token 所需的 event 标签和 provenance；实现后，token 应跟随 checkpoint 保存。
 
 ## 追加与取子集
 
@@ -49,13 +49,15 @@ base expert success
 
 builder 默认对 `data/`、`videos/` 和 `meta/` 做内容 SHA-256；大数据集可传入已审计的 `--dataset-fingerprint-sha256`。ledger 更新先统一预检，再在 sidecar 锁内原子替换单个文件，ID 冲突不会留下半轮 metadata。
 
-## Auto Soft Subtask Annotation
+## Planned Auto Soft Subtask Annotation
 
 自动标注不输出一个生硬的 clip label，而是对每帧输出：
 
 ```text
 p_t(subtask_0 ... subtask_K-1), boundary_score_t, confidence_t
 ```
+
+这里参考 WALL-WM 的 task/subtask/action/segment event 层级，但不直接复制其 hard event 切分。计划中的 EveRobot annotation layer 将 event evidence 转成逐帧 soft score，并保留不确定边界，供同阶段 success/failure 匹配和加权采样使用。
 
 首版流程：
 

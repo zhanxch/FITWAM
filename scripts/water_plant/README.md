@@ -32,8 +32,16 @@ bash scripts/water_plant/build_eve_round1_sidecar.sh
 bash scripts/water_plant/train_eve_round1.sh
 ```
 
-已有 v0.1 sidecar 时应指定新的目录，例如
-`EVE_ROOT=data/water_plant_fastwam/eve_v02 bash scripts/water_plant/build_eve_round1_sidecar.sh`；loader 仍可读取旧 manifest。
+已有 v0.1 sidecar 时应为构造和训练指定同一个新目录：
+
+```bash
+export EVE_ROOT=data/water_plant_fastwam/eve_v02
+export FASTWAM_RESUME=/path/to/success-only-step-6500.pt
+bash scripts/water_plant/build_eve_round1_sidecar.sh
+bash scripts/water_plant/train_eve_round1.sh
+```
+
+loader 仍可读取旧 manifest，但训练脚本会打印并检查本次实际使用的 manifest。
 
 默认构造：
 
@@ -78,14 +86,6 @@ bash scripts/water_plant/train_eve_round1.sh
 
 如果后续有 round2 rollout，不需要替换旧数据；继续 `append-rollout` 新 dataset，
 再生成新的 `eve/manifests/train_round2_*.json` 即可。
-
-**Legacy EveRobot 整 episode（DiffSynth 风格）：**
-
-```bash
-python scripts/water_plant/convert_lerobot_to_everobot.py \
-  --dataset-dir data/water_plant_fastwam --video-keys front wrist
-bash scripts/water_plant/train_everobot.sh task=everobot_water_plant_full_lora
-```
 
 Task 配置：`configs/task/water_plant_uncond_2cam_384_1e-4*.yaml`；数据配置 `configs/data/water_plant_2cam.yaml`（`proprio_output_dim: 23`）。
 
@@ -132,8 +132,6 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | `build_eve_round1_sidecar.sh` | 构造 EveRobot v0.2 sidecar 和 round1 training manifest |
 | `train_eve_round1.sh` | 使用 EveRobot manifest 训练 round1 failure self-evolution 模型 |
 | `collect_rollout_200_trim8s_and_train.sh` | water_plant 默认参数 wrapper，实际调用 `../collect_rollout_trim_and_train.sh` |
-| `train_everobot.py` / `train_everobot.sh` | Legacy EveRobot 整 episode 训练 |
-| `convert_lerobot_to_everobot.py` | Legacy LeRobot → EveRobot manifest |
 | `fix_lerobot_parquet_metadata.py` | parquet metadata 修复 |
 | `collect_dexjoco_water_plant_failures.py` / `build_rollout_datasets.py` | 兼容旧路径的 shim，实际调用 `../collect_dexjoco_rollouts.py` / `../build_rollout_datasets.py` |
 | `../dexjoco_async/` | 通用 DexJoCo 闭环 eval / collect orchestrator |

@@ -24,10 +24,10 @@
 
 set -o pipefail
 
-REPO_ROOT="${GR00T_REPO_ROOT:-/home/zxc/Desktop/GR00T/Isaac-GR00T}"
-SDK="${ASTRIBOT_SDK_ROOT:-/home/zxc/cenyj/astribot_sdk/astribot_sdk_ros2-master}"
-SHIM="${ASTRIBOT_PYTHON_SHIMS:-/home/zxc/cenyj/astribot_sdk/python_shims}"
-WUJI_SETUP="${WUJI_HAND_SETUP:-/home/zxc/Desktop/wuji/wuji-teleop/wujihandros2/install/setup.bash}"
+REPO_ROOT="${GR00T_REPO_ROOT:?Set GR00T_REPO_ROOT to the Isaac-GR00T repository}"
+SDK="${ASTRIBOT_SDK_ROOT:?Set ASTRIBOT_SDK_ROOT to the Astribot SDK root}"
+SHIM="${ASTRIBOT_PYTHON_SHIMS:?Set ASTRIBOT_PYTHON_SHIMS to the Python shims directory}"
+WUJI_SETUP="${WUJI_HAND_SETUP:?Set WUJI_HAND_SETUP to the Wuji ROS setup.bash}"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 CLIENT="${REPO_ROOT}/examples/wuji_rot6d/run_gr00t_client.py"
 RESET_RAN=0

@@ -31,7 +31,7 @@ resume: null
 wandb:
   enabled: true
   workspace: null
-  project: fast-wam
+  project: fitwam
   name: spray_water_rot6d_gr00tstyle_uncond_3cam_384_1e-4
   group: spray_water_rot6d_gr00tstyle
   mode: online

@@ -232,6 +232,48 @@ class EveSidecarBuilderTest(unittest.TestCase):
         self.assertEqual((start, end), (60, 540))
         self.assertEqual(rule, "trimmed_failure_window")
 
+    def test_manifest_include_exclude_filters_are_strict(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        build_eve_sidecar.build_manifest(self.manifest_args("all"))
+        manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "all.json"
+        )
+        sample_ids = [sample["sample_id"] for sample in manifest["samples"]]
+
+        include_args = self.manifest_args("included")
+        include_args.include_sample_ids = [sample_ids[0]]
+        build_eve_sidecar.build_manifest(include_args)
+        included = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "included.json"
+        )
+        self.assertEqual(
+            [sample["sample_id"] for sample in included["samples"]],
+            [sample_ids[0]],
+        )
+
+        exclude_args = self.manifest_args("excluded")
+        exclude_args.exclude_sample_ids = [sample_ids[0]]
+        build_eve_sidecar.build_manifest(exclude_args)
+        excluded = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "excluded.json"
+        )
+        self.assertNotIn(
+            sample_ids[0],
+            {sample["sample_id"] for sample in excluded["samples"]},
+        )
+
+        overlap_args = self.manifest_args("overlap")
+        overlap_args.include_sample_ids = [sample_ids[0]]
+        overlap_args.exclude_sample_ids = [sample_ids[0]]
+        with self.assertRaisesRegex(ValueError, "both included and excluded"):
+            build_eve_sidecar.build_manifest(overlap_args)
+
+        missing_args = self.manifest_args("missing")
+        missing_args.include_sample_ids = ["missing:sample"]
+        with self.assertRaisesRegex(ValueError, "Requested sample IDs are absent"):
+            build_eve_sidecar.build_manifest(missing_args)
+
     def test_dataset_fingerprint_covers_action_data(self) -> None:
         before = build_eve_sidecar.dataset_content_fingerprint(self.base_root)
         data_path = (

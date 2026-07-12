@@ -33,7 +33,7 @@ ACTION_KEYS = ("left_eef", "right_eef", "left_hand_joints", "right_hand_joints")
 VIDEO_KEYS = ("head_view", "left_wrist_view", "right_wrist_view")
 LANGUAGE_KEY = "annotation.human.action.task_description"
 ARM_NAMES = ("left", "right")
-DEFAULT_DATASET_PATH = "/home/zxc/Desktop/GR00T/Isaac-GR00T/examples/wuji_rot6d/grasp_mango_rot6d_rosbag_ts"
+DEFAULT_LOG_DIR = "logs/wuji_gr00t_client"
 DEFAULT_VIDEO_TOPICS = {
     "head_view": "/astribot_camera/head_rgbd/color_compress/compressed",
     "left_wrist_view": "/astribot_camera/left_wrist_rgbd/color_compress/compressed",
@@ -1271,7 +1271,7 @@ def parse_args(default_port: int = 5555) -> argparse.Namespace:
         default=None,
         help="Astribot SDK gripper filter scale; defaults to --filter-scale when omitted",
     )
-    parser.add_argument("--log-dir", default=DEFAULT_DATASET_PATH, help="Directory for JSONL command logs")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR, help="Directory for JSONL command logs")
     parser.add_argument("--log-prefix", default="client", help="Prefix for JSONL command log files")
     parser.add_argument(
         "--actual-readback-delay-sec",

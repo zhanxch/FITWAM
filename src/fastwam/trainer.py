@@ -1,4 +1,5 @@
 import logging
+import csv
 import json
 import inspect
 import os
@@ -144,10 +145,12 @@ class Wan22Trainer:
 
         wandb_config = OmegaConf.to_container(self.cfg, resolve=True)
         workspace = self.cfg.wandb.workspace
-        wandb_entity = None if workspace in (None, "null", "") else str(workspace)
+        configured_entity = None if workspace in (None, "null", "") else str(workspace)
+        wandb_entity = os.getenv("WANDB_ENTITY") or configured_entity
+        wandb_project = os.getenv("WANDB_PROJECT") or str(self.cfg.wandb.project)
 
         init_kwargs = {
-            "project": self.cfg.wandb.project,
+            "project": wandb_project,
             "name": self.cfg.wandb.name,
             "group": None if self.cfg.wandb.group in (None, "null", "") else str(self.cfg.wandb.group),
             "mode": self.cfg.wandb.mode,
@@ -157,22 +160,12 @@ class Wan22Trainer:
         if wandb_entity is not None:
             init_kwargs["entity"] = wandb_entity
 
-        # When workspace is unset in config, ignore a stale WANDB_ENTITY env var and
-        # fall back to the account used by `wandb login`.
-        saved_entity_env = None
-        if wandb_entity is None:
-            saved_entity_env = os.environ.pop("WANDB_ENTITY", None)
-
-        try:
-            self.wandb_run = wandb.init(**init_kwargs)
-        finally:
-            if saved_entity_env is not None:
-                os.environ["WANDB_ENTITY"] = saved_entity_env
+        self.wandb_run = wandb.init(**init_kwargs)
 
         logger.info(
             "Initialized wandb run: workspace=%s project=%s name=%s",
             wandb_entity or "(default)",
-            self.cfg.wandb.project,
+            wandb_project,
             self.cfg.wandb.name,
         )
 
@@ -180,6 +173,25 @@ class Wan22Trainer:
         if self.wandb_run is None:
             return
         self.wandb_run.log(payload, step=self.global_step)
+
+    def _local_metrics_log(self, payload: dict) -> None:
+        if not self.accelerator.is_main_process:
+            return
+        record = {"step": int(self.global_step), **payload}
+        jsonl_path = Path(self.output_dir) / "metrics.jsonl"
+        with jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, sort_keys=True) + "\n")
+
+        csv_path = Path(self.output_dir) / "metrics.csv"
+        write_header = not csv_path.exists()
+        with csv_path.open("a", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["step", "metric", "value"])
+            if write_header:
+                writer.writeheader()
+            for metric, value in sorted(payload.items()):
+                writer.writerow(
+                    {"step": int(self.global_step), "metric": metric, "value": value}
+                )
 
     def _finish_wandb(self):
         if self.wandb_run is None:
@@ -776,6 +788,7 @@ class Wan22Trainer:
                         }
                         for key, value in global_loss_metrics.items():
                             wandb_payload[f"train/{key}"] = value
+                        self._local_metrics_log(wandb_payload)
                         self._wandb_log(wandb_payload)
 
                     if (
@@ -810,6 +823,7 @@ class Wan22Trainer:
                                 eval_payload["eval/action_l2"] = float(metrics["action_l2"])
                             if "action_l1" in metrics:
                                 eval_payload["eval/action_l1"] = float(metrics["action_l1"])
+                            self._local_metrics_log(eval_payload)
                             self._wandb_log(eval_payload)
 
                     if self.save_every > 0 and self.global_step % self.save_every == 0:
