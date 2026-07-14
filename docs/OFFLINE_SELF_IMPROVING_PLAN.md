@@ -1,95 +1,93 @@
 # Offline Self-Improving：设计与实验
 
-## 当前目标
+## 范围与主张
 
-本阶段交付两项内容：
+当前只负责 offline self-improving：利用 rollout 中的局部成功/失败动作事件训练 steer token，并验证它能否超过 success replay 和 failure-video baseline。Online RL、test-time update 和 tactile 不属于本阶段实验。
 
-1. 完成 [`EveRobot`](./EVEROBOT_FORMAT.md)，让每轮 rollout 和 event 标注可追溯、可取任意子集；
-2. 验证局部失败动作能否为 Fast-WAM 学出一个 success-directed steer。
+EveRobot v0.2 sidecar 已能记录 round、episode、event 和 manifest；最终 task schema 与 auto soft score 尚未冻结。首轮实验使用人工复核的 event manifest，不等待自动标注模块。
 
-论文主张先收窄为：
+论文主张限定为：
 
-> 离线 failure event 能改善闭环动作；失败动作不作为 imitation target，部署时也不需要 failure/outcome 输入。
+> Phase-matched failure events provide training-only negative action supervision for an observation-conditioned steer. Failed actions are never imitation targets, and deployment needs neither failure trajectories nor outcome labels.
 
-Online RL、test-time world-model update 和 tactile 都放在这一步通过之后。
+## 主方法：trajectory teacher，observation student
 
-## 架构
-
-从同一 task phase 取 success event 和 failure event。一个小型 trajectory encoder 把归一化 action chunk 编码成 `z+`、`z-`，contrastive loss 用它们学习成功/失败 prototype `P+`、`P-`。Action Expert 接收：
+训练时，用同一 task phase 的 success/failure action event 构造配对。共享 trajectory encoder `E` 将归一化 action chunk 和有效帧 mask 压缩成一个 bottleneck token：
 
 ```text
-S_improve = LayerNorm(P+ + alpha * (P+ - P-))
+z+ = E(a+_1:H, mask+)        z- = E(a-_1:H, mask-)
 ```
 
-Steer 接口参考 Sparsh-X 用少量 bottleneck token 压缩交互信息的思路，但首版只实现一个 action-side token，不复刻其多模态 encoder。是否扩展为多个 token 由最小模型的受控实验决定。
-
-训练和推理始终使用同一个 `S_improve`，推理不传 outcome。
+`E` 是训练期 teacher。一个 observation-conditioned student `G` 从当前首帧双视角 token、task text 和 proprio 预测可部署 steer：
 
 ```text
-EveRobot event pair -> trajectory encoder -> contrastive loss -> P+, P-
-                                                              |
-observation + task + proprio -> Fast-WAM Action Expert <- S_improve
-failure sample             -> video loss + contrastive loss
-success sample             -> video loss + action loss + contrastive loss
+s = G(front, wrist, task, proprio)
+observation + task + proprio + s -> Action Expert -> action
 ```
 
-Failure sample 的**直接 action flow-matching loss 为零**，但仍会通过 video/contrastive loss 和 shared MoT 间接影响 Action Expert；B1 专门控制这条路径。现有 `outcome_encoder` 会把真实 outcome 放进 shared context，因此不作为主方法。
+`z+`、`z-` 只作为训练目标，不进入 policy forward。Pair loss 把 `s` 拉向同阶段成功动作 `z+`，并推离配对失败动作 `z-` 和 batch 内失败负样本；teacher target 在该项中 stop-gradient，避免 student/teacher 共同塌缩。Trajectory encoder 另用 phase-conditioned supervised contrastive loss 学习动作事件结构。
 
-第一版先用人工定位的 failure window。EveRobot 的 soft subtask score 后续作为权重，并负责匹配同阶段的 success/failure event。首轮不加入 weak localizer、task-specific token bank 或大范围调参。
+```text
+L = L_video(all)
+  + L_action(success only)
+  + lambda_ctr * L_action_contrast
+  + lambda_pair * L_steer_pair
+```
 
-## 实验
+Failure sample 的直接 action flow-matching loss 必须严格为零。失败动作只进入 training-only trajectory teacher；student token 只接 Action Expert。首版使用 `B=1`，只有在单 token 已有稳定增益后才增加 bottleneck 数量。
 
-所有方案从同一个 success-only checkpoint 继续训练，保持数据、normalization、双视角、proprio、训练步数和 rollout seed 完全一致。
+`S = Z+ + alpha(Z+ - Z-)` 不作为主方法：逐 pair 计算会在推理时依赖未来轨迹，全局平均后又退化成静态 soft prompt。它只保留为 prototype-delta ablation。
 
-| 方案 | 改动 | 作用 |
+Sparsh-X 说明少量 bottleneck token 可以压缩多源交互信息；它不直接给出 success/failure steer 的学习规则。当前 main 只有 outcome plumbing，尚未实现 observation-conditioned steer、action-only token 注入和对应 checkpoint path；这些都属于本阶段实现与测试范围。
+
+## 数据与控制变量
+
+固定 source checkpoint 采 200 条 rollout，成功和失败都来自同一轮、同一 policy 与同一环境协议。先按 episode 和 environment seed 固定 train/validation，再切 event 和做 pair mining，避免同一 episode 的窗口跨 split。人工标出 phase 与 failure boundary；success/failure pair 先限制在同一 task phase，再按 event 起点的 proprio 与冻结视觉特征做近邻匹配，不能使用 outcome frame。
+
+Teacher fitting、pair/prototype 构造、action normalization 和 event-localizer fitting 只使用 train episode。Student 的输入截止到当前控制时刻；outcome label、failure text、post-outcome frame 和 teacher action 都不能进入 student 或 Action Expert。未来视频和动作只进入 training-only teacher 或 loss target，不进入部署路径。
+
+各方案使用相同的原始 success buffer、同一轮 rollout、global batch、optimizer、scheduler、训练步数和 normalization。新增 rollout 数据采用两路采样：success event 提供 video + action loss，failure event 只提供 video 和辅助表示 loss。Contrastive batch 按 phase/outcome 分层，保证每个有效 anchor 至少有一个正样本；无正样本的 anchor 不计入该 loss。B0 使用同计算量的 success replay，避免把“更多更新步数”误当成 failure 收益。
+
+## 实验矩阵
+
+| 方案 | 训练信号 | 目的 |
 |---|---|---|
-| B0：success-only | 不加入 failure update | source policy 和参考点 |
-| B1：failure video | 加 failure video，失败动作 loss 为零 | 隔离已有 failure-data 效果 |
-| T：token only | B1 + 固定可学习 token | 排除参数量和额外 conditioning |
-| C：contrast only | B1 + trajectory contrast，推理无 token | 排除辅助表示 loss |
-| M：contrastive steer | B1 + contrast + `S_improve` | 主方法 |
+| S0 | 冻结 source checkpoint | rollout 数据来源与零更新参考 |
+| B0 | same-round success replay | compute-matched continuation baseline |
+| B1 | B0 + failure video；failure action loss=0 | failure-world-representation baseline |
+| T | B1 + observation student；只由普通 success action loss 端到端训练 | 控制 student/token 参数量 |
+| C | B1 + action trajectory contrast；steer 不进 Action Expert | 控制辅助 loss |
+| M | B1 + trajectory teacher + observation student | 主方法 |
+| M-shuffle | M，但 phase 内打乱 success/failure 配对 | 检查语义配对是否真实有效 |
 
-先做 Water Plant。M 如果不能超过 B1，就回头改架构；通过后只复现 B0/B1/M 到 Hammer Nail。Fold Glasses 是两任务结果稳定后的可选第三任务。
+先做 Water Plant。B0/B1/T/C/M 各做 3 个 training seed；M-shuffle 只做 seed 0 的机制检查。单 seed 机制通过后，再只复现 B0/B1/M 到 Hammer Nail。Fold Glasses 是可选第三任务。
 
-Auto event score 单独做一个小实验：
+### 固定评测协议
 
-```text
-manual event window vs auto soft weight vs shuffled weight
-```
+- front + wrist，23-d proprio；text 中不出现 failure phrase；
+- 显式固定 `max_steps=6500`，checkpoint 为 3000/5000/6500；若 6500 的 validation 仍上升，所有存活方案统一扩到 12000；
+- 训练、环境和 policy sampling seed 分开记录；相同环境 seed 在方案间 paired；
+- 50 个 validation rollout 只用于 checkpoint 选择；独立的 200-episode development rollout 用于机制 gate；所有架构决定冻结后，B0/B1/M 每个 training seed 的选定 checkpoint 各做一次另一组 environment seed 的 200-episode held-out final；
+- 最终报告精确成功数、paired improvement、bootstrap CI、exact McNemar、failure category 和表示空间诊断；
+- W&B 从启动即记录，同时保存本地 JSONL/CSV、manifest hash、commit/config、采样比例和 stop reason。
 
-只有 auto score 与 held-out 人工标注一致，并且不抹掉 Water Plant 的涨点，才进入主方法。
-
-### 固定协议
-
-- front + wrist，23-d proprioception；
-- 所有 continuation run 使用同一训练预算；
-- text context 中不出现 failure phrase；
-- checkpoint gate 跑 50 个 paired rollout，最终结果跑 200 个；
-- checkpoint 只用 validation seed 选择，不能看 final test seed；
-- 最终 B0/B1/M 使用 3 个 training seed；
-- 报告精确成功数、相对 B1 的 paired improvement、置信区间和 failure-mode 变化。
-
-历史 `70/100`、`82/100`、`151/200`、`163/200` 只作为 motivation，因为训练和 rollout protocol 并未全部统一，不能放进新架构的受控主表。
+历史 `70/100`、`82/100`、`151/200`、`163/200` 来自 mixed protocol，只作 motivation，不进入新架构受控主表。
 
 ## Gate
 
-1. **实现正确：** failure text 不进模型；failure sample 的直接 action loss 为零；trajectory encoder/steer 有梯度；推理接口没有 outcome。
-2. **Water Plant：** 单 seed 的 M 相对 B1 至少提高 4pp，且 paired result 没有明确退化；否则不扩任务。
-3. **可复现：** Water Plant 三个 seed 保留增益，再到 Hammer Nail 复现。
-4. **自动标注：** auto score 在人工边界上优于 uniform/shuffled，并且不损害 policy gain。
+正式长跑前必须满足：train/validation manifest 无 episode overlap；同轮同阶段配对可复核；B1 failure-only batch 的 Action Expert gradient 为零且 Video Expert gradient 非零；M 的 trajectory encoder 和 steer gradient 非零；推理不接 outcome/failure text；DDP save/load 后 token 行为一致。
 
-## 时间
+Water Plant seed 0 的 200-episode development gate：`M - B1 >= 4pp`，paired 90% CI 下界大于 0，并且 M 同时超过 T、C 与 M-shuffle。最终 held-out set 不参与架构、checkpoint 或任务扩展决策。3-seed 结论要求 development gain 的 95% CI 下界大于 0、至少 2/3 seed 为正，且任一 seed 不低于 B1 超过 2pp。未通过则不扩任务，先检查 pair quality、表示塌缩和 token 是否真正影响 action。
 
-AWS 是 8xA100，按两个 4-GPU lane 使用。历史速度下 6.5k step 约 14-16 小时；第一轮先用 500-step benchmark 校准。
+## 时间与算力
 
-| 时间 | 工作 |
-|---|---|
-| Day 1-2 | 定稿 EveRobot，标 Water Plant failure interval，验证 manifest |
-| Day 3-4 | 实现 trajectory encoder、contrastive loss、action-side token 和梯度测试 |
-| Day 5-7 | Water Plant B1/T/C/M 训练与 50-rollout gate |
-| Day 8-10 | 三 seed 确认，或根据结果修改架构 |
-| Week 3 | Hammer Nail 复现和 200-rollout 最终评估 |
+实现和 500-step smoke 可以立即开始；正式实验需先补齐独立 validation manifest 与 same-round phase matching。AWS 只使用 GPU 0-3，先做数值、吞吐与 checkpoint parity smoke；学校 8xA100 服务器每次使用 4 卡，可作为第二条训练 lane。AWS 上的 DexJoCo baseline 尚未复现，根因未确认；renderer compatibility 只是待排查项之一。因此最终闭环评测统一在学校服务器完成，并在两台机器间轮换训练方案，避免硬件与方法完全绑定。
 
-单 seed 的机制结论约一周；两任务、三 seed 的论文证据约两到三周。最晚 8 月底冻结 offline 架构和主结果，9 月只做论文整合与必要复跑。
+| 阶段 | 预计时间 |
+|---|---:|
+| 实现、单测、500-step smoke | 2-3 天 |
+| Water Plant 单 seed：B0/B1/T/C/M/M-shuffle + gate rollout | 4-6 天 |
+| Water Plant 三 seed 确认 | 5-7 天 |
+| Hammer Nail B0/B1/M 三 seed + 最终 200 rollout | 5-7 天 |
 
-正式 run 从 step 0 同时记录 W&B 和本地 JSONL/CSV，并保存 EveRobot manifest hash、commit/config、checkpoint、实际 success/failure 采样比例和 stop reason。
+完整受控矩阵为 25 个 continuation run：Water Plant 的 B0/B1/T/C/M 各 3 seed（15）、M-shuffle seed 0（1），以及 Hammer Nail 的 B0/B1/M 各 3 seed（9）。按两条 4-GPU lane 约需 3-4 周。若单 seed gate 不通过，停止后续长跑，不用更多 seed 掩盖架构问题。

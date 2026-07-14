@@ -2,6 +2,8 @@
 
 EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作保持不变；EveRobot 只记录：**轨迹从哪里来、发生了什么、某次训练具体用了哪些 interaction event。**
 
+当前边界：v0.2 的 provenance/manifest 基础设施可直接使用；task schema、auto soft subtask score 和最终模块边界尚未冻结。Offline steer 首轮只消费人工复核的 event manifest，不依赖自动标注完成。
+
 ## 目录
 
 ```text
@@ -66,7 +68,7 @@ p_t(subtask_0 ... subtask_K-1), boundary_score_t, confidence_t
 3. 平滑结果只用于提取边界；原始 soft probability 完整保留。
 4. 每个 task 人工切 30-50 条 episode，验证通过后再把 auto score 用于训练。
 
-当前 state-line distance 只能作为 boundary cue，不能识别语义 subtask。它应该成为 `subtask_scores.parquet` 的一列，**不能再插进 robot action 维度。**
+当前 state-line distance 只能作为 boundary cue，不能识别语义 subtask。现有仓库汇总报告 action-prefix probe 为 `183/200`，但没有完整 raw episode/log 证据链；它是探索性 policy 结果，不等同于自动 event 标注质量，也不能据此冻结 EveRobot schema。该分数若保留，应成为 `subtask_scores.parquet` 的辅助证据列，**不能插进标准 robot action 维度。**
 
 标注质量报告 boundary F1、segment IoU、subtask macro F1 和 calibration，并与 uniform/shuffled score 对照。随后再用同一训练协议比较 manual hard event 与 auto soft weight。
 
@@ -76,12 +78,12 @@ p_t(subtask_0 ... subtask_K-1), boundary_score_t, confidence_t
 - 更换 dataset 根路径后，canonical manifest hash 保持不变；
 - base-only、单轮、累计轮次、outcome/event 子集的数量完全可复核；
 - 缺失 episode、越界 interval 直接失败；
-- train/validation manifest 不重叠；
+- `[pending]` train/validation manifest 的 episode 不重叠；
 - `action_loss=disabled` 的 failure event 对直接 action imitation loss 贡献为零。
 
 ## 实现状态
 
-v0.2 已实现不可变 `round/episode/event` ledger、路径无关 manifest hash、round/split/sample 筛选、dataset root 重映射、source-stride-aware window、interval 与 missing-reference 严格校验，以及 synthetic multi-round 测试。loader 继续读取已有 v0.1 manifest；v0.2 builder 不会覆盖 v0.1 sidecar，迁移时需写入新的 `eve_root`。
+v0.2 core 已实现不可变 `round/episode/event` ledger、路径无关 manifest hash、round/split/sample 筛选、dataset root 重映射、source-stride-aware window、interval 与 missing-reference 严格校验，以及 synthetic multi-round 测试。loader 继续读取已有 v0.1 manifest；v0.2 builder 不会覆盖 v0.1 sidecar，迁移时需写入新的 `eve_root`。正式 M3 run 仍被 episode-disjoint train/validation enforcement 阻塞；自动标注是独立的待验证模块，不阻塞首轮人工 event 实验。
 
 剩余两项：
 
