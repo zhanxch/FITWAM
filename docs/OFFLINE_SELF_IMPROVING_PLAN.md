@@ -34,7 +34,7 @@ L = L_video(all)
   + lambda_pair * L_steer_pair
 ```
 
-Failure sample 的直接 action flow-matching loss（Action Expert 针对该条已记录动作的直接生成监督）必须严格为零；否则模型会把有缺陷的失败动作当作 imitation target 进行模仿。这里的“为零”只指这条直接动作损失，failure video 和辅助表示损失仍可训练各自对应的模块。失败动作只进入 training-only trajectory teacher；student token 只接 Action Expert。首版使用 `B=1`（每段轨迹只压缩为一个 token），只有在单 token 已有稳定增益后才增加 bottleneck 数量。
+Failure sample 的直接 action flow-matching loss（Action Expert 针对该条已记录动作的直接生成监督）必须严格为零；否则模型会把有缺陷的失败动作当作 imitation target 进行模仿。失败动作仍有两个训练期用途：在 B1/M 中作为 Video Expert 预测后续视频的动作条件，在 M 中还作为 trajectory teacher 的失败负例。Fast-WAM 的方向性 attention mask 使 video query 不读取 Action Expert token，因此 failure video loss 应更新 Video Expert 而不直接更新 Action Expert；这个参数级梯度结论必须用 failure-only batch 验证。失败 teacher token `z-` 不进入 policy forward，部署时只有 observation student 生成的 `s` 接入 Action Expert。首版使用 `B=1`（每段轨迹只压缩为一个 token），只有在单 token 已有稳定增益后才增加 bottleneck 数量。
 
 `S = Z+ + alpha(Z+ - Z-)` 不作为主方法：逐 pair 计算会在推理时依赖未来轨迹，全局平均后又退化成静态 soft prompt（对所有状态都使用同一个可学习提示）。它只保留为 prototype-delta ablation（检验“成功原型减失败原型”方向是否有用的对照实验）。
 
