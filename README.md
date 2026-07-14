@@ -6,7 +6,7 @@
 
 **相关文档：** [`docs/OFFLINE_SELF_IMPROVING_PLAN.md`](./docs/OFFLINE_SELF_IMPROVING_PLAN.md) · [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
-本仓库是在 FastWAM 上做的 failure / self-evolution / tactile 方向 fork。当前主线不是重新做一个通用 WAM，而是围绕失败和交互事件回答一个问题：
+FITWAM 是基于 FastWAM 的 failure / self-improvement / tactile 项目。本仓库包含仿真与 EveRobot 基础设施、failure pilot，以及 offline steer 的方法和实验设计；online adaptation 与真机触觉构成整篇工作的后续模块。项目围绕一个问题展开：
 
 **成功数据只告诉模型“怎么做对”，失败轨迹和接触反馈能不能让 WAM 学到“为什么会失败、下一轮怎么避免”。**
 
@@ -23,17 +23,17 @@ DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 | **rollout continuation pilot** | rollout text-failure LoRA continuation 为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **EveRobot sidecar v0.2 基础设施已实现** | 不可变 round ledger、可复核 manifest hash、round/sample 子集和路径重映射已覆盖测试；task schema 与 auto soft score 尚未冻结 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
 
-注意：这些是 mixed-protocol 历史 pilot，当前 checkout 没有保存全部 raw summary。`151/200` 和 `163/200` 属于 source-policy rollout 与 LoRA continuation 计数，不能据此单独归因于 EveRobot 或 M4，也不与 100-episode checkpoint 结果混成最终受控主表。
+注意：这些是 mixed-protocol pilot，仓库没有保存全部 raw summary。`151/200` 和 `163/200` 属于 source-policy rollout 与 LoRA continuation 计数，不能据此单独归因于 EveRobot 或 M4，也不与 100-episode checkpoint 结果混成最终受控主表。
 
 ## 六个 Milestone
 
 | Milestone | 要证明什么 | 当前状态 |
 |-----------|------------|----------|
 | **M1 Failure video** | failure video 更新 Video Expert；Action Expert 虽无直接梯度，部署时仍读取其首帧 K/V | `water_plant` 有历史 pilot；同协议主表待重测 |
-| **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 core 已实现；annotation 与 train/validation overlap enforcement 待完成 |
+| **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 core 已实现；自动 annotation 独立迭代，M3 仍需 train/validation overlap enforcement |
 | **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned success-directed steer | steer token 本体尚未实现；现有 `outcome_flag` 不能作为主方法 |
 | **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 数据闭环已跑通；统一协议下的增益待验证 |
-| **M5 Online self-improvement** | 在线更新 steer，并用新观测校正 world expert | 待 offline steer 通过后开展 |
+| **M5 Online self-improvement** | event-local RL 学习 action refinement；subgoal 引导动作，action-conditioned prediction 更新 world expert | 待 offline steer 通过后开展 |
 | **M6 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
 
 整体顺序：
@@ -43,7 +43,7 @@ M1 证明 failure video 有用
   -> M2 用 EveRobot 把 rollout / event / manifest 管起来
   -> M3 用局部失败动作训练 contrastive steer
   -> M4 多轮 rollout 回灌，验证 offline self-evolution
-  -> M5 在线更新 steer / world expert
+  -> M5 在线学习 action refinement / world expert
   -> M6 真机触觉，把 contact-rich failure 接进同一套 event 叙事
 ```
 
@@ -55,7 +55,7 @@ M1 证明 failure video 有用
 
 - `action_loss_zero_if_instruction_contains: "Failed to finish the whole process."`
 - 命中 marker 的 failure 样本返回 `action_loss_weight=0.0`
-- EveRobot 主实验会去掉 failure 后缀；旧 text-failure pilot 保留了该后缀，只作为历史证据
+- EveRobot 主实验会去掉 failure 后缀；text-failure pilot 保留了该后缀，只作为探索性证据
 
 关键实现：
 
@@ -76,7 +76,7 @@ EveRobot 不改 LeRobot 原始 `data/`、`videos/`、`meta/`，只在 `eve/` 下
 | `event_meta.jsonl` | failure/event window、failure type、标注来源和 action loss 策略 |
 | `manifests/*.json` | 显式选择 round/split/outcome/event 子集，记录路径无关的内容 hash |
 
-历史 v0.1 round1 数据：
+v0.1 round1 数据：
 
 | 项 | 数量 / 策略 |
 |----|-------------|
@@ -197,7 +197,7 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | FastWAM success-only, local same pipeline | 70/100 | step 6500, seed 25, blocking stride 24 |
 | FastWAM success-only rollout provenance | 151/200 | round0 rollout used to build failure pool |
 | M1 Text failure | 38/100 -> 81/100 -> 82/100 | step 6500 / 11000 / 12240 |
-| Historical rollout text-failure LoRA continuation | 163/200 | continued from success-only step 6500 |
+| Rollout text-failure LoRA continuation | 163/200 | continued from success-only step 6500 |
 | External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
 | External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
@@ -210,7 +210,16 @@ External baseline rows are transcribed from the [DexJoCo benchmark](https://arxi
 当前仿真任务范围只保留 `water_plant` 和 `hammer_nail`：
 
 - `hammer_nail` success-only step 6500：`135/200`
-- state-line transition probe：[`scripts/probe_state_line_distance.py`](./scripts/probe_state_line_distance.py)；action-prefix converter 只用于旧 probe，不属于 EveRobot 标准格式
+- state-line transition probe：[`scripts/probe_state_line_distance.py`](./scripts/probe_state_line_distance.py)；action-prefix converter 只用于该诊断，不属于 EveRobot 标准格式
+
+## Online self-improvement
+
+M5 的目标设计包含两条独立更新路径：
+
+1. **RL action refinement**：event-conditioned RL readout 与固定的 offline steer 分开；轻量 actor-critic 读取二者并对 FastWAM reference action 输出有界 residual。Reward 和 penalty 对齐到对应 interaction event，可在 rollout 间同步更新，也可用带 policy version 的 replay 异步更新。
+2. **Future guidance / world update**：interaction trigger 只在关键转换处启用两类预测。Subgoal head 生成供 Action Expert 使用的未来视觉 condition；action-conditioned transition head 预测实际执行动作的后果，并用后续真实观测的自监督误差更新 World Expert。
+
+RL Token 提供轻量在线策略更新的参考；World Guidance 提供 future condition 引导 action 的参考；AdaJEPA 提供 prediction-observation 闭环更新 world model 的参考。三者对应不同接口。M5 尚未实现或评测。
 
 ## 真机与触觉
 
@@ -221,7 +230,7 @@ External baseline rows are transcribed from the [DexJoCo benchmark](https://arxi
 - deploy：[`scripts/spray_water_gr00tstyle/wuji/`](./scripts/spray_water_gr00tstyle/wuji/)
 - 开环 smoke eval 由 `scripts/spray_water_gr00tstyle/` 下的对应脚本生成，结果不在 Git 中保存。
 
-M6 的目标不是在仿真里强行加触觉，而是在真机接触期补上 RGB 难以区分的状态：
+M6 在真机接触期补充 RGB 难以区分的状态：
 
 ```text
 tactile planning -> future tactile prediction -> tactile-refined action
@@ -252,7 +261,7 @@ src/fastwam/
 scripts/
   train.py                       通用训练入口
   probe_state_line_distance.py   唯一保留的 transition-score 探针（state-line）
-  everobot/build_state_line_probe_action_dataset.py  旧 probe converter；不用于标准训练数据
+  everobot/build_state_line_probe_action_dataset.py  transition probe converter；不用于标准训练数据
   everobot/build_eve_sidecar.py  EveRobot sidecar 构造
   dexjoco_async/                 多卡 DexJoCo eval / collect
   water_plant/                   water_plant 训练、Eve、rollout wrapper
@@ -268,7 +277,7 @@ papers/II/
 2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
 3. M3：实现 offline contrastive steer，包括 training-only action trajectory teacher、observation-conditioned action-side token、训练配置和闭环评测。
 4. M4：用冻结协议完成多轮 rollout -> append -> retrain，验证 offline self-evolution。
-5. M5：M3/M4 通过后，再参考 RL Token 更新 online steer，并参考 World Guidance / AdaJEPA 做 adaptive key-frame 或 tactile prediction 与 world-expert update。
+5. M5：M3/M4 通过后，实现 event-conditioned RL action refinement；用 adaptive visual keyframe condition 引导 Action Expert，并用执行后的真实观测更新 World Expert。
 6. M6：真机实验和触觉模块。
 
 ## 引用

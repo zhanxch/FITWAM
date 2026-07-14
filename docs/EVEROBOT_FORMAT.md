@@ -2,7 +2,7 @@
 
 EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作保持不变；EveRobot 只记录：**轨迹从哪里来、发生了什么、某次训练具体用了哪些 interaction event。**
 
-当前边界：v0.2 的 provenance/manifest 基础设施可直接使用；task schema、auto soft subtask score 和最终模块边界尚未冻结。Offline steer 首轮只消费人工复核的 event manifest，不依赖自动标注完成。
+模块边界：EveRobot 负责 provenance、manifest 和 event annotation；offline steer 只消费冻结且经过人工复核的 event manifest，不定义或评估自动标注方法。v0.2 provenance/manifest 基础设施可直接使用，task schema 与 auto soft subtask score 保持为独立的数据模块。
 
 ## 目录
 
@@ -51,7 +51,7 @@ base expert success
 
 builder 默认对 `data/`、`videos/` 和 `meta/` 做内容 SHA-256；大数据集可传入已审计的 `--dataset-fingerprint-sha256`。ledger 更新先统一预检，再在 sidecar 锁内原子替换单个文件，ID 冲突不会留下半轮 metadata。
 
-## Planned Auto Soft Subtask Annotation
+## Optional Auto Soft Subtask Annotation
 
 自动标注不输出一个生硬的 clip label，而是对每帧输出：
 
@@ -83,7 +83,7 @@ p_t(subtask_0 ... subtask_K-1), boundary_score_t, confidence_t
 
 ## 实现状态
 
-v0.2 core 已实现不可变 `round/episode/event` ledger、路径无关 manifest hash、round/split/sample 筛选、dataset root 重映射、source-stride-aware window、interval 与 missing-reference 严格校验，以及 synthetic multi-round 测试。loader 继续读取已有 v0.1 manifest；v0.2 builder 不会覆盖 v0.1 sidecar，迁移时需写入新的 `eve_root`。正式 M3 run 仍被 episode-disjoint train/validation enforcement 阻塞；自动标注是独立的待验证模块，不阻塞首轮人工 event 实验。
+v0.2 core 已实现不可变 `round/episode/event` ledger、路径无关 manifest hash、round/split/sample 筛选、dataset root 重映射、source-stride-aware window、interval 与 missing-reference 严格校验，以及 synthetic multi-round 测试。loader 继续读取已有 v0.1 manifest；v0.2 builder 不会覆盖 v0.1 sidecar，迁移时需写入新的 `eve_root`。M3 的数据启动条件是 episode-disjoint train/validation manifest；自动标注可独立迭代，不进入 M3 的方法 gate。
 
 剩余两项：
 

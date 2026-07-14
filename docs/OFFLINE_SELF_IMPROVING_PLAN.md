@@ -1,10 +1,10 @@
-# Offline Self-Improving：设计与实验
+# Offline Self-Improving：方法与实验
 
-## 范围与主张
+## 研究范围
 
-当前只负责 offline self-improving：利用 rollout 中的局部成功/失败动作事件训练 steer token，并验证它能否超过 success replay 和 failure-video baseline。Online RL、test-time update 和 tactile 不属于本阶段实验。
+本文档定义 FITWAM 的 offline self-improving 方法与受控实验：利用 rollout 中同一交互阶段的成功/失败动作事件训练 steer token，并与 success replay 和 failure-video baseline 比较。Online RL、test-time world-model update 和 tactile 属于整篇工作的其他模块，不进入本实验。
 
-EveRobot v0.2 sidecar 已能记录 round、episode、event 和 manifest；最终 task schema 与 auto soft score 尚未冻结。首轮实验使用人工复核的 event manifest，不等待自动标注模块。
+Offline steer 要求 EveRobot 提供冻结且经过人工复核的 event manifest、数据 provenance 和 episode-disjoint split。自动 event 标注由 EveRobot 数据模块独立定义和验证，不属于 offline steer 的实验变量，也不阻塞该实验。
 
 论文主张限定为：
 
@@ -38,13 +38,13 @@ Failure sample 的直接 action flow-matching loss 必须严格为零。失败�
 
 `S = Z+ + alpha(Z+ - Z-)` 不作为主方法：逐 pair 计算会在推理时依赖未来轨迹，全局平均后又退化成静态 soft prompt。它只保留为 prototype-delta ablation。
 
-Sparsh-X 说明少量 bottleneck token 可以压缩多源交互信息；它不直接给出 success/failure steer 的学习规则。当前 main 只有 outcome plumbing，尚未实现 observation-conditioned steer、action-only token 注入和对应 checkpoint path；这些都属于本阶段实现与测试范围。
+Sparsh-X 说明少量 bottleneck token 可以压缩多源交互信息；它不直接给出 success/failure steer 的学习规则。实现必须包含 observation-conditioned steer、仅面向 Action Expert 的 token 注入、完整 checkpoint save/load，以及不依赖 outcome context 的部署路径。
 
 ## 数据与控制变量
 
 固定 source checkpoint 采 200 条 rollout，成功和失败都来自同一轮、同一 policy 与同一环境协议。先按 episode 和 environment seed 固定 train/validation，再切 event 和做 pair mining，避免同一 episode 的窗口跨 split。人工标出 phase 与 failure boundary；success/failure pair 先限制在同一 task phase，再按 event 起点的 proprio 与冻结视觉特征做近邻匹配，不能使用 outcome frame。
 
-Teacher fitting、pair/prototype 构造、action normalization 和 event-localizer fitting 只使用 train episode。Student 的输入截止到当前控制时刻；outcome label、failure text、post-outcome frame 和 teacher action 都不能进入 student 或 Action Expert。未来视频和动作只进入 training-only teacher 或 loss target，不进入部署路径。
+Event manifest 在 split、pair mining 和模型拟合前冻结。Teacher fitting、pair/prototype 构造和 action normalization 只使用 train episode。Student 的输入截止到当前控制时刻；outcome label、failure text、post-outcome frame 和 teacher action 都不能进入 student 或 Action Expert。未来视频和动作只进入 training-only teacher 或 loss target，不进入部署路径。
 
 各方案使用相同的原始 success buffer、同一轮 rollout、global batch、optimizer、scheduler、训练步数和 normalization。新增 rollout 数据采用两路采样：success event 提供 video + action loss，failure event 只提供 video 和辅助表示 loss。Contrastive batch 按 phase/outcome 分层，保证每个有效 anchor 至少有一个正样本；无正样本的 anchor 不计入该 loss。B0 使用同计算量的 success replay，避免把“更多更新步数”误当成 failure 收益。
 
@@ -71,7 +71,7 @@ Teacher fitting、pair/prototype 构造、action normalization 和 event-localiz
 - 最终报告精确成功数、paired improvement、bootstrap CI、exact McNemar、failure category 和表示空间诊断；
 - W&B 从启动即记录，同时保存本地 JSONL/CSV、manifest hash、commit/config、采样比例和 stop reason。
 
-历史 `70/100`、`82/100`、`151/200`、`163/200` 来自 mixed protocol，只作 motivation，不进入新架构受控主表。
+已有 `70/100`、`82/100`、`151/200`、`163/200` pilot 使用了不同训练或评测协议，只作为可行性依据，不进入受控主表。
 
 ## Gate
 
@@ -81,7 +81,7 @@ Water Plant seed 0 的 200-episode development gate：`M - B1 >= 4pp`，paired 9
 
 ## 时间与算力
 
-实现和 500-step smoke 可以立即开始；正式实验需先补齐独立 validation manifest 与 same-round phase matching。AWS 只使用 GPU 0-3，先做数值、吞吐与 checkpoint parity smoke；学校 8xA100 服务器每次使用 4 卡，可作为第二条训练 lane。AWS 上的 DexJoCo baseline 尚未复现，根因未确认；renderer compatibility 只是待排查项之一。因此最终闭环评测统一在学校服务器完成，并在两台机器间轮换训练方案，避免硬件与方法完全绑定。
+正式实验以独立 validation manifest、same-round phase matching 和 500-step smoke 为启动条件。训练使用两条 4-GPU lane；配对比较固定硬件、软件环境和并行配置，最终闭环主表由同一环境生成。
 
 | 阶段 | 预计时间 |
 |---|---:|
