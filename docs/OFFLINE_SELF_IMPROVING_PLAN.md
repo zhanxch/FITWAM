@@ -2,9 +2,9 @@
 
 ## 研究范围
 
-本文档定义 FITWAM 的 offline self-improving 方法与受控实验：利用 rollout（策略在环境中闭环执行后保存的一条 episode）中同一交互阶段的成功/失败动作事件训练 steer token，并与 success replay 和 failure-video baseline 比较。Online RL、test-time world-model update 和 tactile 属于整篇工作的其他模块，不进入本实验。
+本文档定义 FITWAM 的 offline self-improving 方法与受控实验：利用 rollout（策略在环境中闭环执行后保存的一条 episode）中同一交互阶段的成功/失败动作事件训练 steer token（由当前观测预测、仅注入 Action Expert 的隐变量），并与 success replay（只用成功轨迹继续训练）和 failure-video baseline（加入失败视频，但关闭失败动作监督）比较。Online RL、test-time world-model update 和 tactile 属于整篇工作的其他模块，不进入本实验。
 
-Offline steer 要求 EveRobot 提供冻结且经过人工复核的 event manifest（记录 episode、交互阶段、起止帧和 loss 策略的索引文件）、数据 provenance（数据来自哪一轮、哪个 checkpoint 和哪份配置）和 episode-disjoint split（同一 episode 的任何窗口只能属于一个数据划分）。自动 event 标注由 EveRobot 数据模块独立定义和验证，不属于 offline steer 的实验变量，也不阻塞该实验。
+Offline steer 要求 EveRobot 数据 sidecar 提供冻结且经过人工复核的 event manifest（记录 episode、交互阶段、起止帧和 loss 策略的索引文件）、数据 provenance（数据来自哪一轮、哪个 checkpoint 和哪份配置）和 episode-disjoint split（同一 episode 的任何窗口只能属于一个数据划分）。自动 event 标注由 EveRobot 数据模块独立定义和验证，不属于 offline steer 的实验变量，也不阻塞该实验。
 
 论文主张限定为：
 
@@ -12,20 +12,22 @@ Offline steer 要求 EveRobot 提供冻结且经过人工复核的 event manifes
 
 ## 主方法：trajectory teacher（轨迹教师），observation student（观测学生）
 
-训练分为两个阶段。第一阶段只训练 trajectory teacher：用同一 task phase（任务中的同一种交互阶段，例如 reach、grasp 或 pour）的 success/failure action event 构造配对，共享 trajectory encoder `E` 将归一化 action chunk（一段连续动作序列）和有效帧 mask（标记真实帧，避免 padding 参与编码）压缩成一个 bottleneck token（用一个固定长度向量概括整段动作）：
+训练分为两个阶段。Stage A 只训练 trajectory teacher：在跨 episode 的同一 task phase（任务中的同一种语义交互阶段，例如 reach、grasp 或 pour）内构造 success/failure action pair。失败负例从人工标出的 failure boundary 开始；失败前已经正确执行的动作和此前已经完成的 phase 不标成失败。共享 trajectory encoder `E` 将归一化 action chunk（一段连续动作序列）和有效帧 mask（标记真实帧，避免 padding 参与编码）压缩成一个 bottleneck token（用一个固定长度向量概括整段动作）：
 
 ```text
 z+ = E(a+_1:H, mask+)        z- = E(a-_1:H, mask-)
 ```
 
-`E` 用 phase-conditioned supervised contrastive loss（同阶段成功动作聚近、失败动作推远的有监督对比损失）训练，并按 held-out event 的同阶段 success/failure 检索与表示分离度选择 checkpoint。第二阶段冻结 `E`，由 observation-conditioned student `G`（只根据当前可观测信息预测 steer 的小网络）从当前决策时刻的双视角 token、task text 和 proprio 预测可部署 steer；它不能读取未来动作、failure label 或最终 outcome：
+其中 `a+`、`a-` 分别是成功和失败 action chunk，`H` 是统一后的动作长度，`mask+`、`mask-` 标记 padding 后仍有效的时间步，`z+`、`z-` 是对应的 teacher embedding。
+
+`E` 用 phase-conditioned supervised contrastive loss（同阶段成功动作聚近、与失败动作分离的有监督对比损失）训练。每个 success anchor 的正样本是同阶段、近状态的其他成功动作，负样本是与其状态匹配的失败动作；不同失败动作可能对应不同错误模式，因此不自动互相视为正样本，也不把全部成功与失败样本做全连接配对。Teacher 按 held-out event（不参与 teacher fitting 的 validation event）的同阶段 success/failure 检索与表示分离度选择 checkpoint。Stage B 冻结 `E`，由 observation-conditioned student `G`（只根据当前可观测信息预测 steer 的小网络）从当前决策时刻的双视角图像 token（front/wrist）、task text 和本体状态向量（proprio）预测可部署 steer token `s`；它不能读取未来动作、failure label 或最终 outcome：
 
 ```text
 s = G(front, wrist, task, proprio)
 observation + task + proprio + s -> Action Expert -> action
 ```
 
-`z+`、`z-` 只作为训练目标，不进入 policy forward（policy 真正生成动作的前向计算）。每个 observation anchor（当前决策状态；重点覆盖 failure event 中错误动作开始前的状态）匹配同阶段、近状态的成功动作 `z+` 和失败动作 `z-`。Pair loss（成对表示损失）把 `s` 拉向 `z+`，并推离 `z-` 和 batch 内失败负样本；冻结 teacher 后目标固定，student 不会追逐每步变化的表示。Success anchor 同时接受正常 action loss，使 Action Expert 学会使用 steer；failure anchor 的直接 action loss 保持为零。
+`z+`、`z-` 只作为训练目标，不进入 policy forward（policy 真正生成动作的前向计算）。对一个失败动作，observation anchor 取 failure boundary 前的当前决策状态，`z-` 编码随后实际执行的失败 action chunk，`z+` 编码从其他 episode 的同阶段、近状态成功动作中检索到的目标。Pair loss（成对表示损失）把 `s` 拉向 `z+`，并推离 `z-` 和 batch 内失败负样本；冻结 teacher 后目标固定，student 不会追逐每步变化的表示。Success anchor 同时接受正常 action loss，使 Action Expert 学会使用 steer；failure anchor 的直接 action loss 保持为零。
 
 ```text
 Stage A: L_teacher = lambda_ctr * L_action_contrast
@@ -35,29 +37,33 @@ Stage B: L_policy = L_video(all)
                   + lambda_pair * L_steer_pair
 ```
 
-Failure sample 的直接 action flow-matching loss（Action Expert 针对该条已记录动作的直接生成监督）必须严格为零；否则模型会把有缺陷的失败动作当作 imitation target 进行模仿。原版 Fast-WAM 的 structured attention mask 允许 future-video token 在 Video Expert 内双向交互，并允许 Action Expert 读取干净首帧；video query 不读取 Action Expert token。Base 配置的 `action_conditioned=false`，所以 B1 的失败动作不会作为 Video Expert 的条件输入：B1 只保留失败视频的 world-modeling loss，M 额外把失败动作交给冻结的 trajectory teacher 作为负例。Failure-only batch 应验证 Action Expert 专属 Q/K/V、FFN 和输出头无直接梯度，Video Expert 有梯度；Vanilla 中被 video/action 共用的 proprio condition encoder 允许由 failure video loss 更新，必须作为独立参数组记录。Video Expert 和共享条件表示的变化仍可通过首帧 K/V 间接改变动作，这正是 B1 控制的 failure-video 表征效应。失败 teacher token `z-` 不进入 policy forward，部署时只有 observation student 生成的 `s` 接入 Action Expert。首版使用 `K=1`（每段轨迹只压缩为一个 token），只有在单 token 已有稳定增益后才增加 bottleneck 数量。
+`L_action_contrast` 训练 action trajectory 表示，`L_video` 是 Video Expert 的视频预测损失，`L_action` 是 Action Expert 的动作 flow-matching loss，`L_steer_pair` 训练 observation student；`lambda_ctr` 和 `lambda_pair` 是对应损失权重。
 
-`S = Z+ + alpha(Z+ - Z-)` 不作为主方法：逐 pair 计算会在推理时依赖未来轨迹，全局平均后又退化成静态 soft prompt（对所有状态都使用同一个可学习提示）。它只保留为 prototype-delta ablation（检验“成功原型减失败原型”方向是否有用的对照实验）。
+Failure sample 的直接 action flow-matching loss（Action Expert 针对该条已记录动作的直接生成监督）必须严格为零；否则模型会把有缺陷的失败动作当作 imitation target 进行模仿。原版 Fast-WAM 的 structured attention mask（控制 Video Expert 与 Action Expert token 之间信息可见性的掩码）允许 future-video token 在 Video Expert 内双向交互，并允许 Action Expert 读取干净首帧；video query 不读取 Action Expert token。本实验沿用的 Fast-WAM 配置设置 `action_conditioned=false`，所以失败动作不会作为 Video Expert 的条件输入：failure-video baseline 只保留失败视频的 `L_video`，主方法再把失败动作交给冻结的 trajectory teacher 作为负例。Failure-only batch（只含失败样本、用于检查梯度流向的诊断 batch）应验证 Action Expert 专属 Q/K/V（attention 的 query/key/value 投影）、FFN（feed-forward network）和输出头无直接梯度，Video Expert 有梯度；原版 Fast-WAM 中被 video/action 共用的 proprio condition encoder 允许由 failure video loss 更新，必须作为独立参数组记录。Video Expert 和共享条件表示的变化仍可通过首帧 K/V 间接改变动作，这正是 failure-video baseline 所控制的表征效应。失败 teacher token `z-` 不进入 policy forward，部署时只有 observation student 生成的 `s` 接入 Action Expert。首版使用 `K=1`（每段轨迹只压缩为一个 token），只有在单 token 已有稳定增益后才增加 bottleneck 数量。
 
-Sparsh-X 用固定的 `K=4` bottleneck token 做多触觉模态的信息交换，但没有比较单 token 与多 token，也没有验证 success/failure action steer。它只支持“少量 latent 可以压缩跨源信息”这一设计动机。若后续使用 `K>1`，trajectory teacher 和 observation student 都输出 `K x d` token，并额外解决 token slot 对齐或集合匹配；该扩展必须单独消融。实现必须包含 observation-conditioned steer、仅面向 Action Expert 的 token 注入、完整 checkpoint save/load，以及不依赖 outcome context 的部署路径。
+Prototype-delta `S_proto = P+ + alpha(P+ - P-)` 不作为主方法，其中 `P+`、`P-` 是 success/failure teacher embedding 的平均原型，`alpha` 控制偏移强度。逐 pair 计算会在推理时依赖未来轨迹，全局平均后又退化成静态 soft prompt（对所有状态都使用同一个提示）。它只保留为检验“成功原型减失败原型”方向是否有用的对照实验。
+
+Sparsh-X 用固定的 `K=4` bottleneck token 做多触觉模态的信息交换，但没有比较单 token 与多 token，也没有验证 success/failure action steer。它只支持“少量 latent 可以压缩跨源信息”这一设计动机。若后续使用 `K>1`，trajectory teacher 和 observation student 都输出 `K x d` token（`d` 为 token hidden dimension），并额外解决 token slot 对齐或集合匹配；该扩展必须单独消融。实现必须包含 observation-conditioned steer、仅面向 Action Expert 的 token 注入、完整 checkpoint save/load，以及不依赖 outcome context 的部署路径。
 
 ## 数据与控制变量
 
-固定 source checkpoint 采 200 条 rollout，成功和失败都来自同一轮、同一 policy 与同一环境协议。当前 Water Plant 的 `raw` 与 `collect_shard0-3` 是同一批 200 条 rollout 的合并版和分片版，只保留其中一种；`last_8s/trimmed` 是同一批失败轨迹的派生 event window，不计为新 episode。先按 episode 和 environment seed 固定 train/validation，再切 event 和做 pair mining（从同阶段样本中寻找状态最接近的成功/失败配对），避免重复表示或同一 episode 的窗口跨 split。人工标出 phase 与 failure boundary；success/failure pair 先限制在同一 task phase，再按当前决策时刻的 proprio 与冻结视觉特征（不随本实验更新的视觉表示）做近邻匹配，不能使用 outcome frame（已经暴露最终成功或失败结果的画面）。
+固定用于采集数据的 source checkpoint，并用它采 200 条 rollout；成功和失败都来自同一轮、同一 policy 与同一环境协议。Water Plant 的 `raw` 与 `collect_shard0-3` 是同一批 200 条 rollout 的合并版和分片版，只保留其中一种；`last_8s/trimmed` 是同一批失败轨迹的派生 event window，不计为新 episode。先按 episode 和 environment seed 固定 train/validation，再切 event 和做 pair mining（从同阶段样本中寻找状态最接近的成功/失败配对），避免重复表示或同一 episode 的窗口跨 split。人工标出 phase 与 failure boundary，并按 event outcome 而不是整条 episode outcome 赋标签：一个后来失败的 episode 中，已经正确完成的早期 phase 仍可作为成功事件，失败事件中 failure boundary 之前的正确前缀也不作为负动作。Success/failure pair 先限制在同一 task phase，再按当前决策时刻的 proprio 与冻结视觉特征（不随本实验更新的视觉表示）做近邻匹配，不能使用 outcome frame（已经暴露最终成功或失败结果的画面）。
 
 Event manifest 在 split、pair mining 和模型拟合前冻结。Teacher fitting、pair/prototype 构造和 action normalization 只使用 train episode。Student 的输入截止到当前控制时刻；outcome label、failure text、post-outcome frame 和 teacher action 都不能进入 student 或 Action Expert，避免 label leakage（训练时偷看部署时不存在的信息）。未来视频和动作只进入 training-only teacher 或 loss target，不进入部署路径。
 
-各方案使用相同的原始 success buffer、同一轮 rollout、global batch、optimizer、scheduler、训练步数和 normalization。Stage A 的 contrastive batch 按 phase/outcome 分层，保证每个有效 anchor（当前作为比较中心的样本）至少有一个正样本；无正样本的 anchor 不计入 teacher loss。Stage B 采用两路采样：success event 提供 video + action + pair loss，failure event 只提供 video + pair loss。B0 使用同计算量的 success replay，避免把“更多更新步数”误当成 failure 收益。
+各方案使用相同的原始 success buffer、同一轮 rollout、global batch、optimizer、scheduler、训练步数和 normalization。Stage A 的 contrastive batch 按 phase/outcome 分层；每个有效 success anchor 至少有一个同阶段、近状态的成功正样本和一个失败负样本，缺少任一方的 phase 不计入 teacher contrastive loss。不同 phase 采用均衡采样，并报告各 phase 的 event 数与 pair 数，避免中后段高频失败主导训练；没有失败样本的 phase 仍参与普通 success video/action 训练。Stage B 采用两路采样：success event 提供 video + action + pair loss，failure event 只提供 video + pair loss。Success-only continuation 使用同计算量的 success replay，避免把“更多更新步数”误当成 failure 收益。
 
 ### 没有人工切分时
 
 主方法需要 event 边界，但不要求把原始 LeRobot episode 物理裁成多个新视频；EveRobot 可以在完整 episode 上用 `start_frame/end_frame` 选择训练窗口。数据尚未切分时按以下顺序处理：
 
-1. **主实验路径：** 用人工标注，或先由 Switch/state-line score 提议候选边界，再由人复核边界并赋予 task phase；复核后的 manifest 冻结后即可进入主实验。Switch score 只能提示“这里可能发生了动作变化”，不能单独判断语义 subtask。
+1. **主实验路径：** 用人工标注，或先由自动 boundary cue（为每个时刻输出转折可能性的 Switch/state-line score）提议候选边界，再由人复核边界并赋予 task phase；复核后的 manifest 冻结后即可进入主实验。这类分数只能提示“这里可能发生了动作变化”，不能单独判断语义 subtask。
 2. **兼容性 smoke：** 可以把整条 episode 视为一个 event，再统一采样、截断或 padding；它只验证 loader、loss 和 checkpoint pipeline，不能支持“局部 interaction failure steer”的论文主张。
 3. **全自动划分：** 未经人工复核的 Switch score 属于 EveRobot 自动标注实验；在边界和 phase 质量通过独立评估前，不进入 offline steer 主表。
 
 ## 实验矩阵
+
+下文从此处开始使用实验代号；矩阵同时给出每个代号的完整含义。
 
 | 方案 | 训练信号 | 目的 |
 |---|---|---|
@@ -81,7 +87,7 @@ Event manifest 在 split、pair mining 和模型拟合前冻结。Teacher fittin
 - 最终报告精确成功数、paired improvement、bootstrap CI（对配对结果重采样得到的不确定区间）、exact McNemar（检验同一环境 seed 下两方案成败变化是否显著）、failure category 和表示空间诊断；
 - W&B 从启动即记录，同时保存本地 JSONL/CSV、manifest hash、commit/config、采样比例和 stop reason。
 
-已有 `70/100`、`82/100`、`151/200`、`163/200` pilot 使用了不同训练或评测协议，只作为可行性依据，不进入受控主表。
+已有 pilot 使用了不同训练或评测协议，只作为可行性依据，不进入受控主表。
 
 ## Gate
 
