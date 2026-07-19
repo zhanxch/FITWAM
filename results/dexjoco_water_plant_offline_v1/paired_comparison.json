@@ -1,0 +1,87 @@
+{
+  "claim_limit": "This report screens one checkpoint per variant. Publication-level claims require the planned larger evaluation and training-seed replication.",
+  "comparisons": {
+    "B0_vs_B1": {
+      "baseline_successes": 45,
+      "bootstrap_ci_95": [-0.24, 0.04],
+      "discordant": {
+        "baseline_only_success": 9,
+        "method_only_success": 4
+      },
+      "episodes": 50,
+      "mcnemar_exact_two_sided_p": 0.266845703125,
+      "method_successes": 40,
+      "success_delta": -0.1,
+      "success_delta_count": -5
+    },
+    "C_vs_B1": {
+      "baseline_successes": 45,
+      "bootstrap_ci_95": [-0.3, -0.02],
+      "discordant": {
+        "baseline_only_success": 11,
+        "method_only_success": 3
+      },
+      "episodes": 50,
+      "mcnemar_exact_two_sided_p": 0.057373046875,
+      "method_successes": 37,
+      "success_delta": -0.16,
+      "success_delta_count": -8
+    },
+    "M_vs_B1": {
+      "baseline_successes": 45,
+      "bootstrap_ci_95": [-0.1, 0.1],
+      "discordant": {
+        "baseline_only_success": 3,
+        "method_only_success": 3
+      },
+      "episodes": 50,
+      "mcnemar_exact_two_sided_p": 1.0,
+      "method_successes": 45,
+      "success_delta": 0.0,
+      "success_delta_count": 0
+    },
+    "M_vs_C": {
+      "baseline_successes": 37,
+      "bootstrap_ci_95": [0.02, 0.3],
+      "discordant": {
+        "baseline_only_success": 3,
+        "method_only_success": 11
+      },
+      "episodes": 50,
+      "mcnemar_exact_two_sided_p": 0.057373046875,
+      "method_successes": 45,
+      "success_delta": 0.16,
+      "success_delta_count": 8
+    }
+  },
+  "evaluation_scope": "checkpoint_screening_50_paired_episodes",
+  "primary_gate": {
+    "comparison": "M_vs_B1",
+    "minimum_delta": 0.04,
+    "observed_delta": 0.0,
+    "passed": false,
+    "role": "checkpoint_screening"
+  },
+  "protocol": {
+    "base_seed": 20261000,
+    "bootstrap_samples": 100000,
+    "bootstrap_seed": 20260719,
+    "checkpoint_step": 6500,
+    "episodes": 50,
+    "task": "water_plant"
+  },
+  "schema_version": "fitwam_offline_paired_comparison_v1",
+  "status": "valid",
+  "success_counts": {
+    "B0": 40,
+    "B1": 45,
+    "C": 37,
+    "M": 45
+  },
+  "success_rates": {
+    "B0": 0.8,
+    "B1": 0.9,
+    "C": 0.74,
+    "M": 0.9
+  }
+}

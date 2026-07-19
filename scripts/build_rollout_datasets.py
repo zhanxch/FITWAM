@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -17,6 +18,8 @@ import pyarrow.parquet as pq
 
 
 FAILURE_PHRASE = "Failed to finish the whole process."
+OUTCOME_LEDGER_NAME = "episode_outcomes.jsonl"
+OUTCOME_SOURCE = "dexjoco_env"
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +44,17 @@ def parse_args() -> argparse.Namespace:
     )
     trim.add_argument("--failure-phrase", type=str, default=FAILURE_PHRASE)
     trim.add_argument("--overwrite", action="store_true")
+
+    validate = subparsers.add_parser("validate-outcomes")
+    validate.add_argument("--dataset", type=Path, required=True)
+    validate.add_argument("--expected-episodes", type=int, default=None)
+    validate.add_argument("--failure-phrase", type=str, default=FAILURE_PHRASE)
+    validate.add_argument(
+        "--check-media",
+        action="store_true",
+        help="Also decode every video and validate parquet, stats, and frame indexes.",
+    )
+    validate.add_argument("--report", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -67,8 +81,428 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_episode_rows(episodes: list[dict[str, Any]], *, dataset_root: Path) -> None:
+    indices = []
+    for row_number, episode in enumerate(episodes, start=1):
+        episode_index = episode.get("episode_index")
+        if isinstance(episode_index, bool) or not isinstance(episode_index, int):
+            raise ValueError(
+                f"{dataset_root}: episode row {row_number} has invalid episode_index={episode_index!r}"
+            )
+        indices.append(episode_index)
+    if len(indices) != len(set(indices)):
+        raise ValueError(f"{dataset_root}: duplicate episode_index in meta/episodes.jsonl")
+    expected = list(range(len(indices)))
+    if sorted(indices) != expected:
+        raise ValueError(
+            f"{dataset_root}: episode indexes must be contiguous 0..{len(indices) - 1}; "
+            f"got {sorted(indices)}"
+        )
+
+
+def validate_outcome_rows(
+    rows: list[dict[str, Any]],
+    episodes: list[dict[str, Any]],
+    *,
+    dataset_root: Path,
+    failure_phrase: str,
+) -> dict[int, dict[str, Any]]:
+    required = {
+        "episode_index",
+        "outcome",
+        "success",
+        "attempt_index",
+        "seed",
+        "source",
+    }
+    by_episode: dict[int, dict[str, Any]] = {}
+    episodes_by_index = {int(ep["episode_index"]): ep for ep in episodes}
+    for row_number, row in enumerate(rows, start=1):
+        missing = required.difference(row)
+        if missing:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} is missing fields {sorted(missing)}"
+            )
+        episode_index = row["episode_index"]
+        success = row["success"]
+        attempt_index = row["attempt_index"]
+        seed = row["seed"]
+        if isinstance(episode_index, bool) or not isinstance(episode_index, int) or episode_index < 0:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} has invalid "
+                f"episode_index={episode_index!r}"
+            )
+        if episode_index in by_episode:
+            raise ValueError(
+                f"{dataset_root}: duplicate outcome row for episode_index={episode_index}"
+            )
+        if isinstance(success, bool) is False:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} has non-boolean success={success!r}"
+            )
+        expected_outcome = "success" if success else "failure"
+        if row["outcome"] != expected_outcome:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} is inconsistent: "
+                f"outcome={row['outcome']!r}, success={success!r}"
+            )
+        if isinstance(attempt_index, bool) or not isinstance(attempt_index, int) or attempt_index < 0:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} has invalid "
+                f"attempt_index={attempt_index!r}"
+            )
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} has invalid seed={seed!r}"
+            )
+        if row["source"] != OUTCOME_SOURCE:
+            raise ValueError(
+                f"{dataset_root}: outcome row {row_number} has source={row['source']!r}; "
+                f"expected {OUTCOME_SOURCE!r}"
+            )
+        by_episode[episode_index] = row
+
+    episode_indexes = set(episodes_by_index)
+    ledger_indexes = set(by_episode)
+    if ledger_indexes != episode_indexes:
+        raise ValueError(
+            f"{dataset_root}: outcome ledger must contain exactly one row per episode; "
+            f"missing={sorted(episode_indexes - ledger_indexes)} "
+            f"extra={sorted(ledger_indexes - episode_indexes)}"
+        )
+
+    summary_path = dataset_root / "collection_summary.json"
+    summary = read_json(summary_path) if summary_path.exists() else {}
+    task_mode = summary.get("outcome_task_mode")
+    for episode_index, episode in episodes_by_index.items():
+        has_failure_marker = any(
+            failure_phrase in str(task) for task in episode.get("tasks", [])
+        )
+        outcome = by_episode[episode_index]["outcome"]
+        if has_failure_marker and outcome != "failure":
+            raise ValueError(
+                f"{dataset_root}: episode {episode_index} has a failure task marker "
+                f"but ledger outcome={outcome!r}"
+            )
+        if task_mode == "task-marker" and has_failure_marker != (outcome == "failure"):
+            raise ValueError(
+                f"{dataset_root}: episode {episode_index} task marker and ledger outcome disagree"
+            )
+        if task_mode == "clean" and has_failure_marker:
+            raise ValueError(
+                f"{dataset_root}: clean task mode contains a failure task marker "
+                f"for episode {episode_index}"
+            )
+
+    attempt_log = summary.get("attempt_log")
+    if attempt_log is not None:
+        attempts_by_episode: dict[int, dict[str, Any]] = {}
+        for attempt in attempt_log:
+            saved_episode_index = attempt.get("saved_episode_index")
+            if saved_episode_index is None:
+                continue
+            saved_episode_index = int(saved_episode_index)
+            if saved_episode_index in attempts_by_episode:
+                raise ValueError(
+                    f"{dataset_root}: attempt log maps multiple attempts to episode "
+                    f"{saved_episode_index}"
+                )
+            attempts_by_episode[saved_episode_index] = attempt
+        if set(attempts_by_episode) != episode_indexes:
+            raise ValueError(
+                f"{dataset_root}: attempt log and outcome ledger cover different episodes"
+            )
+        for episode_index, outcome_row in by_episode.items():
+            attempt = attempts_by_episode[episode_index]
+            if (
+                int(attempt["attempt_index"]) != outcome_row["attempt_index"]
+                or int(attempt["seed"]) != outcome_row["seed"]
+                or bool(attempt["success"]) != outcome_row["success"]
+            ):
+                raise ValueError(
+                    f"{dataset_root}: outcome ledger row for episode {episode_index} "
+                    "disagrees with attempt log"
+                )
+    return by_episode
+
+
+def load_outcome_ledger(
+    dataset_root: Path,
+    episodes: list[dict[str, Any]],
+    *,
+    failure_phrase: str,
+    required: bool,
+) -> list[dict[str, Any]] | None:
+    validate_episode_rows(episodes, dataset_root=dataset_root)
+    path = dataset_root / "meta" / OUTCOME_LEDGER_NAME
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(
+                f"{dataset_root}: missing required meta/{OUTCOME_LEDGER_NAME}"
+            )
+        return None
+    rows = load_jsonl(path)
+    validate_outcome_rows(
+        rows,
+        episodes,
+        dataset_root=dataset_root,
+        failure_phrase=failure_phrase,
+    )
+    return rows
+
+
+def validate_outcome_dataset(
+    dataset_root: Path,
+    *,
+    failure_phrase: str,
+    expected_episodes: int | None = None,
+    check_media: bool = False,
+) -> dict[str, Any]:
+    dataset_root = dataset_root.expanduser().resolve()
+    info = read_json(dataset_root / "meta" / "info.json")
+    episodes = load_jsonl(dataset_root / "meta" / "episodes.jsonl")
+    outcomes = load_outcome_ledger(
+        dataset_root,
+        episodes,
+        failure_phrase=failure_phrase,
+        required=True,
+    )
+    if outcomes is None:
+        raise AssertionError("Required outcome ledger unexpectedly resolved to None")
+
+    observed_episodes = len(episodes)
+    if expected_episodes is not None and observed_episodes != int(
+        expected_episodes
+    ):
+        raise ValueError(
+            f"{dataset_root}: expected {expected_episodes} episodes, "
+            f"found {observed_episodes}"
+        )
+    if int(info.get("total_episodes", -1)) != observed_episodes:
+        raise ValueError(
+            f"{dataset_root}: meta/info.json total_episodes disagrees with "
+            "meta/episodes.jsonl"
+        )
+
+    summary_path = dataset_root / "collection_summary.json"
+    if not summary_path.exists():
+        raise FileNotFoundError(summary_path)
+    summary = read_json(summary_path)
+    if summary.get("status") != "complete":
+        raise ValueError(
+            f"{dataset_root}: collection status is {summary.get('status')!r}, "
+            "expected 'complete'"
+        )
+    if int(summary.get("episodes", -1)) != observed_episodes:
+        raise ValueError(
+            f"{dataset_root}: collection summary episode count disagrees with "
+            "meta/episodes.jsonl"
+        )
+
+    successes = sum(row["outcome"] == "success" for row in outcomes)
+    failures = sum(row["outcome"] == "failure" for row in outcomes)
+    if int(summary.get("successes_saved", -1)) != successes:
+        raise ValueError(
+            f"{dataset_root}: collection summary successes_saved disagrees "
+            "with the outcome ledger"
+        )
+    if int(summary.get("failures", -1)) != failures:
+        raise ValueError(
+            f"{dataset_root}: collection summary failures disagrees with the "
+            "outcome ledger"
+        )
+
+    physical_report = (
+        validate_dataset_files(dataset_root, info, episodes)
+        if check_media
+        else None
+    )
+    ledger_path = dataset_root / "meta" / OUTCOME_LEDGER_NAME
+    report = {
+        "status": "valid",
+        "dataset_root": str(dataset_root),
+        "episodes": observed_episodes,
+        "successes": successes,
+        "failures": failures,
+        "check_media": bool(check_media),
+        "outcome_task_mode": summary.get("outcome_task_mode"),
+        "outcome_ledger": str(ledger_path),
+        "outcome_ledger_sha256": file_sha256(ledger_path),
+    }
+    if physical_report is not None:
+        report["physical_validation"] = physical_report
+    return report
+
+
 def video_keys(info: dict[str, Any]) -> list[str]:
     return [key for key, spec in info["features"].items() if spec.get("dtype") == "video"]
+
+
+def _int_column(table: pa.Table, name: str, *, path: Path) -> list[int]:
+    if name not in table.column_names:
+        raise ValueError(f"{path}: missing required parquet column {name!r}")
+    return [
+        int(value)
+        for value in table[name].combine_chunks().to_pylist()
+    ]
+
+
+def count_video_frames(path: Path) -> int:
+    try:
+        container = av.open(str(path), mode="r")
+    except Exception as exc:
+        raise ValueError(f"{path}: cannot open video: {exc}") from exc
+    try:
+        if not container.streams.video:
+            raise ValueError(f"{path}: contains no video stream")
+        stream = container.streams.video[0]
+        return sum(1 for _ in container.decode(stream))
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"{path}: video decode failed: {exc}") from exc
+    finally:
+        container.close()
+
+
+def validate_dataset_files(
+    dataset_root: Path,
+    info: dict[str, Any],
+    episodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    stats_path = dataset_root / "meta" / "episodes_stats.jsonl"
+    if not stats_path.exists():
+        raise FileNotFoundError(stats_path)
+    stats_rows = load_jsonl(stats_path)
+    expected_episode_indexes = list(range(len(episodes)))
+    stats_indexes = [row.get("episode_index") for row in stats_rows]
+    if stats_indexes != expected_episode_indexes:
+        raise ValueError(
+            f"{dataset_root}: meta/episodes_stats.jsonl episode indexes must be "
+            f"{expected_episode_indexes}, got {stats_indexes}"
+        )
+
+    episode_indexes = [row.get("episode_index") for row in episodes]
+    if episode_indexes != expected_episode_indexes:
+        raise ValueError(
+            f"{dataset_root}: meta/episodes.jsonl rows must be ordered by contiguous "
+            f"episode_index; got {episode_indexes}"
+        )
+
+    global_start = 0
+    checked_videos = 0
+    keys = video_keys(info)
+    stats_feature_keys = [
+        key
+        for key, spec in info["features"].items()
+        if spec.get("dtype") not in {"image", "video", "string"}
+    ]
+    for episode in episodes:
+        episode_index = int(episode["episode_index"])
+        length = episode.get("length")
+        if isinstance(length, bool) or not isinstance(length, int) or length <= 0:
+            raise ValueError(
+                f"{dataset_root}: episode {episode_index} has invalid length={length!r}"
+            )
+        episode_stats = stats_rows[episode_index].get("stats")
+        if not isinstance(episode_stats, dict):
+            raise ValueError(
+                f"{stats_path}: episode {episode_index} stats must be an object"
+            )
+        missing_stats = set(stats_feature_keys).difference(episode_stats)
+        if missing_stats:
+            raise ValueError(
+                f"{stats_path}: episode {episode_index} is missing stats for "
+                f"{sorted(missing_stats)}"
+            )
+        for key in stats_feature_keys:
+            count = episode_stats[key].get("count")
+            if (
+                not isinstance(count, list)
+                or len(count) != 1
+                or isinstance(count[0], bool)
+                or not isinstance(count[0], (int, float))
+                or int(count[0]) != length
+            ):
+                raise ValueError(
+                    f"{stats_path}: episode {episode_index} feature {key!r} "
+                    f"has count={count!r}, expected [{length}]"
+                )
+        chunk = episode_index // int(info["chunks_size"])
+        parquet_path = dataset_root / info["data_path"].format(
+            episode_chunk=chunk,
+            episode_index=episode_index,
+        )
+        if not parquet_path.exists():
+            raise FileNotFoundError(parquet_path)
+        try:
+            table = pq.read_table(parquet_path)
+        except Exception as exc:
+            raise ValueError(f"{parquet_path}: cannot read parquet: {exc}") from exc
+        if int(table.num_rows) != length:
+            raise ValueError(
+                f"{parquet_path}: row count {table.num_rows} != episode length {length}"
+            )
+
+        frame_indexes = _int_column(table, "frame_index", path=parquet_path)
+        if frame_indexes != list(range(length)):
+            raise ValueError(f"{parquet_path}: frame_index is not contiguous 0..{length - 1}")
+        parquet_episode_indexes = _int_column(
+            table, "episode_index", path=parquet_path
+        )
+        if parquet_episode_indexes != [episode_index] * length:
+            raise ValueError(
+                f"{parquet_path}: episode_index column does not match {episode_index}"
+            )
+        global_indexes = _int_column(table, "index", path=parquet_path)
+        expected_global_indexes = list(range(global_start, global_start + length))
+        if global_indexes != expected_global_indexes:
+            raise ValueError(
+                f"{parquet_path}: global index is not contiguous "
+                f"{global_start}..{global_start + length - 1}"
+            )
+
+        for key in keys:
+            video_path = dataset_root / info["video_path"].format(
+                episode_chunk=chunk,
+                video_key=key,
+                episode_index=episode_index,
+            )
+            if not video_path.exists():
+                raise FileNotFoundError(video_path)
+            frame_count = count_video_frames(video_path)
+            if frame_count != length:
+                raise ValueError(
+                    f"{video_path}: decoded frame count {frame_count} "
+                    f"!= episode length {length}"
+                )
+            checked_videos += 1
+        global_start += length
+
+    if int(info.get("total_frames", -1)) != global_start:
+        raise ValueError(
+            f"{dataset_root}: meta/info.json total_frames={info.get('total_frames')!r} "
+            f"!= physical frame count {global_start}"
+        )
+    if "total_videos" in info and int(info["total_videos"]) != checked_videos:
+        raise ValueError(
+            f"{dataset_root}: meta/info.json total_videos={info['total_videos']!r} "
+            f"!= physical video count {checked_videos}"
+        )
+    return {
+        "episodes": len(episodes),
+        "frames": global_start,
+        "video_keys": keys,
+        "videos": checked_videos,
+    }
 
 
 def fixed_size_float_array(values: np.ndarray, dim: int) -> pa.FixedSizeListArray:
@@ -216,6 +650,7 @@ def finalize_dataset(
     *,
     total_frames: int,
     extra_summary: dict[str, Any],
+    episode_outcomes: list[dict[str, Any]] | None = None,
 ) -> None:
     info["total_episodes"] = len(episodes)
     info["total_frames"] = int(total_frames)
@@ -244,11 +679,118 @@ def finalize_dataset(
         output_root / "meta" / "episodes_stats.jsonl",
         [{"episode_index": i, "stats": serialize(stats)} for i, stats in enumerate(episode_stats)],
     )
+    if episode_outcomes is not None:
+        write_jsonl(output_root / "meta" / OUTCOME_LEDGER_NAME, episode_outcomes)
     write_json(output_root / "meta" / "stats.json", serialize(aggregate_stats(episode_stats)))
     write_json(output_root / "collection_summary.json", extra_summary)
 
 
+def validate_merge_shard_summary(
+    shard_root: Path,
+    info: dict[str, Any],
+    episodes: list[dict[str, Any]],
+    outcomes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = shard_root / "collection_summary.json"
+    if not summary_path.exists():
+        raise FileNotFoundError(
+            f"{shard_root}: missing required collection_summary.json"
+        )
+    summary = read_json(summary_path)
+    if summary.get("status") != "complete":
+        raise ValueError(
+            f"{shard_root}: collection status is {summary.get('status')!r}, "
+            "expected 'complete'"
+        )
+    if summary.get("mode") != "save_all":
+        raise ValueError(
+            f"{shard_root}: merge requires mode='save_all', "
+            f"got {summary.get('mode')!r}"
+        )
+    if summary.get("outcome_task_mode") not in {"clean", "task-marker"}:
+        raise ValueError(
+            f"{shard_root}: outcome_task_mode must be 'clean' or 'task-marker', "
+            f"got {summary.get('outcome_task_mode')!r}"
+        )
+    target = summary.get("target_episodes")
+    if isinstance(target, bool) or not isinstance(target, int) or target < 1:
+        raise ValueError(
+            f"{shard_root}: target_episodes must be a positive integer, got {target!r}"
+        )
+    attempt_log = summary.get("attempt_log")
+    if not isinstance(attempt_log, list):
+        raise ValueError(f"{shard_root}: collection summary attempt_log must be a list")
+
+    counts = {
+        "info.total_episodes": info.get("total_episodes"),
+        "summary.episodes": summary.get("episodes"),
+        "episodes": len(episodes),
+        "outcomes": len(outcomes),
+        "attempt_log": len(attempt_log),
+        "target_episodes": target,
+    }
+    normalized_counts: dict[str, int] = {}
+    for name, value in counts.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{shard_root}: {name} must be an integer, got {value!r}")
+        normalized_counts[name] = int(value)
+    if len(set(normalized_counts.values())) != 1:
+        raise ValueError(
+            f"{shard_root}: shard episode counts disagree: {normalized_counts}"
+        )
+    if int(summary.get("attempts", -1)) != len(attempt_log):
+        raise ValueError(
+            f"{shard_root}: summary.attempts disagrees with attempt_log length"
+        )
+    successes = sum(bool(row["success"]) for row in outcomes)
+    failures = len(outcomes) - successes
+    if int(summary.get("successes_saved", -1)) != successes:
+        raise ValueError(
+            f"{shard_root}: summary.successes_saved disagrees with outcome ledger"
+        )
+    if int(summary.get("failures", -1)) != failures:
+        raise ValueError(
+            f"{shard_root}: summary.failures disagrees with outcome ledger"
+        )
+    return summary
+
+
 def merge_shards(shard_datasets: list[Path], output_dataset: Path, overwrite: bool, failure_phrase: str) -> None:
+    validated_shards = []
+    reference_tasks = None
+    task_modes = set()
+    for shard_root in shard_datasets:
+        shard_info = read_json(shard_root / "meta" / "info.json")
+        shard_episodes = load_jsonl(shard_root / "meta" / "episodes.jsonl")
+        shard_outcomes = load_outcome_ledger(
+            shard_root,
+            shard_episodes,
+            failure_phrase=failure_phrase,
+            required=True,
+        )
+        if shard_outcomes is None:
+            raise AssertionError("Required shard outcome ledger resolved to None")
+        summary = validate_merge_shard_summary(
+            shard_root,
+            shard_info,
+            shard_episodes,
+            shard_outcomes,
+        )
+        task_rows = load_jsonl(shard_root / "meta" / "tasks.jsonl")
+        if reference_tasks is None:
+            reference_tasks = task_rows
+        elif task_rows != reference_tasks:
+            raise ValueError(f"{shard_root}: meta/tasks.jsonl differs from the first shard")
+        task_mode = summary.get("outcome_task_mode")
+        if task_mode is not None:
+            task_modes.add(task_mode)
+        validated_shards.append(
+            (shard_root, shard_info, shard_episodes, shard_outcomes, summary)
+        )
+    if len(task_modes) > 1:
+        raise ValueError(f"Shard outcome_task_mode values disagree: {sorted(task_modes)}")
+    merged_task_mode = next(iter(task_modes), None)
+
     first_info = read_json(shard_datasets[0] / "meta" / "info.json")
     info = prepare_output(first_info, output_dataset, overwrite)
     shutil.copy2(shard_datasets[0] / "meta" / "tasks.jsonl", output_dataset / "meta" / "tasks.jsonl")
@@ -261,9 +803,24 @@ def merge_shards(shard_datasets: list[Path], output_dataset: Path, overwrite: bo
     global_index = 0
     new_ep_idx = 0
     attempt_log = []
-    for shard_id, shard_root in enumerate(shard_datasets):
-        shard_info = read_json(shard_root / "meta" / "info.json")
-        for ep in load_jsonl(shard_root / "meta" / "episodes.jsonl"):
+    out_outcomes = []
+    for shard_id, (
+        shard_root,
+        shard_info,
+        shard_episodes,
+        shard_outcomes,
+        summary,
+    ) in enumerate(
+        validated_shards
+    ):
+        shard_outcomes_by_episode = {
+            int(row["episode_index"]): row for row in shard_outcomes
+        }
+        shard_attempts_by_episode = {
+            int(row["saved_episode_index"]): row
+            for row in summary["attempt_log"]
+        }
+        for ep in sorted(shard_episodes, key=lambda row: int(row["episode_index"])):
             old_ep_idx = int(ep["episode_index"])
             old_chunk = old_ep_idx // int(shard_info["chunks_size"])
             src_parquet = shard_root / shard_info["data_path"].format(
@@ -294,18 +851,39 @@ def merge_shards(shard_datasets: list[Path], output_dataset: Path, overwrite: bo
                 copy_video(src_video, dst_video)
 
             out_episodes.append({"episode_index": new_ep_idx, "tasks": ep["tasks"], "length": length})
+            remapped_outcome = dict(shard_outcomes_by_episode[old_ep_idx])
+            source_attempt_index = int(remapped_outcome["attempt_index"])
+            remapped_outcome["source_shard_id"] = shard_id
+            remapped_outcome["source_episode_index"] = old_ep_idx
+            remapped_outcome["source_attempt_index"] = source_attempt_index
+            remapped_outcome["episode_index"] = new_ep_idx
+            remapped_outcome["attempt_index"] = new_ep_idx
+            out_outcomes.append(remapped_outcome)
+
+            remapped_attempt = dict(shard_attempts_by_episode[old_ep_idx])
+            if int(remapped_attempt["attempt_index"]) != source_attempt_index:
+                raise ValueError(
+                    f"{shard_root}: attempt log and ledger source attempt disagree "
+                    f"for episode {old_ep_idx}"
+                )
+            remapped_attempt["source_shard_id"] = shard_id
+            remapped_attempt["source_episode_index"] = old_ep_idx
+            remapped_attempt["source_attempt_index"] = source_attempt_index
+            remapped_attempt["shard_id"] = shard_id
+            remapped_attempt["saved_episode_index"] = new_ep_idx
+            remapped_attempt["attempt_index"] = new_ep_idx
+            attempt_log.append(remapped_attempt)
+
             out_stats.append(compute_episode_stats(data, info["features"]))
             global_index += length
             new_ep_idx += 1
 
-        summary_path = shard_root / "collection_summary.json"
-        if summary_path.exists():
-            summary = read_json(summary_path)
-            for item in summary.get("attempt_log", []):
-                item = dict(item)
-                item["shard_id"] = shard_id
-                attempt_log.append(item)
-
+    validate_outcome_rows(
+        out_outcomes,
+        out_episodes,
+        dataset_root=output_dataset,
+        failure_phrase=failure_phrase,
+    )
     finalize_dataset(
         output_dataset,
         info,
@@ -316,11 +894,14 @@ def merge_shards(shard_datasets: list[Path], output_dataset: Path, overwrite: bo
             "status": "complete",
             "mode": "raw_merged_save_all",
             "episodes": len(out_episodes),
-            "failures": sum(1 for ep in out_episodes if any(failure_phrase in task for task in ep["tasks"])),
-            "successes_saved": sum(1 for ep in out_episodes if not any(failure_phrase in task for task in ep["tasks"])),
+            "failures": sum(1 for row in out_outcomes if row["outcome"] == "failure"),
+            "successes_saved": sum(1 for row in out_outcomes if row["outcome"] == "success"),
+            "outcome_source": OUTCOME_LEDGER_NAME,
+            "outcome_task_mode": merged_task_mode,
             "shard_datasets": [str(path) for path in shard_datasets],
             "attempt_log": attempt_log,
         },
+        episode_outcomes=out_outcomes,
     )
 
 
@@ -333,6 +914,20 @@ def trim_failures(
     overwrite: bool,
 ) -> None:
     source_info = read_json(source_dataset / "meta" / "info.json")
+    source_summary_path = source_dataset / "collection_summary.json"
+    source_summary = read_json(source_summary_path) if source_summary_path.exists() else {}
+    source_episodes = load_jsonl(source_dataset / "meta" / "episodes.jsonl")
+    source_outcomes = load_outcome_ledger(
+        source_dataset,
+        source_episodes,
+        failure_phrase=failure_phrase,
+        required=False,
+    )
+    outcomes_by_episode = (
+        {int(row["episode_index"]): row for row in source_outcomes}
+        if source_outcomes is not None
+        else None
+    )
     info = prepare_output(source_info, output_dataset, overwrite)
     shutil.copy2(source_dataset / "meta" / "tasks.jsonl", output_dataset / "meta" / "tasks.jsonl")
     modality = source_dataset / "meta" / "modality.json"
@@ -345,10 +940,13 @@ def trim_failures(
     out_stats = []
     trim_report = []
     global_index = 0
-    for ep in load_jsonl(source_dataset / "meta" / "episodes.jsonl"):
+    for ep in sorted(source_episodes, key=lambda row: int(row["episode_index"])):
         ep_idx = int(ep["episode_index"])
         chunk = ep_idx // int(source_info["chunks_size"])
-        is_failure = any(failure_phrase in str(task) for task in ep["tasks"])
+        if outcomes_by_episode is not None:
+            is_failure = outcomes_by_episode[ep_idx]["outcome"] == "failure"
+        else:
+            is_failure = any(failure_phrase in str(task) for task in ep["tasks"])
         data = table_to_numpy_dict(
             pq.read_table(
                 source_dataset / source_info["data_path"].format(episode_chunk=chunk, episode_index=ep_idx)
@@ -411,8 +1009,13 @@ def trim_failures(
             "failures": sum(1 for item in trim_report if item["failure"]),
             "successes_saved": sum(1 for item in trim_report if not item["failure"]),
             "trimmed_failures": sum(1 for item in trim_report if item["trimmed"]),
+            "outcome_source": (
+                OUTCOME_LEDGER_NAME if source_outcomes is not None else "legacy_task_marker"
+            ),
+            "outcome_task_mode": source_summary.get("outcome_task_mode"),
             "trim_report": trim_report,
         },
+        episode_outcomes=source_outcomes,
     )
 
 
@@ -434,6 +1037,16 @@ def main() -> None:
             args.failure_phrase,
             args.overwrite,
         )
+    elif args.command == "validate-outcomes":
+        report = validate_outcome_dataset(
+            args.dataset,
+            failure_phrase=args.failure_phrase,
+            expected_episodes=args.expected_episodes,
+            check_media=args.check_media,
+        )
+        if args.report is not None:
+            write_json(args.report.expanduser().resolve(), report)
+        print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":

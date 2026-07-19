@@ -115,6 +115,12 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate FastWAM on DexJoCo with blocking or overlapped inference."
     )
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument(
+        "--text-embedding-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional runtime relocation of the cached task context directory.",
+    )
     parser.add_argument("--policy-host", type=str, default="127.0.0.1")
     parser.add_argument("--policy-port", type=int, required=True)
     parser.add_argument("--policy-timeout-ms", type=int, default=300000)
@@ -775,6 +781,7 @@ def main() -> None:
     eval_settings = load_dexjoco_eval_settings(
         run_dir,
         action_horizon_override=args.action_horizon,
+        text_embedding_cache_dir_override=args.text_embedding_cache_dir,
     )
     adapter = DexJoCoFastWAMAdapter(eval_settings)
     if args.replan_steps < 1 or args.replan_steps > adapter.action_horizon:

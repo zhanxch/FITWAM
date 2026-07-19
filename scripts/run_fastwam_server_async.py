@@ -47,10 +47,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mock", action="store_true", help="Start mock policy (no model load).")
     parser.add_argument("--run-dir", type=str, default=None)
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--dataset-stats-path", type=str, default=None)
+    normalization = parser.add_mutually_exclusive_group()
+    normalization.add_argument("--dataset-stats-path", type=str, default=None)
+    normalization.add_argument("--norm-stats-meta-dir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--action-horizon", type=int, default=None)
     parser.add_argument("--num-inference-steps", type=int, default=None)
+    parser.add_argument(
+        "--inference-seed",
+        type=int,
+        default=None,
+        help="Override EVALUATION.seed for deterministic diffusion sampling.",
+    )
     parser.add_argument(
         "--load-text-encoder",
         dest="load_text_encoder",
@@ -87,10 +95,12 @@ def main() -> None:
             run_dir=run_dir,
             checkpoint=args.checkpoint,
             dataset_stats_path=args.dataset_stats_path,
+            norm_stats_meta_dir=args.norm_stats_meta_dir,
             device=args.device,
             action_horizon=args.action_horizon,
             num_inference_steps=args.num_inference_steps,
             load_text_encoder=args.load_text_encoder,
+            inference_seed=args.inference_seed,
         )
         policy = FastWAMPolicyAsync(
             model=base_policy.model,

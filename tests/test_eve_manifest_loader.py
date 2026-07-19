@@ -5,6 +5,7 @@ import logging
 import sys
 import types
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -29,7 +30,6 @@ class _RobotVideoDataset:
             {"dataset_dirs": dataset_dirs, "kwargs": dict(kwargs)}
         )
         self.num_frames = int(kwargs.get("num_frames", 4))
-        self.global_sample_stride = int(kwargs.get("global_sample_stride", 1))
 
 
 SCHEMA_CALLS: list[tuple[dict[str, object], bool, bool]] = []
@@ -47,6 +47,10 @@ def _resolve_manifest_dataset_root(manifest, unit, overrides):
 
 def _load_module():
     torch_stub = types.ModuleType("torch")
+    torch_stub.float32 = "float32"
+    torch_stub.long = "long"
+    torch_stub.tensor = lambda value, dtype=None: value
+    torch_stub.zeros = lambda size, dtype=None: [0.0] * int(size)
     base_stub = types.ModuleType(
         "fastwam.datasets.lerobot.robot_video_dataset"
     )
@@ -56,6 +60,12 @@ def _load_module():
     schema_stub.resolve_manifest_dataset_root = _resolve_manifest_dataset_root
     logging_stub = types.ModuleType("fastwam.utils.logging_config")
     logging_stub.get_logger = logging.getLogger
+    pair_targets_stub = types.ModuleType("fastwam.datasets.eve.pair_targets")
+
+    class _PairTargetStore:
+        pass
+
+    pair_targets_stub.PairTargetStore = _PairTargetStore
 
     module_name = "_test_eve_manifest_dataset"
     spec = importlib.util.spec_from_file_location(module_name, MODULE_PATH)
@@ -66,6 +76,7 @@ def _load_module():
         {
             "torch": torch_stub,
             "fastwam.datasets.lerobot.robot_video_dataset": base_stub,
+            "fastwam.datasets.eve.pair_targets": pair_targets_stub,
             "fastwam.everobot_schema": schema_stub,
             "fastwam.utils.logging_config": logging_stub,
         },
@@ -223,6 +234,69 @@ class EveManifestLoaderTest(unittest.TestCase):
 
         self.assertEqual(SCHEMA_CALLS, [(manifest, True, False)])
 
+    def test_positive_pair_weight_requires_target_store(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.manifest = self._manifest("/old/root")
+        dataset.manifest["samples"][0].update(
+            {
+                "sample_type": "event",
+                "event_id": "failure-event",
+                "episode_outcome": "failure",
+                "pair_id": "pair-0",
+                "pair_weight": 0.8,
+                "split": "train",
+            }
+        )
+        dataset.manifest_splits = {"train"}
+        dataset.manifest_collection_iters = None
+        dataset.pair_targets_path = None
+        dataset.expected_teacher_sha256 = None
+        dataset._pair_target_store = None
+        dataset.pair_target_embedding_dim = None
+        dataset.pair_target_teacher_sha256 = None
+
+        with self.assertRaisesRegex(ValueError, "pair_targets_path"):
+            dataset._validate_pair_target_references()
+
+    def test_unpaired_units_receive_fixed_shape_zero_targets(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.pair_target_embedding_dim = 3
+        data: dict[str, object] = {}
+        dataset._add_pair_targets(data, {"pair_weight": 0.0})
+
+        self.assertEqual(data["steer_success_target"], [0.0, 0.0, 0.0])
+        self.assertEqual(data["steer_failure_target"], [0.0, 0.0, 0.0])
+
+    def test_paired_units_receive_teacher_targets(self) -> None:
+        @dataclass
+        class _Target:
+            z_plus: object
+            z_minus: object
+
+        class _Store:
+            def get(self, pair_id, *, backend, dtype):
+                self.request = (pair_id, backend, dtype)
+                return _Target(z_plus=[1.0, 0.0], z_minus=[0.0, 1.0])
+
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.pair_target_embedding_dim = 2
+        store = _Store()
+        dataset._ensure_pair_target_store = lambda: store
+        data: dict[str, object] = {}
+        dataset._add_pair_targets(
+            data, {"pair_id": "pair-0", "pair_weight": 0.5}
+        )
+
+        self.assertEqual(store.request, ("pair-0", "torch", "float32"))
+        self.assertEqual(data["steer_success_target"], [1.0, 0.0])
+        self.assertEqual(data["steer_failure_target"], [0.0, 1.0])
+
     def test_source_stride_limits_windows_to_the_manifest_interval(self) -> None:
         with TemporaryDirectory() as tmp:
             root = str(Path(tmp) / "dataset")
@@ -246,6 +320,7 @@ class EveManifestLoaderTest(unittest.TestCase):
                 )
 
         self.assertEqual(len(dataset._samples), 2)
+        self.assertEqual(dataset.global_sample_stride, 2)
         self.assertEqual(
             [(sample["window_start"], sample["window_end"]) for sample in dataset._samples],
             [(0, 7), (1, 8)],
@@ -342,6 +417,406 @@ class EveManifestLoaderTest(unittest.TestCase):
 
         self.assertEqual(len(dataset._samples), 1)
         self.assertEqual(dataset._samples[0]["window_start"], 0)
+
+    def test_paired_failure_event_expands_only_nearest_core_anchor(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "failure-event",
+                    "episode_outcome": "failure",
+                    "event_outcome": "failure",
+                    "core_start_frame": 5,
+                    "window_selection": "core_start_anchor",
+                    "pair_id": "pair-0",
+                    "pair_weight": 0.8,
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_validate_pair_target_references",
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 8)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=4,
+                    paired_failure_anchor_only=False,
+                )
+
+        self.assertEqual(len(dataset._samples), 1)
+        self.assertEqual(dataset._samples[0]["window_start"], 4)
+
+    def test_legacy_paired_failure_without_marker_still_anchors(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "legacy-failure-event",
+                    "episode_outcome": "failure",
+                    "event_outcome": "failure",
+                    "core_start_frame": 5,
+                    "pair_id": "pair-0",
+                    "pair_weight": 0.8,
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_validate_pair_target_references",
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 8)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=4,
+                )
+
+        self.assertEqual(len(dataset._samples), 1)
+        self.assertEqual(dataset._samples[0]["window_start"], 4)
+
+    def test_success_auxiliary_event_selects_one_33_frame_anchor_window(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "success-event",
+                    "episode_outcome": "success",
+                    "event_outcome": "unknown",
+                    "batch_role": "auxiliary",
+                    "action_loss": "disabled",
+                    "start_frame": 0,
+                    "end_frame": 50,
+                    "core_start_frame": 25,
+                    "window_selection": "core_start_anchor",
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 50)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=33,
+                )
+
+        self.assertEqual(len(dataset._samples), 1)
+        self.assertEqual(dataset._samples[0]["window_start"], 17)
+        self.assertEqual(dataset._samples[0]["window_end"], 50)
+
+    def test_failure_event_selects_one_33_frame_anchor_window(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "failure-event",
+                    "episode_outcome": "failure",
+                    "event_outcome": "unknown",
+                    "batch_role": "auxiliary",
+                    "action_loss": "disabled",
+                    "start_frame": 0,
+                    "end_frame": 50,
+                    "core_start_frame": 25,
+                    "window_selection": "core_start_anchor",
+                    "pair_weight": 0.0,
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 50)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=33,
+                )
+
+        self.assertEqual(len(dataset._samples), 1)
+        self.assertEqual(dataset._samples[0]["window_start"], 17)
+        self.assertEqual(dataset._samples[0]["window_end"], 50)
+
+    def test_unpaired_event_keeps_all_sliding_windows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "failure-event",
+                    "episode_outcome": "failure",
+                    "event_outcome": "failure",
+                    "core_start_frame": 5,
+                    "pair_weight": 0.0,
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 8)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=4,
+                )
+
+        self.assertEqual(
+            [sample["window_start"] for sample in dataset._samples],
+            [0, 1, 2, 3, 4],
+        )
+
+    def test_paired_success_event_keeps_all_sliding_windows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0].update(
+                {
+                    "sample_type": "event",
+                    "event_id": "success-event",
+                    "episode_outcome": "success",
+                    "event_outcome": "success",
+                    "core_start_frame": 5,
+                    "pair_id": "pair-0",
+                    "pair_weight": 0.8,
+                }
+            )
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_validate_pair_target_references",
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value={(str(Path(root).resolve()), 3): (0, 8)},
+                ),
+            ):
+                dataset = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=4,
+                )
+
+        self.assertEqual(
+            [sample["window_start"] for sample in dataset._samples],
+            [0, 1, 2, 3, 4],
+        )
+
+    @staticmethod
+    def _retry_dataset() -> EveManifestRobotVideoDataset:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset._samples = [{}, {}, {}, {}]
+        dataset.sampling_roles = (
+            "primary",
+            "auxiliary",
+            "primary",
+            "primary",
+        )
+        dataset._sampling_role_indices = {
+            "primary": (0, 2, 3),
+            "auxiliary": (1,),
+        }
+        dataset.max_load_retry = 2
+        return dataset
+
+    def test_structural_error_fails_hard_without_retry(self) -> None:
+        dataset = self._retry_dataset()
+        calls: list[int] = []
+
+        def get_eve(index: int):
+            calls.append(index)
+            raise ValueError("pair target split mismatch")
+
+        dataset._get_eve = get_eve
+        with self.assertRaisesRegex(ValueError, "pair target split mismatch"):
+            dataset[0]
+        self.assertEqual(calls, [0])
+
+    def test_non_decode_runtime_error_fails_hard_without_retry(self) -> None:
+        dataset = self._retry_dataset()
+        calls: list[int] = []
+
+        def get_eve(index: int):
+            calls.append(index)
+            raise RuntimeError("pair target hash mismatch")
+
+        dataset._get_eve = get_eve
+        with self.assertRaisesRegex(RuntimeError, "pair target hash mismatch"):
+            dataset[0]
+        self.assertEqual(calls, [0])
+
+    def test_io_retry_uses_deterministic_same_role_order(self) -> None:
+        dataset = self._retry_dataset()
+        calls: list[int] = []
+
+        def get_eve(index: int):
+            calls.append(index)
+            if len(calls) < 3:
+                raise OSError("temporary video read failure")
+            return {"index": index}
+
+        dataset._get_eve = get_eve
+        self.assertEqual(dataset[0], {"index": 3})
+        self.assertEqual(calls, [0, 2, 3])
+
+    def test_explicit_video_decode_runtime_error_is_retryable(self) -> None:
+        dataset = self._retry_dataset()
+        calls: list[int] = []
+
+        def get_eve(index: int):
+            calls.append(index)
+            if len(calls) == 1:
+                raise RuntimeError("failed to decode video stream")
+            return {"index": index}
+
+        dataset._get_eve = get_eve
+        self.assertEqual(dataset[0], {"index": 2})
+        self.assertEqual(calls, [0, 2])
+
+    def test_unknown_event_outcome_falls_back_to_episode_outcome(self) -> None:
+        self.assertEqual(
+            EveManifestRobotVideoDataset._effective_outcome(
+                {
+                    "event_outcome": "unknown",
+                    "episode_outcome": "failure",
+                }
+            ),
+            "failure",
+        )
+        self.assertEqual(
+            EveManifestRobotVideoDataset._outcome_flag(
+                {
+                    "event_outcome": "unknown",
+                    "episode_outcome": "failure",
+                }
+            ),
+            1,
+        )
+        self.assertEqual(
+            EveManifestRobotVideoDataset._effective_outcome(
+                {
+                    "event_outcome": "success",
+                    "episode_outcome": "failure",
+                }
+            ),
+            "success",
+        )
+
+    def test_get_eve_returns_soft_event_defaults(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.manifest_path = "/tmp/manifest.json"
+        dataset.global_sample_stride = 1
+        dataset._samples = [
+            {
+                "unit": {
+                    "sample_type": "event",
+                    "sample_id": "event-1",
+                    "dataset_id": "robot",
+                    "collection_round": 1,
+                    "event_outcome": "unknown",
+                    "episode_outcome": "failure",
+                    "event_weight": None,
+                    "pair_weight": None,
+                    "pair_id": None,
+                },
+                "episode_index": 3,
+                "global_frame_idx": 10,
+                "window_start": 2,
+                "window_end": 6,
+            }
+        ]
+        dataset._get = lambda _: {}
+
+        data = dataset._get_eve(0)
+
+        self.assertEqual(data["event_weight"], 1.0)
+        self.assertEqual(data["pair_weight"], 0.0)
+        self.assertEqual(data["pair_id"], "")
+        self.assertEqual(data["outcome_flag"], 1)
+        self.assertEqual(data["eve_event_outcome"], "failure")
+
+    def test_get_eve_returns_explicit_soft_event_fields(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.manifest_path = "/tmp/manifest.json"
+        dataset.global_sample_stride = 1
+        dataset._samples = [
+            {
+                "unit": {
+                    "sample_type": "event",
+                    "sample_id": "event-1",
+                    "dataset_id": "robot",
+                    "collection_round": 1,
+                    "event_outcome": "failure",
+                    "episode_outcome": "failure",
+                    "event_weight": 0.6,
+                    "pair_weight": 0.4,
+                    "pair_id": "pair-7",
+                },
+                "episode_index": 3,
+                "global_frame_idx": 10,
+                "window_start": 2,
+                "window_end": 6,
+            }
+        ]
+        dataset._get = lambda _: {}
+
+        data = dataset._get_eve(0)
+
+        self.assertEqual(data["event_weight"], 0.6)
+        self.assertEqual(data["pair_weight"], 0.4)
+        self.assertEqual(data["pair_id"], "pair-7")
 
 
 if __name__ == "__main__":

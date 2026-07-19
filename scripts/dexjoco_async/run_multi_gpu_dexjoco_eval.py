@@ -121,9 +121,33 @@ def parse_args() -> argparse.Namespace:
     model = parser.add_argument_group("Model / server")
     model.add_argument("--run-dir", type=Path, required=True, help="FastWAM training run directory.")
     model.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path or step spec.")
-    model.add_argument("--dataset-stats-path", type=str, default=None, help="Override dataset stats path.")
+    normalization = model.add_mutually_exclusive_group()
+    normalization.add_argument(
+        "--dataset-stats-path",
+        type=str,
+        default=None,
+        help="Override dataset stats path.",
+    )
+    normalization.add_argument(
+        "--norm-stats-meta-dir",
+        type=Path,
+        default=None,
+        help="Override the LeRobot meta directory selected by norm_stats_source=meta.",
+    )
+    model.add_argument(
+        "--text-embedding-cache-dir",
+        type=Path,
+        default=None,
+        help="Runtime relocation of cached task contexts used by eval clients.",
+    )
     model.add_argument("--action-horizon", type=int, default=None, help="Override action horizon.")
     model.add_argument("--num-inference-steps", type=int, default=None, help="Override inference steps.")
+    model.add_argument(
+        "--inference-seed",
+        type=int,
+        default=None,
+        help="Use the same diffusion inference seed on every policy server.",
+    )
     model.add_argument(
         "--load-text-encoder",
         dest="load_text_encoder",
@@ -132,7 +156,6 @@ def parse_args() -> argparse.Namespace:
         help="Forward --load-text-encoder / --no-load-text-encoder to servers.",
     )
     model.add_argument("--mock", action="store_true", help="Start mock servers (no checkpoint).")
-    model.add_argument("--api-token", type=str, default=None, help="Optional shared API token.")
 
     # --- Eval client pass-through ---
     ev = parser.add_argument_group("Eval client (pass-through)")
@@ -183,15 +206,27 @@ def _build_server_argv(args: argparse.Namespace, server: ServerSpec) -> list[str
         if not args.run_dir or not args.checkpoint:
             raise ValueError("--run-dir and --checkpoint are required unless --mock is set.")
         argv += ["--run-dir", str(args.run_dir.resolve()), "--checkpoint", str(args.checkpoint)]
-    if args.dataset_stats_path is not None:
-        argv += ["--dataset-stats-path", str(args.dataset_stats_path)]
+    dataset_stats_path = getattr(args, "dataset_stats_path", None)
+    norm_stats_meta_dir = getattr(args, "norm_stats_meta_dir", None)
+    if dataset_stats_path is not None and norm_stats_meta_dir is not None:
+        raise ValueError(
+            "--dataset-stats-path and --norm-stats-meta-dir are mutually exclusive"
+        )
+    if dataset_stats_path is not None:
+        argv += ["--dataset-stats-path", str(dataset_stats_path)]
+    if norm_stats_meta_dir is not None:
+        argv += [
+            "--norm-stats-meta-dir",
+            str(Path(norm_stats_meta_dir).expanduser().resolve()),
+        ]
     if args.action_horizon is not None:
         argv += ["--action-horizon", str(args.action_horizon)]
     if args.num_inference_steps is not None:
         argv += ["--num-inference-steps", str(args.num_inference_steps)]
+    inference_seed = getattr(args, "inference_seed", None)
+    if inference_seed is not None:
+        argv += ["--inference-seed", str(inference_seed)]
     argv += _bool_flag("load-text-encoder", args.load_text_encoder)
-    if args.api_token:
-        argv += ["--api-token", str(args.api_token)]
     return argv
 
 
@@ -213,6 +248,11 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
         "--output-dir", str(shard_out_dir),
         "--video-fps", str(args.video_fps),
     ]
+    if args.text_embedding_cache_dir is not None:
+        argv += [
+            "--text-embedding-cache-dir",
+            str(args.text_embedding_cache_dir.expanduser().resolve()),
+        ]
     if args.tasks:
         argv += ["--tasks"] + list(args.tasks)
     if args.low_pass_alpha is not None:
@@ -227,8 +267,6 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
     if args.action_clip:
         argv += ["--clip-max-xyz-step", str(args.clip_max_xyz_step)]
         argv += ["--clip-max-dz-down", str(args.clip_max_dz_down)]
-    if args.api_token:
-        argv += ["--api-token", str(args.api_token)]
     return argv
 
 
@@ -291,6 +329,39 @@ def _inject_shard_metadata(summary_path: Path, shard: ShardSpec) -> bool:
     payload.setdefault("global_episode_start", int(shard.global_episode_start))
     summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return True
+
+
+def _combined_summary_metadata(
+    args: argparse.Namespace,
+    *,
+    gpus: list[int],
+    ports: list[int],
+) -> dict[str, Any]:
+    return {
+        "policy_host": args.client_host,
+        "seed": int(args.seed),
+        "inference_seed": (
+            None
+            if args.inference_seed is None
+            else int(args.inference_seed)
+        ),
+        "task": (
+            str(args.tasks[0])
+            if args.tasks is not None and len(args.tasks) == 1
+            else None
+        ),
+        "max_env_steps": int(args.max_env_steps),
+        "video_fps": int(args.video_fps),
+        "randomize": bool(args.randomize),
+        "randomize_dynamics": bool(args.randomize_dynamics),
+        "save_video": bool(args.save_video),
+        "save_actions": bool(args.save_actions),
+        "action_clip": bool(args.action_clip),
+        "clip_max_xyz_step": float(args.clip_max_xyz_step),
+        "clip_max_dz_down": float(args.clip_max_dz_down),
+        "gpus": gpus,
+        "ports": ports,
+    }
 
 
 def _stream_log_tail(path: Path, *, prefix: str, last_pos: int) -> int:
@@ -508,18 +579,11 @@ def main() -> int:
         combined = merge_shard_summaries(
             shard_summary_paths,
             label=label,
-            extra_top_level={
-                "policy_host": args.client_host,
-                "seed": int(args.seed),
-                "randomize": bool(args.randomize),
-                "randomize_dynamics": bool(args.randomize_dynamics),
-                "save_actions": bool(args.save_actions),
-                "action_clip": bool(args.action_clip),
-                "clip_max_xyz_step": float(args.clip_max_xyz_step),
-                "clip_max_dz_down": float(args.clip_max_dz_down),
-                "gpus": gpus,
-                "ports": ports,
-            },
+            extra_top_level=_combined_summary_metadata(
+                args,
+                gpus=gpus,
+                ports=ports,
+            ),
         )
         paths = write_combined(combined, out_dir)
         total = combined["total_episodes"]

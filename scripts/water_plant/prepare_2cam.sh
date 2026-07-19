@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate fastwam
+conda activate "${FITWAM_ENV:-fitwam}"
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 
 TASK=water_plant_uncond_2cam_384_1e-4

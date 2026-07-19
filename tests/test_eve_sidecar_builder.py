@@ -27,6 +27,7 @@ def make_dataset(
     episodes: list[dict[str, object]],
     *,
     collection_summary: dict[str, object] | None = None,
+    outcome_rows: list[dict[str, object]] | None = None,
 ) -> None:
     write_json(root / "meta" / "info.json", {"fps": 30})
     write_jsonl(root / "meta" / "episodes.jsonl", episodes)
@@ -35,6 +36,8 @@ def make_dataset(
     data_path.write_bytes(b"synthetic-action-data")
     if collection_summary is not None:
         write_json(root / "collection_summary.json", collection_summary)
+    if outcome_rows is not None:
+        write_jsonl(root / "meta" / "episode_outcomes.jsonl", outcome_rows)
 
 
 class EveSidecarBuilderTest(unittest.TestCase):
@@ -146,8 +149,11 @@ class EveSidecarBuilderTest(unittest.TestCase):
             manifest_name=name,
             include_outcomes=["success", "failure"],
             success_dataset_ids=None,
+            success_auxiliary_dataset_ids=None,
             failure_dataset_ids=None,
+            success_sample_mode="episode_only",
             failure_sample_mode="event_only",
+            event_types=None,
             collection_rounds=collection_rounds,
             splits=["train"],
             include_sample_ids=None,
@@ -155,6 +161,80 @@ class EveSidecarBuilderTest(unittest.TestCase):
             success_sample_stride=1,
             failure_sample_stride=1,
             failure_action_loss="disabled",
+        )
+
+    def candidate_event_rows(self) -> list[dict[str, object]]:
+        common = {
+            "schema_version": build_eve_sidecar.SCHEMA_VERSION,
+            "round_id": "rollout_round0:round:0",
+            "dataset_id": "rollout_round0",
+            "dataset_root": str(self.rollout_root.resolve()),
+            "task_name": "water_plant",
+            "task": "Water plant",
+            "event_type": "interaction_candidate",
+            "event_level": "candidate",
+            "event_label": "state_line_transition",
+            "effector": "global",
+            "event_outcome": "unknown",
+            "source_policy": "fastwam-step6650",
+            "collection_round": 0,
+            "split": "train",
+        }
+        return [
+            {
+                **common,
+                "event_id": "rollout_round0_ep000000_candidate_000",
+                "episode_id": "rollout_round0:episode:000000",
+                "episode_index": 0,
+                "episode_outcome": "success",
+                "start_frame": 5,
+                "end_frame": 20,
+                "core_start_frame": 8,
+                "core_end_frame": 16,
+                "core_interval": [8, 16],
+                "event_weight": 0.75,
+                "action_loss": "disabled",
+                "annotation": {
+                    "source": "auto",
+                    "method": "state_line",
+                    "version": "state_line_v1",
+                    "confidence": 0.8,
+                },
+            },
+            {
+                **common,
+                "event_id": "rollout_round0_ep000001_candidate_000",
+                "episode_id": "rollout_round0:episode:000001",
+                "episode_index": 1,
+                "episode_outcome": "failure",
+                "start_frame": 20,
+                "end_frame": 45,
+                "core_start_frame": 25,
+                "core_end_frame": 38,
+                "core_interval": [25, 38],
+                "event_weight": 0.9,
+                "action_loss": "enabled",
+                "annotation": {
+                    "source": "auto",
+                    "method": "state_line",
+                    "version": "state_line_v1",
+                    "confidence": 0.85,
+                },
+            },
+        ]
+
+    def append_candidate_events(
+        self, rows: list[dict[str, object]] | None = None
+    ) -> None:
+        build_eve_sidecar.append_immutable_jsonl_group(
+            [
+                (
+                    self.eve_root / "event_meta.jsonl",
+                    self.candidate_event_rows() if rows is None else rows,
+                    ("event_id",),
+                    ("dataset_root",),
+                )
+            ]
         )
 
     def test_two_round_build_is_immutable_and_filterable(self) -> None:
@@ -215,6 +295,85 @@ class EveSidecarBuilderTest(unittest.TestCase):
             self.eve_root / "round_meta.jsonl"
         )
         self.assertEqual(len(rounds_after_failed_transaction), 2)
+
+    def test_append_rollout_uses_required_structured_outcomes_with_clean_task(
+        self,
+    ) -> None:
+        write_jsonl(
+            self.rollout_root / "meta" / "episodes.jsonl",
+            [
+                {"episode_index": 0, "length": 50, "tasks": ["Water plant"]},
+                {"episode_index": 1, "length": 60, "tasks": ["Water plant"]},
+            ],
+        )
+        write_jsonl(
+            self.rollout_root / "meta" / "episode_outcomes.jsonl",
+            [
+                {
+                    "episode_index": 0,
+                    "outcome": "success",
+                    "success": True,
+                    "attempt_index": 10,
+                    "seed": 101,
+                    "source": "dexjoco_env",
+                },
+                {
+                    "episode_index": 1,
+                    "outcome": "failure",
+                    "success": False,
+                    "attempt_index": 11,
+                    "seed": 102,
+                    "source": "dexjoco_env",
+                },
+            ],
+        )
+        build_eve_sidecar.init_base(self.init_args())
+        args = self.append_args()
+        args.require_explicit_outcomes = True
+        build_eve_sidecar.append_rollout(args)
+
+        rows = [
+            row
+            for row in build_eve_sidecar.load_jsonl(
+                self.eve_root / "episode_meta.jsonl"
+            )
+            if row["dataset_id"] == "rollout_round0"
+        ]
+        self.assertEqual(
+            [row["episode_outcome"] for row in rows], ["success", "failure"]
+        )
+        self.assertEqual(
+            {row["outcome_source"] for row in rows},
+            {"structured_outcome_ledger"},
+        )
+        self.assertTrue(all(row["task"] == "Water plant" for row in rows))
+
+    def test_append_rollout_rejects_missing_required_outcome_ledger(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        args = self.append_args()
+        args.require_explicit_outcomes = True
+        with self.assertRaisesRegex(
+            FileNotFoundError, "structured outcome ledger"
+        ):
+            build_eve_sidecar.append_rollout(args)
+
+    def test_outcome_ledger_rejects_partial_coverage(self) -> None:
+        write_jsonl(
+            self.rollout_root / "meta" / "episode_outcomes.jsonl",
+            [
+                {
+                    "episode_index": 0,
+                    "outcome": "success",
+                    "success": True,
+                }
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "coverage mismatch"):
+            build_eve_sidecar.load_episode_outcome_ledger(
+                self.rollout_root,
+                required=True,
+                expected_episode_indices=[0, 1],
+            )
 
     def test_manual_head_and_tail_trim_keeps_raw_frame_coordinates(self) -> None:
         start, end, rule = build_eve_sidecar.trim_frame_interval(
@@ -295,6 +454,136 @@ class EveSidecarBuilderTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceeds episode length"):
             build_eve_sidecar.build_manifest(self.manifest_args("invalid-event"))
 
+    def test_interaction_candidates_support_success_and_failure(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        self.append_candidate_events()
+
+        args = self.manifest_args("interaction_candidates", collection_rounds=[0])
+        args.success_sample_mode = "event_only"
+        args.event_types = ["interaction_candidate"]
+        build_eve_sidecar.build_manifest(args)
+
+        manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "interaction_candidates.json"
+        )
+        validate_manifest(manifest)
+        self.assertEqual(manifest["num_samples"], 2)
+        self.assertEqual(
+            manifest["selection"]["success_sample_mode"], "event_only"
+        )
+        self.assertEqual(
+            manifest["selection"]["event_types"], ["interaction_candidate"]
+        )
+
+        by_outcome = {
+            sample["episode_outcome"]: sample for sample in manifest["samples"]
+        }
+        success = by_outcome["success"]
+        failure = by_outcome["failure"]
+        self.assertEqual(success["event_outcome"], "unknown")
+        self.assertEqual(failure["event_outcome"], "unknown")
+        self.assertEqual(success["action_loss"], "enabled")
+        self.assertEqual(failure["action_loss"], "disabled")
+        self.assertEqual(success["batch_role"], "primary")
+        self.assertEqual(failure["batch_role"], "auxiliary")
+        self.assertNotIn("window_selection", success)
+        self.assertEqual(
+            failure["window_selection"], "core_start_anchor"
+        )
+        self.assertEqual(success["sample_role"], "success_candidate")
+        self.assertEqual(failure["sample_role"], "failure_candidate")
+        self.assertEqual(success["event_weight"], 0.75)
+        self.assertEqual(failure["event_weight"], 0.9)
+        self.assertEqual(success["core_start_frame"], 8)
+        self.assertEqual(success["core_end_frame"], 16)
+        self.assertEqual(success["core_interval"], [8, 16])
+        self.assertEqual(success["annotation"]["method"], "state_line")
+
+    def test_success_sample_modes_and_event_type_filter(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        self.append_candidate_events()
+
+        default_args = self.manifest_args(
+            "success_episode_default", collection_rounds=[0]
+        )
+        default_args.include_outcomes = ["success"]
+        build_eve_sidecar.build_manifest(default_args)
+        default_manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "success_episode_default.json"
+        )
+        self.assertEqual(default_manifest["num_samples"], 1)
+        self.assertEqual(default_manifest["samples"][0]["sample_type"], "episode")
+
+        both_args = self.manifest_args("success_both", collection_rounds=[0])
+        both_args.include_outcomes = ["success"]
+        both_args.success_sample_mode = "both"
+        both_args.event_types = ["interaction_candidate"]
+        build_eve_sidecar.build_manifest(both_args)
+        both_manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "success_both.json"
+        )
+        self.assertEqual(both_manifest["num_samples"], 2)
+        self.assertEqual(
+            {sample["sample_type"] for sample in both_manifest["samples"]},
+            {"episode", "event"},
+        )
+
+        legacy_args = self.manifest_args(
+            "legacy_failure_only", collection_rounds=[0]
+        )
+        legacy_args.success_sample_mode = "event_only"
+        legacy_args.event_types = ["failure_event"]
+        build_eve_sidecar.build_manifest(legacy_args)
+        legacy_manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "legacy_failure_only.json"
+        )
+        self.assertEqual(legacy_manifest["num_samples"], 1)
+        self.assertEqual(
+            legacy_manifest["samples"][0]["event_type"], "failure_event"
+        )
+        self.assertEqual(
+            legacy_manifest["samples"][0]["event_outcome"], "failure"
+        )
+
+    def test_candidate_ledger_is_immutable_and_idempotent(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        rows = self.candidate_event_rows()
+        self.append_candidate_events(rows)
+        self.append_candidate_events(rows)
+        events = build_eve_sidecar.load_jsonl(
+            self.eve_root / "event_meta.jsonl"
+        )
+        self.assertEqual(len(events), 3)
+
+        changed = [dict(row) for row in rows]
+        changed[0]["event_weight"] = 0.5
+        with self.assertRaisesRegex(ValueError, "identity collision"):
+            self.append_candidate_events(changed)
+
+        events_after_collision = build_eve_sidecar.load_jsonl(
+            self.eve_root / "event_meta.jsonl"
+        )
+        self.assertEqual(events_after_collision, events)
+
+    def test_candidate_episode_outcome_must_match_linked_episode(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        mismatched = self.candidate_event_rows()[1]
+        mismatched["episode_outcome"] = "success"
+        self.append_candidate_events([mismatched])
+
+        args = self.manifest_args("mismatched_candidate", collection_rounds=[0])
+        args.include_outcomes = ["success"]
+        args.success_sample_mode = "event_only"
+        args.event_types = ["interaction_candidate"]
+        with self.assertRaisesRegex(
+            ValueError, "episode_outcome does not match its episode"
+        ):
+            build_eve_sidecar.build_manifest(args)
+
     def test_invalid_trim_bounds_are_rejected_instead_of_clamped(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid trim interval"):
             build_eve_sidecar.trim_frame_interval(
@@ -304,6 +593,169 @@ class EveSidecarBuilderTest(unittest.TestCase):
                     0: {"trim_start_frame": -1, "trim_end_frame": 101}
                 },
             )
+
+    def test_frozen_split_map_is_applied_to_episode_and_event_ledgers(self) -> None:
+        split_map = self.eve_root.parent / "episode_splits.jsonl"
+        write_jsonl(
+            split_map,
+            [
+                {
+                    "dataset_id": "expert_base",
+                    "episode_index": 0,
+                    "split": "train",
+                },
+                {
+                    "dataset_id": "expert_base",
+                    "episode_index": 1,
+                    "split": "val",
+                },
+                {
+                    "dataset_id": "rollout_round0",
+                    "episode_index": 0,
+                    "split": "val",
+                },
+                {
+                    "dataset_id": "rollout_round0",
+                    "episode_index": 1,
+                    "split": "train",
+                },
+            ],
+        )
+        init_args = self.init_args()
+        init_args.split_map = split_map
+        append_args = self.append_args()
+        append_args.split_map = split_map
+
+        build_eve_sidecar.init_base(init_args)
+        build_eve_sidecar.append_rollout(append_args)
+
+        episodes = {
+            (row["dataset_id"], row["episode_index"]): row["split"]
+            for row in build_eve_sidecar.load_jsonl(
+                self.eve_root / "episode_meta.jsonl"
+            )
+        }
+        self.assertEqual(episodes[("expert_base", 0)], "train")
+        self.assertEqual(episodes[("expert_base", 1)], "val")
+        self.assertEqual(episodes[("rollout_round0", 0)], "val")
+        self.assertEqual(episodes[("rollout_round0", 1)], "train")
+        event = build_eve_sidecar.load_jsonl(
+            self.eve_root / "event_meta.jsonl"
+        )[0]
+        self.assertEqual(event["split"], "train")
+
+    def test_split_map_must_cover_every_episode(self) -> None:
+        split_map = self.eve_root.parent / "incomplete_splits.jsonl"
+        write_jsonl(
+            split_map,
+            [
+                {
+                    "dataset_id": "expert_base",
+                    "episode_index": 0,
+                    "split": "train",
+                }
+            ],
+        )
+        args = self.init_args()
+        args.split_map = split_map
+        with self.assertRaisesRegex(ValueError, "no assignment"):
+            build_eve_sidecar.init_base(args)
+
+    def test_success_auxiliary_dataset_is_action_disabled(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        args = self.manifest_args("success_auxiliary_control")
+        args.include_outcomes = ["success"]
+        args.success_dataset_ids = ["expert_base"]
+        args.success_auxiliary_dataset_ids = ["rollout_round0"]
+
+        build_eve_sidecar.build_manifest(args)
+        manifest = json.loads(
+            (
+                self.eve_root
+                / "manifests"
+                / "success_auxiliary_control.json"
+            ).read_text(encoding="utf-8")
+        )
+        primary = [
+            sample
+            for sample in manifest["samples"]
+            if sample["dataset_id"] == "expert_base"
+        ]
+        auxiliary = [
+            sample
+            for sample in manifest["samples"]
+            if sample["dataset_id"] == "rollout_round0"
+        ]
+        self.assertEqual(len(primary), 2)
+        self.assertEqual(len(auxiliary), 1)
+        self.assertTrue(
+            all(sample["action_loss"] == "enabled" for sample in primary)
+        )
+        self.assertTrue(
+            all(sample["batch_role"] == "primary" for sample in primary)
+        )
+        self.assertEqual(auxiliary[0]["action_loss"], "disabled")
+        self.assertEqual(auxiliary[0]["batch_role"], "auxiliary")
+
+    def test_success_auxiliary_event_keeps_expert_episode_primary(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+        self.append_candidate_events()
+        for mode, expected_auxiliary_count in (("event_only", 1), ("both", 2)):
+            with self.subTest(mode=mode):
+                manifest_name = f"success_auxiliary_events_{mode}"
+                args = self.manifest_args(manifest_name)
+                args.include_outcomes = ["success"]
+                args.success_dataset_ids = ["expert_base"]
+                args.success_auxiliary_dataset_ids = ["rollout_round0"]
+                args.success_sample_mode = mode
+                args.event_types = ["interaction_candidate"]
+
+                build_eve_sidecar.build_manifest(args)
+                manifest = build_eve_sidecar.read_json(
+                    self.eve_root / "manifests" / f"{manifest_name}.json"
+                )
+                primary = [
+                    sample
+                    for sample in manifest["samples"]
+                    if sample["batch_role"] == "primary"
+                ]
+                auxiliary = [
+                    sample
+                    for sample in manifest["samples"]
+                    if sample["batch_role"] == "auxiliary"
+                ]
+
+                self.assertEqual(len(primary), 2)
+                self.assertTrue(
+                    all(
+                        sample["dataset_id"] == "expert_base"
+                        for sample in primary
+                    )
+                )
+                self.assertTrue(
+                    all(sample["sample_type"] == "episode" for sample in primary)
+                )
+                self.assertTrue(
+                    all(sample["action_loss"] == "enabled" for sample in primary)
+                )
+                self.assertEqual(len(auxiliary), expected_auxiliary_count)
+                event_auxiliary = [
+                    sample
+                    for sample in auxiliary
+                    if sample["sample_type"] == "event"
+                ]
+                self.assertEqual(len(event_auxiliary), 1)
+                event = event_auxiliary[0]
+                self.assertEqual(event["dataset_id"], "rollout_round0")
+                self.assertEqual(event["event_type"], "interaction_candidate")
+                self.assertEqual(event["episode_outcome"], "success")
+                self.assertEqual(event["action_loss"], "disabled")
+                self.assertEqual(event["sample_role"], "success_auxiliary")
+                self.assertEqual(
+                    event["window_selection"], "core_start_anchor"
+                )
 
 
 if __name__ == "__main__":

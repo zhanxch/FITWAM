@@ -8,6 +8,8 @@ outputs/
 logs/
 video_generation/
 scripts/diagnose/
+scripts/aws/
+review_assets/
 checkpoints
 data/*
 third_party/
@@ -16,6 +18,7 @@ assets/
 runs
 runs/
 evaluate_results/
+artifacts/aws/
 .deepspeed*
 # Data types
 *.jit
@@ -62,6 +65,12 @@ evaluate_results/
 # Credential information that should never be checked in
 credentials
 *.secret
+*.env
+*.pem
+*.key
+*.credentials
+aws-*.json
+iam-*.json
 
 # ------------------------ BELOW IS AUTO-GENERATED FOR PYTHON REPOS ------------------------
 
@@ -89,6 +98,8 @@ results/
 results/*
 !results/dexjoco_async_microwave/
 !results/dexjoco_async_microwave/**
+!results/dexjoco_water_plant_offline_v1/
+!results/dexjoco_water_plant_offline_v1/**
 sdist/
 var/
 wheels/

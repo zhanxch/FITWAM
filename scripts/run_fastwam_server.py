@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import inspect
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -266,16 +265,78 @@ class FastWAMPolicy:
 def _resolve_stats_path(run_dir: Path, dataset_stats_path: str | None) -> Path:
     if dataset_stats_path:
         stats = Path(dataset_stats_path).expanduser().resolve()
-        if not stats.exists():
-            raise FileNotFoundError(f"dataset_stats_path not found: {stats}")
+        if not stats.is_file() or stats.stat().st_size <= 0:
+            raise FileNotFoundError(
+                f"dataset_stats_path must be a non-empty file: {stats}"
+            )
         return stats
     default = run_dir / "dataset_stats.json"
-    if not default.exists():
+    if not default.is_file() or default.stat().st_size <= 0:
         raise FileNotFoundError(
-            f"dataset_stats.json not found under run dir {run_dir}. "
+            f"Non-empty dataset_stats.json not found under run dir {run_dir}. "
             "Pass --dataset-stats-path explicitly."
         )
     return default
+
+
+def _resolve_meta_stats_dir(
+    run_dir: Path,
+    configured_meta_dir: Any,
+    norm_stats_meta_dir: str | None,
+) -> Path:
+    if norm_stats_meta_dir:
+        meta_dir = Path(norm_stats_meta_dir).expanduser().resolve()
+    else:
+        if configured_meta_dir is None or not str(configured_meta_dir).strip():
+            raise ValueError(
+                "norm_stats_source=meta requires processor.norm_stats_meta_dir "
+                "or --norm-stats-meta-dir."
+            )
+        raw = Path(str(configured_meta_dir)).expanduser()
+        meta_dir = raw.resolve() if raw.is_absolute() else (run_dir / raw).resolve()
+    for name in ("stats.json", "modality.json"):
+        path = meta_dir / name
+        if not path.is_file() or path.stat().st_size <= 0:
+            raise FileNotFoundError(
+                f"norm_stats_source=meta requires a non-empty {path}. "
+                "Pass --norm-stats-meta-dir when the frozen artifacts were relocated."
+            )
+    return meta_dir
+
+
+def _resolve_normalization_binding(
+    processor_cfg: Any,
+    *,
+    run_dir: Path,
+    dataset_stats_path: str | None,
+    norm_stats_meta_dir: str | None,
+) -> tuple[str, Path]:
+    norm_stats_source = str(
+        processor_cfg.get("norm_stats_source", "compute")
+    ).strip().lower()
+    if dataset_stats_path is not None and norm_stats_meta_dir is not None:
+        raise ValueError(
+            "--dataset-stats-path and --norm-stats-meta-dir are mutually exclusive"
+        )
+    if norm_stats_source == "meta":
+        if dataset_stats_path is not None:
+            raise ValueError(
+                "The resolved config selects norm_stats_source=meta; "
+                "--dataset-stats-path is not allowed."
+            )
+        meta_dir = _resolve_meta_stats_dir(
+            run_dir,
+            processor_cfg.get("norm_stats_meta_dir"),
+            norm_stats_meta_dir,
+        )
+        processor_cfg["norm_stats_meta_dir"] = str(meta_dir)
+        return "meta", meta_dir
+    if norm_stats_meta_dir is not None:
+        raise ValueError(
+            f"The resolved config selects norm_stats_source={norm_stats_source!r}; "
+            "--norm-stats-meta-dir is not allowed."
+        )
+    return "dataset_stats", _resolve_stats_path(run_dir, dataset_stats_path)
 
 
 def _resolve_run_dir(run_dir: Path) -> Path:
@@ -293,58 +354,6 @@ def _resolve_run_dir(run_dir: Path) -> Path:
 
 
 DEFAULT_INFER_NUM_FRAMES = 33
-
-
-def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
-    if hasattr(cfg, "get"):
-        return cfg.get(key, default)
-    return getattr(cfg, key, default)
-
-
-def _as_path_list(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    return [value]
-
-
-def _resolve_config_path(value: Any, *, run_dir: Path) -> Path:
-    path = Path(str(value)).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    for base in (Path.cwd(), run_dir):
-        candidate = (base / path).resolve()
-        if candidate.exists():
-            return candidate
-    return (Path.cwd() / path).resolve()
-
-
-def _resolve_train_dataset_roots(train_data: Any, *, run_dir: Path) -> list[Path]:
-    dataset_dirs = _cfg_get(train_data, "dataset_dirs")
-    roots = [_resolve_config_path(path, run_dir=run_dir) for path in _as_path_list(dataset_dirs)]
-    if roots:
-        return roots
-
-    manifest_path = _cfg_get(train_data, "manifest_path")
-    if manifest_path:
-        path = _resolve_config_path(manifest_path, run_dir=run_dir)
-        if path.exists():
-            with path.open("r", encoding="utf-8") as f:
-                manifest = json.load(f)
-            return [
-                _resolve_config_path(root, run_dir=run_dir)
-                for root in manifest.get("dataset_roots", {}).values()
-            ]
-    return []
-
-
-def _resolve_train_meta_dir(train_data: Any, *, run_dir: Path) -> Path | None:
-    for root in _resolve_train_dataset_roots(train_data, run_dir=run_dir):
-        meta_dir = root / "meta"
-        if (meta_dir / "stats.json").exists() and (meta_dir / "modality.json").exists():
-            return meta_dir
-    return None
 
 
 def _resolve_inference_horizons(
@@ -409,10 +418,12 @@ def _build_policy_from_run(
     run_dir: Path,
     checkpoint: str,
     dataset_stats_path: str | None,
+    norm_stats_meta_dir: str | None,
     device: str,
     action_horizon: int | None,
     num_inference_steps: int | None,
     load_text_encoder: bool,
+    inference_seed: int | None = None,
 ) -> FastWAMPolicy:
     from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcessor
     from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
@@ -428,6 +439,14 @@ def _build_policy_from_run(
     mixed_precision = _normalize_mixed_precision(str(cfg.get("mixed_precision", "bf16")))
     model_dtype = _mixed_precision_to_model_dtype(mixed_precision)
 
+    processor_cfg = OmegaConf.create(OmegaConf.to_container(cfg.data.train.processor, resolve=True))
+    normalization_kind, normalization_path = _resolve_normalization_binding(
+        processor_cfg,
+        run_dir=run_dir,
+        dataset_stats_path=dataset_stats_path,
+        norm_stats_meta_dir=norm_stats_meta_dir,
+    )
+
     if device.startswith("cuda") and not torch.cuda.is_available():
         print("CUDA unavailable; falling back to CPU.", flush=True)
         device = "cpu"
@@ -440,21 +459,17 @@ def _build_policy_from_run(
     model.load_checkpoint(str(checkpoint_path))
     model.eval()
 
-    processor_cfg = OmegaConf.create(OmegaConf.to_container(cfg.data.train.processor, resolve=True))
-    if str(processor_cfg.get("norm_stats_source", "")) == "meta":
-        train_meta_dir = _resolve_train_meta_dir(cfg.data.train, run_dir=run_dir)
-        if train_meta_dir is not None:
-            processor_cfg.norm_stats_meta_dir = str(train_meta_dir)
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
-    if processor.wants_modality_stats:
+    if normalization_kind == "meta":
         # GR00T/meta path: rebuild normalizer from meta/stats.json + modality.json.
         processor.set_normalizer_from_modality_stats()
-        print(f"  Modality stats (GR00T-style) from: {processor.norm_stats_meta_dir}", flush=True)
+        print(f"  Modality stats (GR00T-style) from: {normalization_path}", flush=True)
     else:
-        stats_path = _resolve_stats_path(run_dir, dataset_stats_path)
-        processor.set_normalizer_from_stats(load_dataset_stats_from_json(str(stats_path)))
-        print(f"  Dataset stats: {stats_path}", flush=True)
+        processor.set_normalizer_from_stats(
+            load_dataset_stats_from_json(str(normalization_path))
+        )
+        print(f"  Dataset stats: {normalization_path}", flush=True)
 
     if action_horizon is None:
         action_horizon, num_video_frames = _resolve_inference_horizons(
@@ -466,9 +481,16 @@ def _build_policy_from_run(
         )
     if num_inference_steps is None:
         num_inference_steps = int(cfg.get("eval_num_inference_steps", 10))
+    evaluation_cfg = cfg.get("EVALUATION", {})
+    resolved_inference_seed = (
+        int(inference_seed)
+        if inference_seed is not None
+        else evaluation_cfg.get("seed")
+    )
     print(f"  Action horizon: {action_horizon}", flush=True)
     print(f"  Num video frames: {num_video_frames}", flush=True)
     print(f"  Num inference steps: {num_inference_steps}", flush=True)
+    print(f"  Inference seed: {resolved_inference_seed}", flush=True)
 
     return FastWAMPolicy(
         model=model,
@@ -477,12 +499,12 @@ def _build_policy_from_run(
         action_horizon=action_horizon,
         num_inference_steps=num_inference_steps,
         num_video_frames=num_video_frames,
-        text_cfg_scale=float(cfg.get("EVALUATION", {}).get("text_cfg_scale", 1.0)),
-        negative_prompt=str(cfg.get("EVALUATION", {}).get("negative_prompt", "")),
-        sigma_shift=cfg.get("EVALUATION", {}).get("sigma_shift"),
-        seed=cfg.get("EVALUATION", {}).get("seed"),
-        rand_device=str(cfg.get("EVALUATION", {}).get("rand_device", "cpu")),
-        tiled=bool(cfg.get("EVALUATION", {}).get("tiled", False)),
+        text_cfg_scale=float(evaluation_cfg.get("text_cfg_scale", 1.0)),
+        negative_prompt=str(evaluation_cfg.get("negative_prompt", "")),
+        sigma_shift=evaluation_cfg.get("sigma_shift"),
+        seed=resolved_inference_seed,
+        rand_device=str(evaluation_cfg.get("rand_device", "cpu")),
+        tiled=bool(evaluation_cfg.get("tiled", False)),
     )
 
 
@@ -491,10 +513,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mock", action="store_true", help="Start mock policy (no model load).")
     parser.add_argument("--run-dir", type=str, default=None)
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--dataset-stats-path", type=str, default=None)
+    normalization = parser.add_mutually_exclusive_group()
+    normalization.add_argument("--dataset-stats-path", type=str, default=None)
+    normalization.add_argument("--norm-stats-meta-dir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--action-horizon", type=int, default=None)
     parser.add_argument("--num-inference-steps", type=int, default=None)
+    parser.add_argument(
+        "--inference-seed",
+        type=int,
+        default=None,
+        help="Override EVALUATION.seed for deterministic diffusion sampling.",
+    )
     parser.add_argument(
         "--load-text-encoder",
         dest="load_text_encoder",
@@ -525,10 +555,12 @@ def main() -> None:
             run_dir=run_dir,
             checkpoint=args.checkpoint,
             dataset_stats_path=args.dataset_stats_path,
+            norm_stats_meta_dir=args.norm_stats_meta_dir,
             device=args.device,
             action_horizon=args.action_horizon,
             num_inference_steps=args.num_inference_steps,
             load_text_encoder=args.load_text_encoder,
+            inference_seed=args.inference_seed,
         )
         print(f"  Run dir: {_resolve_run_dir(run_dir)}", flush=True)
         print(f"  Device: {args.device}", flush=True)

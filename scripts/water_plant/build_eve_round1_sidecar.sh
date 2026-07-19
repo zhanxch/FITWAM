@@ -4,6 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+if [[ "${ALLOW_LEGACY_EVE_ROUND1:-0}" != "1" ]]; then
+  cat >&2 <<'EOF'
+This legacy wrapper does not create the frozen episode-level train/val split
+required by the formal Offline Self-Improving protocol.
+
+Use scripts/water_plant/prepare_offline_self_improving.sh instead.
+Set ALLOW_LEGACY_EVE_ROUND1=1 only to reproduce an older exploratory artifact.
+EOF
+  exit 2
+fi
+
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 
 BASE_DATASET="${BASE_DATASET:-${ROOT_DIR}/data/water_plant_fastwam}"

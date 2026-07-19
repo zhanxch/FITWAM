@@ -2,6 +2,8 @@ train:
   _target_: fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset
   manifest_path: ${oc.env:EVE_MANIFEST_PATH,data/water_plant_fastwam/eve/manifests/train_round1_success_plus_failure_events.json}
   manifest_splits: [train]
+  pair_targets_path: ${oc.env:PAIR_TARGETS_PATH,null}
+  expected_teacher_sha256: ${oc.env:PAIR_TARGETS_TEACHER_SHA256,null}
   dataset_dirs:
     - ${oc.env:BASE_DATASET,data/water_plant_fastwam}
     - ${oc.env:ROLLOUT_RAW,data/water_plant_rollout_200_step6500_raw}
@@ -28,7 +30,7 @@ train:
   camera_key: null
   val_set_proportion: 0.0
   is_training_set: true
-  pretrained_norm_stats: null
+  pretrained_norm_stats: ${oc.env:PRETRAINED_NORM_STATS,null}
   skip_padding_as_possible: false
   concat_multi_camera: horizontal
   video_backend: pyav
@@ -46,8 +48,8 @@ train:
     use_stepwise_action_norm: false
     norm_default_mode: "min/max"
     norm_exception_mode: null
-    norm_stats_source: meta
-    norm_stats_meta_dir: ${oc.env:NORM_STATS_META_DIR,data/water_plant_fastwam/meta}
+    norm_stats_source: ${oc.env:NORM_STATS_SOURCE,meta}
+    norm_stats_meta_dir: ${oc.env:NORM_STATS_META_DIR,null}
     action_state_merger:
       _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
     train_transforms:
@@ -63,8 +65,10 @@ train:
 
 val:
   _target_: fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset
-  manifest_path: ${data.train.manifest_path}
-  manifest_splits: ${data.train.manifest_splits}
+  manifest_path: ${oc.env:EVE_VAL_MANIFEST_PATH}
+  manifest_splits: [val]
+  pair_targets_path: null
+  expected_teacher_sha256: null
   dataset_dirs: ${data.train.dataset_dirs}
   shape_meta: ${data.train.shape_meta}
   num_frames: ${data.train.num_frames}
@@ -74,7 +78,7 @@ val:
   camera_key: null
   val_set_proportion: 0.0
   is_training_set: false
-  pretrained_norm_stats: null
+  pretrained_norm_stats: ${data.train.pretrained_norm_stats}
   skip_padding_as_possible: false
   concat_multi_camera: ${data.train.concat_multi_camera}
   video_backend: ${data.train.video_backend}

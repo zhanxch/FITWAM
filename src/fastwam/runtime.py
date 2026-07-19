@@ -91,6 +91,7 @@ def create_fastwam(
     state_scheduler=None,
     loss=None,
     video_lora=None,
+    offline_steer=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
     model_dtype: torch.dtype = torch.bfloat16,
@@ -155,6 +156,15 @@ def create_fastwam(
         video_lora = OmegaConf.to_container(video_lora, resolve=True)
     video_lora_cfg = normalize_video_lora_config(video_lora)
 
+    if isinstance(offline_steer, DictConfig):
+        offline_steer = OmegaConf.to_container(offline_steer, resolve=True)
+    if offline_steer is None:
+        offline_steer = {}
+    if not isinstance(offline_steer, dict):
+        raise ValueError(
+            f"`offline_steer` must be dict-like, got {type(offline_steer)}"
+        )
+
     model = FastWAM.from_wan22_pretrained(
         device=device,
         torch_dtype=model_dtype,
@@ -184,6 +194,7 @@ def create_fastwam(
         loss_lambda_video=float(loss.get("lambda_video", 1.0)),
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
         loss_lambda_state=float(loss.get("lambda_state", 1.0)),
+        offline_steer_config=offline_steer,
     )
     model.video_lora_enabled = bool(video_lora_cfg.get("enabled", False))
     model.video_lora_config = video_lora_cfg

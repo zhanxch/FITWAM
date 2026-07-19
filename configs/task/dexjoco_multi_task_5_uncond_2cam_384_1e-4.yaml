@@ -1,0 +1,32 @@
+# @package _global_
+
+defaults:
+  - override /data: dexjoco_multi_task_5_2cam
+  - override /model: fastwam
+  - _self_
+
+batch_size: 4
+num_workers: 8
+
+model:
+  mot_checkpoint_mixed_attn: false
+
+lr_scheduler_type: cosine
+learning_rate: 1e-4
+num_epochs: 5
+max_steps: null
+log_every: 10
+save_every: 2000
+eval_every: 2000
+
+gradient_accumulation_steps: 1
+weight_decay: 1e-2
+resume: null
+
+wandb:
+  enabled: true
+  workspace: ${oc.env:WANDB_ENTITY,null}
+  project: ${oc.env:WANDB_PROJECT,fitwam}
+  name: dexjoco_multi_task_5_uncond_2cam_384_1e-4
+  group: dexjoco_multi_task_5
+  mode: online

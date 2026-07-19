@@ -7,13 +7,12 @@ EveRobot sidecar manifests to decide which LeRobot episode windows are sampled.
 from __future__ import annotations
 
 import json
-import random
-import traceback
 from pathlib import Path
 from typing import Any, Optional
 
 import torch
 
+from fastwam.datasets.eve.pair_targets import PairTargetStore
 from fastwam.datasets.lerobot.robot_video_dataset import RobotVideoDataset
 from fastwam.everobot_schema import (
     resolve_manifest_dataset_root,
@@ -23,6 +22,17 @@ from fastwam.utils.logging_config import get_logger
 
 
 logger = get_logger(__name__)
+
+
+_VIDEO_DECODE_RUNTIME_MARKERS = (
+    "decode video",
+    "decoding video",
+    "failed to decode",
+    "video decode",
+    "video decoder",
+    "video stream",
+)
+
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     with Path(path).expanduser().open("r", encoding="utf-8") as f:
@@ -73,9 +83,13 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         dataset_root_overrides: dict[str, str] | None = None,
         strict_manifest_references: bool = True,
         verify_manifest_hash: bool = True,
+        pair_targets_path: str | None = None,
+        expected_teacher_sha256: str | None = None,
         policy_action_prefix_dim: Optional[int] = None,
+        global_sample_stride: int = 1,
         event_sample_stride: Optional[int] = None,
         episode_sample_stride: Optional[int] = None,
+        paired_failure_anchor_only: bool = True,
         max_load_retry: int = 3,
         **kwargs,
     ):
@@ -94,6 +108,20 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             strict=True,
             verify_hash=bool(verify_manifest_hash),
         )
+        self.pair_targets_path = (
+            None
+            if pair_targets_path in {None, ""}
+            else str(Path(pair_targets_path).expanduser().resolve())
+        )
+        self.expected_teacher_sha256 = (
+            None
+            if expected_teacher_sha256 in {None, ""}
+            else str(expected_teacher_sha256)
+        )
+        self._pair_target_store: PairTargetStore | None = None
+        self.pair_target_embedding_dim: int | None = None
+        self.pair_target_teacher_sha256: str | None = None
+        self._validate_pair_target_references()
 
         configured_dataset_dirs = dataset_dirs
         dataset_dirs = []
@@ -130,11 +158,18 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         # resolved exactly.
         self.requested_val_set_proportion = kwargs.pop("val_set_proportion", 0.0)
         kwargs["val_set_proportion"] = 0.0
+        self.global_sample_stride = int(global_sample_stride)
 
-        super().__init__(*args, dataset_dirs=dataset_dirs, **kwargs)
+        super().__init__(
+            *args,
+            dataset_dirs=dataset_dirs,
+            global_sample_stride=self.global_sample_stride,
+            **kwargs,
+        )
 
         self.event_sample_stride = event_sample_stride
         self.episode_sample_stride = episode_sample_stride
+        self.paired_failure_anchor_only = bool(paired_failure_anchor_only)
         self.max_load_retry = int(max_load_retry)
         if self.max_load_retry < 0:
             raise ValueError(f"`max_load_retry` must be >= 0, got {max_load_retry}")
@@ -146,14 +181,126 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
                 f"No trainable Eve windows found in manifest {self.manifest_path}. "
                 f"Check event lengths and num_frames={self.num_frames}."
             )
+        self.sampling_roles = tuple(
+            self._sampling_role(sample["unit"]) for sample in self._samples
+        )
+        self._sampling_role_indices = {
+            role: tuple(
+                index
+                for index, sample_role in enumerate(self.sampling_roles)
+                if sample_role == role
+            )
+            for role in ("primary", "auxiliary")
+        }
 
         logger.info(
-            "EveManifestRobotVideoDataset: manifest=%s units=%d windows=%d dataset_dirs=%d",
+            "EveManifestRobotVideoDataset: manifest=%s units=%d windows=%d "
+            "primary=%d auxiliary=%d dataset_dirs=%d",
             self.manifest_path,
             len(self.manifest.get("samples", [])),
             len(self._samples),
+            len(self._sampling_role_indices["primary"]),
+            len(self._sampling_role_indices["auxiliary"]),
             len(dataset_dirs),
         )
+        if self.pair_targets_path is not None:
+            logger.info(
+                "Eve pair targets: path=%s embedding_dim=%d teacher_sha256=%s",
+                self.pair_targets_path,
+                self.pair_target_embedding_dim,
+                self.pair_target_teacher_sha256,
+            )
+
+    def _validate_pair_target_references(self) -> None:
+        paired_units = [
+            unit
+            for unit in self.manifest.get("samples", [])
+            if self._include_unit(unit) and float(unit.get("pair_weight", 0.0)) > 0.0
+        ]
+        if paired_units and self.pair_targets_path is None:
+            raise ValueError(
+                "The selected manifest contains positive pair weights but "
+                "`pair_targets_path` is not configured."
+            )
+        if self.pair_targets_path is None:
+            return
+
+        with PairTargetStore(
+            self.pair_targets_path,
+            expected_teacher_sha256=self.expected_teacher_sha256,
+        ) as store:
+            self.pair_target_embedding_dim = store.embedding_dim
+            self.pair_target_teacher_sha256 = store.teacher_sha256
+            for unit in paired_units:
+                pair_id = str(unit.get("pair_id") or "")
+                if not pair_id:
+                    raise ValueError(
+                        "A selected manifest unit has positive pair weight without "
+                        "`pair_id`."
+                    )
+                target = store.get(pair_id)
+                split = str(unit.get("split", "train"))
+                if target.split != split:
+                    raise ValueError(
+                        f"Pair {pair_id} target split {target.split!r} does not "
+                        f"match manifest split {split!r}."
+                    )
+                event_id = str(unit.get("event_id") or "")
+                outcome = self._effective_outcome(unit)
+                expected_event_id = (
+                    target.failure_event_id
+                    if outcome == "failure"
+                    else target.success_event_id
+                )
+                if event_id != expected_event_id:
+                    raise ValueError(
+                        f"Pair {pair_id} target does not match manifest event "
+                        f"{event_id!r} for outcome {outcome!r}."
+                    )
+
+    def _ensure_pair_target_store(self) -> PairTargetStore:
+        if self.pair_targets_path is None:
+            raise RuntimeError("Pair targets are not configured for this dataset.")
+        if self._pair_target_store is None:
+            self._pair_target_store = PairTargetStore(
+                self.pair_targets_path,
+                expected_teacher_sha256=self.pair_target_teacher_sha256,
+            )
+        return self._pair_target_store
+
+    def _add_pair_targets(
+        self, data: dict[str, Any], unit: dict[str, Any]
+    ) -> None:
+        embedding_dim = getattr(self, "pair_target_embedding_dim", None)
+        if embedding_dim is None:
+            return
+
+        pair_weight = float(unit.get("pair_weight", 0.0))
+        if pair_weight <= 0.0:
+            data["steer_success_target"] = torch.zeros(
+                embedding_dim, dtype=torch.float32
+            )
+            data["steer_failure_target"] = torch.zeros(
+                embedding_dim, dtype=torch.float32
+            )
+            return
+
+        pair_id = str(unit.get("pair_id") or "")
+        target = self._ensure_pair_target_store().get(
+            pair_id, backend="torch", dtype=torch.float32
+        )
+        data["steer_success_target"] = target.z_plus
+        data["steer_failure_target"] = target.z_minus
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(self.__dict__)
+        state["_pair_target_store"] = None
+        return state
+
+    def __del__(self) -> None:
+        store = getattr(self, "_pair_target_store", None)
+        if store is not None:
+            store.close()
 
     def _build_episode_index(self) -> dict[tuple[str, int], tuple[int, int]]:
         episode_index: dict[tuple[str, int], tuple[int, int]] = {}
@@ -197,6 +344,24 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
                 return False
         return True
 
+    @classmethod
+    def _is_paired_failure_event(cls, unit: dict[str, Any]) -> bool:
+        return (
+            unit.get("sample_type") == "event"
+            and cls._effective_outcome(unit) == "failure"
+            and float(unit.get("pair_weight") or 0.0) > 0.0
+        )
+
+    @staticmethod
+    def _core_start_anchor(
+        unit: dict[str, Any],
+        window_starts: set[int],
+    ) -> int:
+        anchor_frame = int(
+            unit.get("core_start_frame", unit.get("start_frame", 0))
+        )
+        return min(window_starts, key=lambda start: (abs(start - anchor_frame), start))
+
     def _expand_manifest_samples(self) -> list[dict[str, Any]]:
         expanded: list[dict[str, Any]] = []
         skipped_short = 0
@@ -238,7 +403,27 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             if not unit_window_starts:
                 skipped_short += 1
                 continue
-            for window_start in sorted(unit_window_starts):
+            window_selection = unit.get("window_selection")
+            if window_selection not in {None, "", "core_start_anchor"}:
+                raise ValueError(
+                    "Unsupported Eve manifest window_selection "
+                    f"{window_selection!r} for sample "
+                    f"{unit.get('sample_id', unit.get('event_id', '<unknown>'))!r}."
+                )
+            if window_selection == "core_start_anchor":
+                window_starts = [
+                    self._core_start_anchor(unit, unit_window_starts)
+                ]
+            elif (
+                getattr(self, "paired_failure_anchor_only", True)
+                and self._is_paired_failure_event(unit)
+            ):
+                window_starts = [
+                    self._core_start_anchor(unit, unit_window_starts)
+                ]
+            else:
+                window_starts = sorted(unit_window_starts)
+            for window_start in window_starts:
                 expanded.append(
                     {
                         "unit": unit,
@@ -268,9 +453,42 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         return 0.0 if unit.get("action_loss") == "disabled" else 1.0
 
     @staticmethod
-    def _outcome_flag(unit: dict[str, Any]) -> int:
-        outcome = unit.get("event_outcome", unit.get("episode_outcome", "success"))
-        return 1 if outcome == "failure" else 0
+    def _effective_outcome(unit: dict[str, Any]) -> str:
+        event_outcome = unit.get("event_outcome")
+        if event_outcome in {None, "", "unknown"}:
+            return str(unit.get("episode_outcome") or "success")
+        return str(event_outcome)
+
+    @classmethod
+    def _outcome_flag(cls, unit: dict[str, Any]) -> int:
+        return 1 if cls._effective_outcome(unit) == "failure" else 0
+
+    @classmethod
+    def _sampling_role(cls, unit: dict[str, Any]) -> str:
+        """Return the stable binary sampling role for every expanded window."""
+
+        outcome = cls._effective_outcome(unit)
+        is_failure = (
+            unit.get("episode_outcome") == "failure"
+            or unit.get("event_outcome") == "failure"
+        )
+        explicit_role = unit.get("batch_role")
+        if explicit_role not in {None, "", "primary", "auxiliary"}:
+            raise ValueError(
+                "`batch_role` must be `primary` or `auxiliary`, got "
+                f"{explicit_role!r}."
+            )
+        if is_failure:
+            if explicit_role == "primary":
+                raise ValueError(
+                    "Failure manifest units cannot use `batch_role=primary`."
+                )
+            return "auxiliary"
+        if explicit_role:
+            return str(explicit_role)
+        if outcome == "success" and cls._action_loss_weight(unit) > 0.0:
+            return "primary"
+        return "auxiliary"
 
     def _apply_action_loss_window(
         self,
@@ -309,6 +527,16 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             self._action_loss_weight(unit), dtype=torch.float32
         )
         data["outcome_flag"] = torch.tensor(self._outcome_flag(unit), dtype=torch.long)
+        event_weight = unit.get("event_weight")
+        pair_weight = unit.get("pair_weight")
+        data["event_weight"] = torch.tensor(
+            1.0 if event_weight is None else float(event_weight), dtype=torch.float32
+        )
+        data["pair_weight"] = torch.tensor(
+            0.0 if pair_weight is None else float(pair_weight), dtype=torch.float32
+        )
+        data["pair_id"] = str(unit.get("pair_id") or "")
+        self._add_pair_targets(data, unit)
         self._apply_action_loss_window(data, unit, int(sample_ref["window_start"]))
 
         data["eve_manifest_path"] = self.manifest_path
@@ -319,9 +547,39 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         data["eve_episode_index"] = int(sample_ref["episode_index"])
         data["eve_window_start"] = int(sample_ref["window_start"])
         data["eve_window_end"] = int(sample_ref["window_end"])
-        data["eve_event_outcome"] = unit.get("event_outcome", unit.get("episode_outcome", ""))
+        data["eve_event_outcome"] = self._effective_outcome(unit)
         data["eve_sample_role"] = unit.get("sample_role", "")
+        sampling_roles = getattr(self, "sampling_roles", None)
+        data["eve_batch_role"] = (
+            sampling_roles[idx]
+            if sampling_roles is not None
+            else self._sampling_role(unit)
+        )
         return data
+
+    @staticmethod
+    def _is_video_decode_runtime_error(error: RuntimeError) -> bool:
+        module = type(error).__module__.lower()
+        if module.startswith(("av.", "torchcodec.", "torchvision.io")):
+            return True
+        message = str(error).lower()
+        return any(marker in message for marker in _VIDEO_DECODE_RUNTIME_MARKERS)
+
+    def _deterministic_retry_index(
+        self,
+        requested_idx: int,
+        retry_number: int,
+    ) -> int:
+        requested_role = self.sampling_roles[requested_idx]
+        role_indices = self._sampling_role_indices[requested_role]
+        try:
+            position = role_indices.index(requested_idx)
+        except ValueError as error:
+            raise RuntimeError(
+                f"Sample {requested_idx} is absent from role index "
+                f"{requested_role!r}."
+            ) from error
+        return role_indices[(position + retry_number) % len(role_indices)]
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         if idx >= len(self):
@@ -332,15 +590,24 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         for attempt in range(self.max_load_retry + 1):
             try:
                 return self._get_eve(sample_idx)
-            except Exception as err:
+            except (OSError, EOFError) as err:
                 last_error = err
-                logger.warning(
-                    "EveManifest failed to load idx=%d attempt=%d/%d: %s",
-                    sample_idx,
-                    attempt + 1,
-                    self.max_load_retry + 1,
-                    err,
-                )
-                print(traceback.format_exc())
-                sample_idx = random.randrange(len(self._samples))
+            except RuntimeError as err:
+                if not self._is_video_decode_runtime_error(err):
+                    raise
+                last_error = err
+
+            if attempt >= self.max_load_retry:
+                break
+            next_idx = self._deterministic_retry_index(idx, attempt + 1)
+            logger.warning(
+                "EveManifest I/O/decode failure at idx=%d attempt=%d/%d; "
+                "retrying deterministic same-role idx=%d: %s",
+                sample_idx,
+                attempt + 1,
+                self.max_load_retry + 1,
+                next_idx,
+                last_error,
+            )
+            sample_idx = next_idx
         raise RuntimeError(f"Failed to load Eve sample {idx}") from last_error

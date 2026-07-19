@@ -231,6 +231,7 @@ def load_dexjoco_eval_settings(
     run_dir: Path,
     *,
     action_horizon_override: int | None = None,
+    text_embedding_cache_dir_override: str | Path | None = None,
 ) -> dict[str, Any]:
     """Training-run settings for DexJoCo closed-loop eval."""
     config_path = run_dir / "config.yaml"
@@ -263,7 +264,11 @@ def load_dexjoco_eval_settings(
         "policy_action_control_slice": [int(control_action_slice[0]), int(control_action_slice[1])],
         "eve_action_schema_path": action_schema.get("_schema_path"),
         "proprio_output_dim": int(processor["proprio_output_dim"]),
-        "text_embedding_cache_dir": train_data.get("text_embedding_cache_dir"),
+        "text_embedding_cache_dir": (
+            str(Path(text_embedding_cache_dir_override).expanduser().resolve())
+            if text_embedding_cache_dir_override is not None
+            else train_data.get("text_embedding_cache_dir")
+        ),
         "context_len": int(train_data.get("context_len", 128)),
         "load_text_encoder": bool(cfg.get("model", {}).get("load_text_encoder", False)),
         "concat_multi_camera": train_data.get("concat_multi_camera"),

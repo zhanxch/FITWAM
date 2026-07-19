@@ -2,9 +2,10 @@
 """Collect DexJoCo rollouts as a two-camera LeRobot dataset.
 
 By default this keeps the historical water_plant behavior: save failed rollouts only. With
-``--save-all-trajectories`` it saves both successes and failures into one dataset
-and marks failure episodes with the configured failure phrase so the existing
-failure-data training config can zero their action loss.
+``--save-all-trajectories`` it saves both successes and failures into one dataset.
+Every saved rollout has a structured outcome row in ``meta/episode_outcomes.jsonl``.
+The historical failure marker in task text remains the default; formal collection can
+instead keep clean task text with ``--outcome-task-mode clean``.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 from collections import deque
 from pathlib import Path
@@ -60,6 +62,8 @@ from policy_client_async import PolicyClientAsync
 
 DEFAULT_SUCCESS_PROMPT = "Grasp the watering can and apply water to the plant."
 FAILURE_PHRASE = "Failed to finish the whole process."
+OUTCOME_LEDGER_NAME = "episode_outcomes.jsonl"
+OUTCOME_SOURCE = "dexjoco_env"
 VIDEO_KEYS = (
     ("observation.images.front", "front"),
     ("observation.images.wrist", "wrist"),
@@ -75,6 +79,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         required=True,
         help="FastWAM training run directory containing config.yaml.",
+    )
+    parser.add_argument(
+        "--text-embedding-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional runtime relocation of cached task contexts.",
     )
     parser.add_argument("--policy-host", type=str, default="127.0.0.1")
     parser.add_argument("--policy-port", type=int, default=5560)
@@ -121,6 +131,15 @@ def parse_args() -> argparse.Namespace:
         help="Save both successful and failed rollouts instead of keeping failures only.",
     )
     parser.add_argument(
+        "--outcome-task-mode",
+        choices=("task-marker", "clean"),
+        default="task-marker",
+        help=(
+            "task-marker keeps the legacy failure phrase in failed task text; "
+            "clean uses the same instruction text for successful and failed rollouts."
+        ),
+    )
+    parser.add_argument(
         "--trim-failure-seconds",
         type=float,
         default=0.0,
@@ -145,16 +164,180 @@ def read_json(path: Path) -> Any:
         return json.load(f)
 
 
-def write_json(path: Path, payload: Any) -> None:
+def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def write_json(path: Path, payload: Any) -> None:
+    _atomic_write_text(
+        path,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    _atomic_write_text(path, existing + json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    _atomic_write_text(path, text)
+
+
+def make_outcome_row(
+    *,
+    episode_index: int,
+    success: bool,
+    attempt_index: int,
+    seed: int,
+) -> dict[str, Any]:
+    return {
+        "episode_index": int(episode_index),
+        "outcome": "success" if success else "failure",
+        "success": bool(success),
+        "attempt_index": int(attempt_index),
+        "seed": int(seed),
+        "source": OUTCOME_SOURCE,
+    }
+
+
+def validate_outcome_rows(
+    rows: list[dict[str, Any]],
+    *,
+    expected_episode_count: int,
+    attempts: list[dict[str, Any]] | None = None,
+) -> None:
+    by_episode: dict[int, dict[str, Any]] = {}
+    required = {
+        "episode_index",
+        "outcome",
+        "success",
+        "attempt_index",
+        "seed",
+        "source",
+    }
+    for row_number, row in enumerate(rows, start=1):
+        missing = required.difference(row)
+        if missing:
+            raise ValueError(f"Outcome row {row_number} is missing fields: {sorted(missing)}")
+        episode_index = row["episode_index"]
+        attempt_index = row["attempt_index"]
+        seed = row["seed"]
+        success = row["success"]
+        if isinstance(episode_index, bool) or not isinstance(episode_index, int) or episode_index < 0:
+            raise ValueError(f"Invalid episode_index in outcome row {row_number}: {episode_index!r}")
+        if episode_index in by_episode:
+            raise ValueError(f"Duplicate outcome row for episode_index={episode_index}")
+        if isinstance(success, bool) is False:
+            raise ValueError(f"Outcome row {row_number} has non-boolean success={success!r}")
+        expected_outcome = "success" if success else "failure"
+        if row["outcome"] != expected_outcome:
+            raise ValueError(
+                f"Outcome row {row_number} is inconsistent: "
+                f"outcome={row['outcome']!r}, success={success!r}"
+            )
+        if isinstance(attempt_index, bool) or not isinstance(attempt_index, int) or attempt_index < 0:
+            raise ValueError(
+                f"Invalid attempt_index in outcome row {row_number}: {attempt_index!r}"
+            )
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError(f"Invalid seed in outcome row {row_number}: {seed!r}")
+        if row["source"] != OUTCOME_SOURCE:
+            raise ValueError(
+                f"Outcome row {row_number} has source={row['source']!r}; "
+                f"expected {OUTCOME_SOURCE!r}"
+            )
+        by_episode[episode_index] = row
+
+    expected = set(range(expected_episode_count))
+    actual = set(by_episode)
+    if actual != expected:
+        raise ValueError(
+            "Outcome ledger must contain exactly one row per saved episode: "
+            f"missing={sorted(expected - actual)} extra={sorted(actual - expected)}"
+        )
+
+    if attempts is None:
+        return
+    attempt_rows: dict[int, dict[str, Any]] = {}
+    for attempt in attempts:
+        saved_episode_index = attempt.get("saved_episode_index")
+        if saved_episode_index is None:
+            continue
+        saved_episode_index = int(saved_episode_index)
+        if saved_episode_index in attempt_rows:
+            raise ValueError(
+                f"Attempt log maps multiple attempts to saved episode {saved_episode_index}"
+            )
+        attempt_rows[saved_episode_index] = attempt
+    if set(attempt_rows) != expected:
+        raise ValueError(
+            "Attempt log and outcome ledger disagree on saved episodes: "
+            f"attempt_only={sorted(set(attempt_rows) - expected)} "
+            f"ledger_only={sorted(expected - set(attempt_rows))}"
+        )
+    for episode_index, row in by_episode.items():
+        attempt = attempt_rows[episode_index]
+        if (
+            int(attempt["attempt_index"]) != row["attempt_index"]
+            or int(attempt["seed"]) != row["seed"]
+            or bool(attempt["success"]) != row["success"]
+        ):
+            raise ValueError(
+                f"Outcome ledger row for episode {episode_index} disagrees with attempt log"
+            )
+
+
+def _legacy_outcome_rows_from_attempts(
+    attempts: list[dict[str, Any]],
+    *,
+    expected_episode_count: int,
+) -> list[dict[str, Any]]:
+    rows = []
+    for attempt in attempts:
+        saved_episode_index = attempt.get("saved_episode_index")
+        if saved_episode_index is None:
+            continue
+        rows.append(
+            make_outcome_row(
+                episode_index=int(saved_episode_index),
+                success=bool(attempt["success"]),
+                attempt_index=int(attempt["attempt_index"]),
+                seed=int(attempt["seed"]),
+            )
+        )
+    rows.sort(key=lambda row: row["episode_index"])
+    validate_outcome_rows(
+        rows,
+        expected_episode_count=expected_episode_count,
+        attempts=attempts,
+    )
+    return rows
 
 
 def save_episode_video(frames: list[np.ndarray], path: Path, fps: int) -> None:
@@ -225,6 +408,337 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         return []
     with path.open("r", encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def _load_jsonl_through_boundary(
+    path: Path,
+    *,
+    boundary: int,
+    label: str,
+) -> list[dict[str, Any]]:
+    if not path.exists():
+        if boundary:
+            raise ValueError(f"{label} is missing before committed boundary {boundary}: {path}")
+        return []
+
+    rows: list[dict[str, Any]] = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if len(rows) == boundary:
+            break
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{label} is corrupt inside committed prefix at line {line_number}"
+            ) from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"{label} row {line_number} must be a JSON object")
+        rows.append(row)
+
+    if len(rows) < boundary:
+        raise ValueError(
+            f"{label} has {len(rows)} rows, shorter than committed boundary {boundary}"
+        )
+    return rows
+
+
+def _validate_indexed_prefix(
+    rows: list[dict[str, Any]],
+    *,
+    boundary: int,
+    label: str,
+) -> list[dict[str, Any]]:
+    prefix = rows[:boundary]
+    for expected_index, row in enumerate(prefix):
+        actual_index = row.get("episode_index")
+        if actual_index != expected_index:
+            raise ValueError(
+                f"{label} committed row {expected_index} has "
+                f"episode_index={actual_index!r}"
+            )
+    return prefix
+
+
+def _parquet_num_rows(path: Path) -> int:
+    return int(pq.read_metadata(path).num_rows)
+
+
+def _episode_file_index(path: Path) -> int | None:
+    stem = path.stem
+    if not stem.startswith("episode_"):
+        return None
+    suffix = stem.removeprefix("episode_")
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _reconcile_episode_files(
+    output_dataset: Path,
+    info: dict[str, Any],
+    episodes: list[dict[str, Any]],
+    *,
+    boundary: int,
+) -> None:
+    for episode_index, row in enumerate(episodes):
+        chunk = episode_index // int(info["chunks_size"])
+        parquet_path = output_dataset / info["data_path"].format(
+            episode_chunk=chunk,
+            episode_index=episode_index,
+        )
+        if not parquet_path.is_file() or parquet_path.stat().st_size <= 0:
+            raise ValueError(
+                f"Committed episode {episode_index} is missing parquet: {parquet_path}"
+            )
+        expected_length = int(row["length"])
+        actual_length = _parquet_num_rows(parquet_path)
+        if actual_length != expected_length:
+            raise ValueError(
+                f"Committed episode {episode_index} parquet length mismatch: "
+                f"{actual_length} != {expected_length}"
+            )
+        for video_key, _ in VIDEO_KEYS:
+            video_path = output_dataset / info["video_path"].format(
+                episode_chunk=chunk,
+                video_key=video_key,
+                episode_index=episode_index,
+            )
+            if not video_path.is_file() or video_path.stat().st_size <= 0:
+                raise ValueError(
+                    f"Committed episode {episode_index} is missing video {video_key}: "
+                    f"{video_path}"
+                )
+
+    artifact_roots = (
+        (output_dataset / "data", "*.parquet"),
+        (output_dataset / "videos", "*.mp4"),
+    )
+    for root, pattern in artifact_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob(pattern):
+            episode_index = _episode_file_index(path)
+            if episode_index is not None and episode_index >= boundary:
+                path.unlink()
+
+
+def _next_attempt_index(attempts: list[dict[str, Any]]) -> int:
+    if not attempts:
+        return 0
+    indices = [int(item["attempt_index"]) for item in attempts]
+    if len(indices) != len(set(indices)):
+        raise ValueError("collection_summary attempt_log has duplicate attempt_index values")
+    if indices != sorted(indices):
+        raise ValueError("collection_summary attempt_log is not ordered by attempt_index")
+    return indices[-1] + 1
+
+
+def _validate_summary_boundary(
+    summary: dict[str, Any],
+    *,
+    requested_base_seed: int | None,
+    expected_mode: str,
+    expected_outcome_task_mode: str,
+) -> tuple[int, list[dict[str, Any]]]:
+    if "mode" in summary and summary["mode"] != expected_mode:
+        raise ValueError(
+            f"Resume mode mismatch: summary={summary['mode']!r}, requested={expected_mode!r}"
+        )
+    if (
+        "outcome_task_mode" in summary
+        and summary["outcome_task_mode"] != expected_outcome_task_mode
+    ):
+        raise ValueError(
+            "Resume outcome_task_mode mismatch: "
+            f"summary={summary['outcome_task_mode']!r}, "
+            f"requested={expected_outcome_task_mode!r}"
+        )
+    attempts = summary.get("attempt_log", [])
+    if not isinstance(attempts, list) or any(not isinstance(row, dict) for row in attempts):
+        raise ValueError("collection_summary.attempt_log must be a list of objects")
+
+    saved_indices = [
+        int(row["saved_episode_index"])
+        for row in attempts
+        if row.get("saved_episode_index") is not None
+    ]
+    if "episodes" in summary:
+        boundary = int(summary["episodes"])
+    else:
+        boundary = len(saved_indices)
+    if boundary < 0:
+        raise ValueError(f"Invalid collection_summary episode boundary: {boundary}")
+    if saved_indices != list(range(boundary)):
+        raise ValueError(
+            "collection_summary attempt_log does not map exactly to committed episodes "
+            f"0..{boundary - 1}: {saved_indices}"
+        )
+    if "attempts" in summary and int(summary["attempts"]) != len(attempts):
+        raise ValueError(
+            "collection_summary attempts count disagrees with attempt_log: "
+            f"{summary['attempts']} != {len(attempts)}"
+        )
+    if expected_mode == "save_all" and len(saved_indices) != len(attempts):
+        raise ValueError("save_all summary contains an attempt without a saved episode")
+
+    saved_attempts = [
+        row for row in attempts if row.get("saved_episode_index") is not None
+    ]
+    committed_failures = sum(not bool(row["success"]) for row in saved_attempts)
+    committed_successes = sum(bool(row["success"]) for row in saved_attempts)
+    if "failures" in summary and int(summary["failures"]) != committed_failures:
+        raise ValueError(
+            "collection_summary failures count disagrees with committed attempts: "
+            f"{summary['failures']} != {committed_failures}"
+        )
+    if (
+        "successes_saved" in summary
+        and int(summary["successes_saved"]) != committed_successes
+    ):
+        raise ValueError(
+            "collection_summary successes_saved count disagrees with committed attempts: "
+            f"{summary['successes_saved']} != {committed_successes}"
+        )
+
+    next_attempt = _next_attempt_index(attempts)
+    summary_base_seed = summary.get("base_seed")
+    if summary_base_seed is not None:
+        summary_base_seed = int(summary_base_seed)
+        if requested_base_seed is not None and summary_base_seed != requested_base_seed:
+            raise ValueError(
+                f"Resume seed mismatch: summary base_seed={summary_base_seed}, "
+                f"requested={requested_base_seed}"
+            )
+    elif attempts:
+        inferred = {
+            int(row["seed"]) - int(row["attempt_index"])
+            for row in attempts
+        }
+        if len(inferred) != 1:
+            raise ValueError("Cannot infer one base seed from collection_summary attempt_log")
+        summary_base_seed = inferred.pop()
+        if requested_base_seed is not None and summary_base_seed != requested_base_seed:
+            raise ValueError(
+                f"Resume seed mismatch: inferred base_seed={summary_base_seed}, "
+                f"requested={requested_base_seed}"
+            )
+    elif requested_base_seed is not None:
+        summary_base_seed = requested_base_seed
+
+    if summary_base_seed is not None:
+        for row in attempts:
+            expected_seed = int(summary_base_seed) + int(row["attempt_index"])
+            if int(row["seed"]) != expected_seed:
+                raise ValueError(
+                    f"Attempt {row['attempt_index']} seed mismatch: "
+                    f"{row['seed']} != {expected_seed}"
+                )
+    if "next_attempt_index" in summary and int(summary["next_attempt_index"]) != next_attempt:
+        raise ValueError(
+            "collection_summary next_attempt_index disagrees with attempt_log: "
+            f"{summary['next_attempt_index']} != {next_attempt}"
+        )
+    return boundary, attempts
+
+
+def reconcile_resume_dataset(
+    output_dataset: Path,
+    *,
+    requested_base_seed: int | None,
+    total_tasks: int,
+    expected_mode: str,
+    expected_outcome_task_mode: str,
+) -> tuple[dict[str, Any], int, int, list[dict[str, dict]], list[dict[str, Any]]]:
+    summary_path = output_dataset / "collection_summary.json"
+    if not summary_path.exists():
+        raise ValueError(
+            "Cannot safely resume without collection_summary.json commit boundary"
+        )
+    summary = read_json(summary_path)
+    boundary, attempts = _validate_summary_boundary(
+        summary,
+        requested_base_seed=requested_base_seed,
+        expected_mode=expected_mode,
+        expected_outcome_task_mode=expected_outcome_task_mode,
+    )
+    info = read_json(output_dataset / "meta" / "info.json")
+
+    episodes_path = output_dataset / "meta" / "episodes.jsonl"
+    stats_path = output_dataset / "meta" / "episodes_stats.jsonl"
+    ledger_path = output_dataset / "meta" / OUTCOME_LEDGER_NAME
+    episodes = _validate_indexed_prefix(
+        _load_jsonl_through_boundary(
+            episodes_path,
+            boundary=boundary,
+            label="episodes.jsonl",
+        ),
+        boundary=boundary,
+        label="episodes.jsonl",
+    )
+    stats_rows = _validate_indexed_prefix(
+        _load_jsonl_through_boundary(
+            stats_path,
+            boundary=boundary,
+            label="episodes_stats.jsonl",
+        ),
+        boundary=boundary,
+        label="episodes_stats.jsonl",
+    )
+
+    if ledger_path.exists():
+        outcome_rows = _validate_indexed_prefix(
+            _load_jsonl_through_boundary(
+                ledger_path,
+                boundary=boundary,
+                label=OUTCOME_LEDGER_NAME,
+            ),
+            boundary=boundary,
+            label=OUTCOME_LEDGER_NAME,
+        )
+    elif boundary:
+        outcome_rows = _legacy_outcome_rows_from_attempts(
+            attempts,
+            expected_episode_count=boundary,
+        )
+    else:
+        outcome_rows = []
+    validate_outcome_rows(
+        outcome_rows,
+        expected_episode_count=boundary,
+        attempts=attempts,
+    )
+
+    _reconcile_episode_files(
+        output_dataset,
+        info,
+        episodes,
+        boundary=boundary,
+    )
+    write_jsonl(episodes_path, episodes)
+    write_jsonl(stats_path, stats_rows)
+    write_jsonl(ledger_path, outcome_rows)
+
+    total_frames = sum(int(row["length"]) for row in episodes)
+    if "frames" in summary and int(summary["frames"]) != total_frames:
+        raise ValueError(
+            f"collection_summary frames={summary['frames']} disagrees with "
+            f"committed episode lengths={total_frames}"
+        )
+    episode_stats = [cast_stats_to_numpy(item["stats"]) for item in stats_rows]
+    stats_file = output_dataset / "meta" / "stats.json"
+    if episode_stats:
+        write_json(stats_file, serialize_dict(aggregate_stats(episode_stats)))
+    else:
+        stats_file.unlink(missing_ok=True)
+    update_info(
+        output_dataset,
+        info,
+        num_episodes=boundary,
+        total_frames=total_frames,
+        total_tasks=total_tasks,
+    )
+    return info, boundary, total_frames, episode_stats, attempts
 
 
 def _feature_stats(array: np.ndarray, *, keepdims: bool) -> dict[str, np.ndarray]:
@@ -318,6 +832,8 @@ def prepare_dataset(
     overwrite: bool,
     resume: bool,
     save_all_trajectories: bool,
+    outcome_task_mode: str,
+    base_seed: int | None = None,
 ) -> tuple[dict, int, int, list[dict[str, dict]], list[dict[str, Any]]]:
     if overwrite and resume:
         raise ValueError("--overwrite and --resume are mutually exclusive")
@@ -327,25 +843,27 @@ def prepare_dataset(
             raise FileNotFoundError(f"Cannot resume missing dataset: {output_dataset}")
         info = read_json(output_dataset / "meta" / "info.json")
         task_lines = load_jsonl(output_dataset / "meta" / "tasks.jsonl")
-        expected_tasks = [success_task, failure_task] if save_all_trajectories else [failure_task]
+        if outcome_task_mode == "clean":
+            expected_tasks = [success_task]
+        else:
+            expected_tasks = (
+                [success_task, failure_task] if save_all_trajectories else [failure_task]
+            )
         existing_tasks = [item.get("task") for item in task_lines]
         if existing_tasks != expected_tasks:
             raise ValueError(
                 "Existing dataset task text does not match requested collection mode: "
                 f"existing={existing_tasks!r} expected={expected_tasks!r}"
             )
-        episode_stats = [
-            cast_stats_to_numpy(item["stats"])
-            for item in load_jsonl(output_dataset / "meta" / "episodes_stats.jsonl")
-        ]
-        summary_path = output_dataset / "collection_summary.json"
-        attempts = read_json(summary_path).get("attempt_log", []) if summary_path.exists() else []
-        return (
-            info,
-            int(info.get("total_episodes", 0)),
-            int(info.get("total_frames", 0)),
-            episode_stats,
-            attempts,
+        total_tasks = 1 if outcome_task_mode == "clean" else (
+            2 if save_all_trajectories else 1
+        )
+        return reconcile_resume_dataset(
+            output_dataset,
+            requested_base_seed=base_seed,
+            total_tasks=total_tasks,
+            expected_mode="save_all" if save_all_trajectories else "failures_only",
+            expected_outcome_task_mode=outcome_task_mode,
         )
 
     if output_dataset.exists():
@@ -361,7 +879,8 @@ def prepare_dataset(
     info = copy.deepcopy(read_json(source_dataset / "meta" / "info.json"))
     info["total_episodes"] = 0
     info["total_frames"] = 0
-    info["total_tasks"] = 2 if save_all_trajectories else 1
+    total_tasks = 1 if outcome_task_mode == "clean" else (2 if save_all_trajectories else 1)
+    info["total_tasks"] = total_tasks
     info["total_videos"] = 0
     info["total_chunks"] = 1
     info["splits"] = {"train": "0:0"}
@@ -369,11 +888,14 @@ def prepare_dataset(
     info["data_path"] = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
     info["video_path"] = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
     write_json(output_dataset / "meta" / "info.json", info)
-    if save_all_trajectories:
+    if outcome_task_mode == "clean":
+        append_jsonl(output_dataset / "meta" / "tasks.jsonl", {"task_index": 0, "task": success_task})
+    elif save_all_trajectories:
         append_jsonl(output_dataset / "meta" / "tasks.jsonl", {"task_index": 0, "task": success_task})
         append_jsonl(output_dataset / "meta" / "tasks.jsonl", {"task_index": 1, "task": failure_task})
     else:
         append_jsonl(output_dataset / "meta" / "tasks.jsonl", {"task_index": 0, "task": failure_task})
+    write_jsonl(output_dataset / "meta" / OUTCOME_LEDGER_NAME, [])
 
     modality_path = source_dataset / "meta" / "modality.json"
     if modality_path.exists():
@@ -617,7 +1139,10 @@ def main() -> None:
         overwrite=args.overwrite,
         resume=args.resume,
         save_all_trajectories=save_all,
+        outcome_task_mode=args.outcome_task_mode,
+        base_seed=args.seed,
     )
+    total_tasks = 1 if args.outcome_task_mode == "clean" else (2 if save_all else 1)
     if save_all:
         failures = sum(
             1 for item in attempts if not item.get("success", False) and item.get("saved_episode_index") is not None
@@ -629,7 +1154,10 @@ def main() -> None:
         failures = saved_episodes
         successes_saved = 0
 
-    eval_settings = load_dexjoco_eval_settings(run_dir)
+    eval_settings = load_dexjoco_eval_settings(
+        run_dir,
+        text_embedding_cache_dir_override=args.text_embedding_cache_dir,
+    )
     adapter = DexJoCoFastWAMAdapter(eval_settings)
     replan_steps = args.replan_steps
     if replan_steps is None:
@@ -657,8 +1185,39 @@ def main() -> None:
             flush=True,
         )
     print(f"[collect] policy={args.policy_host}:{args.policy_port} replan_steps={replan_steps}", flush=True)
+    print(f"[collect] outcome_task_mode={args.outcome_task_mode}", flush=True)
     print(f"[collect] failure_task={failure_task}", flush=True)
 
+    def persist_summary(status: str) -> None:
+        write_json(
+            output_dataset / "collection_summary.json",
+            {
+                "status": status,
+                "mode": "save_all" if save_all else "failures_only",
+                "outcome_task_mode": args.outcome_task_mode,
+                "target_episodes": target_episodes if save_all else None,
+                "target_failures": args.target_failures,
+                "max_attempts": args.max_attempts,
+                "base_seed": int(args.seed),
+                "next_attempt_index": _next_attempt_index(attempts),
+                "episodes": saved_episodes,
+                "frames": global_index,
+                "failures": failures,
+                "successes_saved": successes_saved,
+                "attempts": len(attempts),
+                "successes_discarded": sum(
+                    1
+                    for item in attempts
+                    if item["success"] and item.get("saved_episode_index") is None
+                ),
+                "success_task": base_task,
+                "failure_task": failure_task,
+                "output_dataset": str(output_dataset),
+                "attempt_log": attempts,
+            },
+        )
+
+    persist_summary("running")
     policy = PolicyClientAsync(
         host=args.policy_host,
         port=args.policy_port,
@@ -669,7 +1228,7 @@ def main() -> None:
         raise RuntimeError(f"Policy server ping failed at {args.policy_host}:{args.policy_port}")
 
     try:
-        for attempt_idx in range(len(attempts), args.max_attempts):
+        for attempt_idx in range(_next_attempt_index(attempts), args.max_attempts):
             if save_all and saved_episodes >= target_episodes:
                 break
             if (not save_all) and failures >= args.target_failures:
@@ -705,10 +1264,15 @@ def main() -> None:
                 flush=True,
             )
             if episode["success"] and not save_all:
+                persist_summary("running")
                 continue
 
-            task_text = base_task if episode["success"] else failure_task
-            task_index = 0 if (save_all and episode["success"]) else (1 if save_all else 0)
+            if args.outcome_task_mode == "clean":
+                task_text = base_task
+                task_index = 0
+            else:
+                task_text = base_task if episode["success"] else failure_task
+                task_index = 0 if (save_all and episode["success"]) else (1 if save_all else 0)
             if not episode["success"]:
                 trim_steps = int(round(float(args.trim_failure_seconds) * float(fps)))
                 episode = trim_episode_tail(episode, trim_steps)
@@ -728,6 +1292,15 @@ def main() -> None:
                 task_index=task_index,
                 fps=fps,
             )
+            append_jsonl(
+                output_dataset / "meta" / OUTCOME_LEDGER_NAME,
+                make_outcome_row(
+                    episode_index=saved_episodes,
+                    success=bool(episode["success"]),
+                    attempt_index=attempt_idx,
+                    seed=seed,
+                ),
+            )
             global_index += length
             saved_episodes += 1
             if episode["success"]:
@@ -739,26 +1312,9 @@ def main() -> None:
                 info,
                 num_episodes=saved_episodes,
                 total_frames=global_index,
-                total_tasks=2 if save_all else 1,
+                total_tasks=total_tasks,
             )
-            write_json(
-                output_dataset / "collection_summary.json",
-                {
-                    "status": "running",
-                    "mode": "save_all" if save_all else "failures_only",
-                    "target_episodes": target_episodes if save_all else None,
-                    "target_failures": args.target_failures,
-                    "max_attempts": args.max_attempts,
-                    "episodes": saved_episodes,
-                    "failures": failures,
-                    "successes_saved": successes_saved,
-                    "attempts": len(attempts),
-                    "successes_discarded": sum(1 for item in attempts if item["success"] and item.get("saved_episode_index") is None),
-                    "success_task": base_task,
-                    "failure_task": failure_task,
-                    "attempt_log": attempts,
-                },
-            )
+            persist_summary("running")
             if save_all:
                 print(f"[collect] saved episode {saved_episodes}/{target_episodes} failures={failures}", flush=True)
             else:
@@ -766,6 +1322,12 @@ def main() -> None:
     finally:
         policy.close()
 
+    outcome_rows = load_jsonl(output_dataset / "meta" / OUTCOME_LEDGER_NAME)
+    validate_outcome_rows(
+        outcome_rows,
+        expected_episode_count=saved_episodes,
+        attempts=attempts,
+    )
     if stats_list:
         write_json(output_dataset / "meta" / "stats.json", serialize_dict(aggregate_stats(stats_list)))
     update_info(
@@ -773,28 +1335,15 @@ def main() -> None:
         info,
         num_episodes=saved_episodes,
         total_frames=global_index,
-        total_tasks=2 if save_all else 1,
+        total_tasks=total_tasks,
     )
-    write_json(
-        output_dataset / "collection_summary.json",
-        {
-            "status": "complete"
-            if ((save_all and saved_episodes >= target_episodes) or ((not save_all) and failures >= args.target_failures))
-            else "incomplete",
-            "mode": "save_all" if save_all else "failures_only",
-            "target_episodes": target_episodes if save_all else None,
-            "target_failures": args.target_failures,
-            "max_attempts": args.max_attempts,
-            "episodes": saved_episodes,
-            "failures": failures,
-            "successes_saved": successes_saved,
-            "attempts": len(attempts),
-            "successes_discarded": sum(1 for item in attempts if item["success"] and item.get("saved_episode_index") is None),
-            "success_task": base_task,
-            "failure_task": failure_task,
-            "output_dataset": str(output_dataset),
-            "attempt_log": attempts,
-        },
+    persist_summary(
+        "complete"
+        if (
+            (save_all and saved_episodes >= target_episodes)
+            or ((not save_all) and failures >= args.target_failures)
+        )
+        else "incomplete"
     )
     print(
         f"[collect] finished episodes={saved_episodes} failures={failures} "

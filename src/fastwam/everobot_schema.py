@@ -6,6 +6,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -196,6 +197,74 @@ def _validate_sample(sample: Any, index: int) -> str:
     if failure_frame is not None:
         if not _is_int(failure_frame) or not start <= failure_frame < end:
             raise ValueError(f"{label}.failure_frame must lie inside the sample interval")
+
+    event_weight = sample.get("event_weight")
+    if event_weight is not None and (
+        isinstance(event_weight, bool)
+        or not isinstance(event_weight, (int, float))
+        or not math.isfinite(float(event_weight))
+        or not 0.0 <= float(event_weight) <= 1.0
+    ):
+        raise ValueError(f"{label}.event_weight must be a finite number in [0, 1]")
+    for field in ("absolute_confidence", "episode_sampling_weight"):
+        value = sample.get(field)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError(f"{label}.{field} must be a finite number in [0, 1]")
+
+    pair_weight = sample.get("pair_weight")
+    if pair_weight is not None and (
+        isinstance(pair_weight, bool)
+        or not isinstance(pair_weight, (int, float))
+        or not math.isfinite(float(pair_weight))
+        or not 0.0 <= float(pair_weight) <= 1.0
+    ):
+        raise ValueError(f"{label}.pair_weight must be a finite number in [0, 1]")
+
+    pair_id = sample.get("pair_id")
+    if pair_id is not None and (
+        not isinstance(pair_id, str) or not pair_id.strip()
+    ):
+        raise ValueError(f"{label}.pair_id must be a non-empty string when provided")
+    if pair_weight is not None and float(pair_weight) > 0.0 and pair_id is None:
+        raise ValueError(f"{label}.pair_id is required when pair_weight is positive")
+
+    has_core_start = "core_start_frame" in sample
+    has_core_end = "core_end_frame" in sample
+    if has_core_start != has_core_end:
+        raise ValueError(
+            f"{label} requires both core_start_frame and core_end_frame"
+        )
+    if has_core_start:
+        _validate_interval(
+            [sample["core_start_frame"], sample["core_end_frame"]],
+            label=f"{label} core frame interval",
+            lower_bound=start,
+            upper_bound=end,
+        )
+
+    episode_outcome = sample.get("episode_outcome")
+    if episode_outcome is not None and episode_outcome not in {
+        "success",
+        "failure",
+    }:
+        raise ValueError(
+            f"{label}.episode_outcome must be 'success' or 'failure'"
+        )
+
+    event_outcome = sample.get("event_outcome")
+    if event_outcome is not None and event_outcome not in {
+        "success",
+        "failure",
+        "unknown",
+    }:
+        raise ValueError(
+            f"{label}.event_outcome must be 'success', 'failure', or 'unknown'"
+        )
 
     annotation = sample.get("annotation")
     if annotation is not None:

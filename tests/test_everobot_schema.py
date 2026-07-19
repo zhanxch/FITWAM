@@ -1,4 +1,5 @@
 import copy
+import math
 import unittest
 from pathlib import Path
 
@@ -157,6 +158,106 @@ class EveRobotSchemaTest(unittest.TestCase):
                     manifest["samples"][0][field] = value
                 manifest["manifest_hash"] = compute_manifest_hash(manifest)
                 with self.assertRaises(ValueError):
+                    validate_manifest(manifest)
+
+    def test_optional_soft_event_fields_are_valid(self):
+        manifest = make_manifest()
+        sample = manifest["samples"][1]
+        sample.update(
+            {
+                "event_weight": 0.75,
+                "core_start_frame": 6,
+                "core_end_frame": 18,
+                "episode_outcome": "failure",
+                "event_outcome": "unknown",
+            }
+        )
+        manifest["manifest_hash"] = compute_manifest_hash(manifest)
+
+        self.assertIs(validate_manifest(manifest), manifest)
+
+    def test_event_weight_must_be_finite_and_bounded(self):
+        for value in (-0.01, 1.01, math.nan, math.inf, True, "0.5"):
+            with self.subTest(value=value):
+                manifest = make_manifest()
+                manifest["samples"][1]["event_weight"] = value
+                with self.assertRaisesRegex(ValueError, "event_weight"):
+                    validate_manifest(manifest)
+
+        for value in (0.0, 1.0):
+            with self.subTest(value=value):
+                manifest = make_manifest()
+                manifest["samples"][1]["event_weight"] = value
+                manifest["manifest_hash"] = compute_manifest_hash(manifest)
+                self.assertIs(validate_manifest(manifest), manifest)
+
+    def test_candidate_confidence_fields_must_be_finite_and_bounded(self):
+        for field in ("absolute_confidence", "episode_sampling_weight"):
+            for value in (-0.1, 1.1, float("nan"), True):
+                with self.subTest(field=field, value=value):
+                    manifest = make_manifest()
+                    manifest["samples"][1][field] = value
+                    with self.assertRaisesRegex(ValueError, field):
+                        validate_manifest(manifest)
+
+            for value in (0.0, 1.0):
+                with self.subTest(field=field, value=value):
+                    manifest = make_manifest()
+                    manifest["samples"][1][field] = value
+                    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+                    self.assertIs(validate_manifest(manifest), manifest)
+
+    def test_pair_fields_require_explicit_valid_pair(self):
+        for value in (-0.01, 1.01, math.nan, math.inf, True, "0.5"):
+            with self.subTest(value=value):
+                manifest = make_manifest()
+                manifest["samples"][1]["pair_weight"] = value
+                with self.assertRaisesRegex(ValueError, "pair_weight"):
+                    validate_manifest(manifest)
+
+        for value in ("", "   ", 7, False):
+            with self.subTest(value=value):
+                manifest = make_manifest()
+                manifest["samples"][1]["pair_id"] = value
+                with self.assertRaisesRegex(ValueError, "pair_id"):
+                    validate_manifest(manifest)
+
+        manifest = make_manifest()
+        manifest["samples"][1]["pair_weight"] = 0.5
+        with self.assertRaisesRegex(ValueError, "pair_id"):
+            validate_manifest(manifest)
+
+        manifest["samples"][1]["pair_id"] = "pair-1"
+        manifest["manifest_hash"] = compute_manifest_hash(manifest)
+        self.assertIs(validate_manifest(manifest), manifest)
+
+    def test_core_interval_must_be_complete_and_inside_sample(self):
+        invalid_updates = (
+            {"core_start_frame": 6},
+            {"core_end_frame": 18},
+            {"core_start_frame": 3, "core_end_frame": 18},
+            {"core_start_frame": 6, "core_end_frame": 21},
+            {"core_start_frame": 8, "core_end_frame": 8},
+        )
+        for updates in invalid_updates:
+            with self.subTest(updates=updates):
+                manifest = make_manifest()
+                manifest["samples"][1].update(updates)
+                manifest["manifest_hash"] = compute_manifest_hash(manifest)
+                with self.assertRaisesRegex(ValueError, "core"):
+                    validate_manifest(manifest)
+
+    def test_optional_outcomes_use_declared_vocabularies(self):
+        invalid_updates = (
+            {"episode_outcome": "unknown"},
+            {"event_outcome": "partial"},
+        )
+        for updates in invalid_updates:
+            with self.subTest(updates=updates):
+                manifest = make_manifest()
+                manifest["samples"][1].update(updates)
+                manifest["manifest_hash"] = compute_manifest_hash(manifest)
+                with self.assertRaisesRegex(ValueError, "outcome"):
                     validate_manifest(manifest)
 
     def test_explicit_dataset_root_overrides_take_precedence(self):

@@ -1,0 +1,68 @@
+# @package _global_
+
+defaults:
+  - override /data: eve_water_plant_round1_failure_events
+  - override /model: fastwam
+  - _self_
+
+output_dir: ./runs/dexjoco_water_plant_offline_self_improving/${oc.env:RUN_ID}
+
+batch_size: 4
+num_workers: 4
+role_balanced_sampling:
+  enabled: true
+  primary_per_batch: 2
+  seed: ${seed}
+
+model:
+  proprio_dim: ${data.train.processor.proprio_output_dim}
+  state_dit_config: null
+  skip_dit_load_from_pretrain: true
+  action_dit_pretrained_path: null
+
+lr_scheduler_type: cosine
+learning_rate: 1.0e-4
+num_epochs: 100
+max_steps: 6500
+log_every: 10
+save_every: 500
+save_weights_every: 0
+save_weight_steps: [500, 1000, 3000, 5000, 6000, 6500]
+save_state_every: 1500
+state_keep_last: 1
+eval_every: 500
+eval_num_inference_steps: 10
+eval_num_samples: 8
+eval_seed: 20260717
+best_metric: val_base_loss
+best_metric_mode: min
+
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+seed: 42
+max_grad_norm: 1.0
+weight_decay: 0.01
+resume: ${oc.env:FASTWAM_RESUME}
+resume_experts: null
+
+experiment_provenance:
+  protocol: fitwam_offline_self_improving_v1
+  variant: ${oc.env:FITWAM_VARIANT}
+  source_checkpoint_sha256: ${oc.env:FASTWAM_RESUME_SHA256}
+  source_config_sha256: ${oc.env:FASTWAM_SOURCE_CONFIG_SHA256}
+  manifest_sha256: ${oc.env:EVE_MANIFEST_SHA256}
+  selection_manifest_sha256: ${oc.env:EVE_VAL_MANIFEST_SHA256}
+  pair_targets_sha256: ${oc.env:PAIR_TARGETS_SHA256,none}
+  teacher_sha256: ${oc.env:PAIR_TARGETS_TEACHER_SHA256,none}
+  code_snapshot_sha256: ${oc.env:FITWAM_CODE_SNAPSHOT_SHA256}
+  normalization_kind: ${oc.env:NORM_STATS_SOURCE}
+  normalization_bundle_sha256: ${oc.env:NORM_STATS_BUNDLE_SHA256}
+  text_embedding_cache_sha256: ${oc.env:TEXT_EMBEDDING_CACHE_SHA256}
+
+wandb:
+  enabled: true
+  workspace: ${oc.env:WANDB_ENTITY,null}
+  project: ${oc.env:WANDB_PROJECT,fitwam}
+  name: ${oc.env:WANDB_RUN_NAME}
+  group: water_plant_offline_self_improving
+  mode: online

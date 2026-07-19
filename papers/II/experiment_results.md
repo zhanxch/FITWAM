@@ -15,6 +15,10 @@ Historical pilots are retained with their evidence status. Only rows with restor
 | water_plant | text-failure pilot, step 11000 | 81.0% | 81 / 100 | -- | historical pilot | Training provenance is incomplete in this checkout. |
 | water_plant | text-failure pilot, step 12240 | 82.0% | 82 / 100 | -- | historical raw count | Training provenance is incomplete and the protocol differs from the controlled continuation study. |
 | water_plant | rollout text-failure LoRA continuation | 81.5% | 163 / 200 | -- | historical raw count | Continued from the success-only source policy. |
+| water_plant | B1 failure-video control, step 6500 | 90.0% | 45 / 50 | -- | controlled checkpoint screening | Paired seeds, replan 25; protocol and artifacts validated with per-episode records and provenance hashes. |
+| water_plant | B0 success-only control, step 6500 | 80.0% | 40 / 50 | -- | controlled checkpoint screening | `B0 - B1 = -10pp`, paired bootstrap CI `[-24pp, +4pp]`. |
+| water_plant | C residual-only, step 6500 | 74.0% | 37 / 50 | -- | controlled checkpoint screening | `C - B1 = -16pp`, paired bootstrap CI `[-30pp, -2pp]`. |
+| water_plant | M contrastive steer, step 6500 | 90.0% | 45 / 50 | -- | controlled checkpoint screening | `M - B1 = 0pp`, paired bootstrap CI `[-10pp, +10pp]`; the +4pp gate did not pass. |
 | hammer_nail | FastWAM success-only, step 6500 | 67.5% | 135 / 200 | -- | historical pilot | Protocol summary is not tracked in this checkout. |
 
 ## Items To Confirm Before Paper Use

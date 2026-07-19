@@ -21,6 +21,13 @@ samples_per_episode: 1
 # dataloading
 batch_size: 1
 num_workers: 4
+# Disabled preserves the legacy sampler and Accelerate DataLoader path.
+# When enabled, use batch_size=4 for exactly 2 primary + 2 auxiliary samples
+# on every rank. null seed reuses the global training seed.
+role_balanced_sampling:
+  enabled: false
+  primary_per_batch: 2
+  seed: null
 
 # scheduler
 lr_scheduler_type: "cosine"
@@ -29,8 +36,16 @@ num_epochs: 5
 max_steps: null
 log_every: 10
 save_every: 500
+# Optional periodic overrides. null preserves save_every; 0 disables periodic saves.
+save_weights_every: null
+save_state_every: null
+# null keeps all completed state checkpoints; otherwise retain the latest N from this run.
+state_keep_last: null
 eval_every: 500
 eval_num_inference_steps: 10
+eval_num_samples: 1
+best_metric: val_loss
+best_metric_mode: min
 
 # training
 gradient_accumulation_steps: 1
@@ -44,8 +59,8 @@ resume_experts: null
 # wandb
 wandb:
   enabled: false
-  workspace: null
-  project: fast-wam
+  workspace: ${oc.env:WANDB_ENTITY,null}
+  project: ${oc.env:WANDB_PROJECT,fitwam}
   name: everobot_train
   group: everobot
   mode: online

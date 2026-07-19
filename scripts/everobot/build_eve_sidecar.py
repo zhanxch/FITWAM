@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -76,11 +77,135 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_episode_outcome_ledger(
+    dataset_root: Path,
+    *,
+    required: bool = False,
+    expected_episode_indices: Iterable[int] | None = None,
+) -> dict[int, dict[str, Any]]:
+    """Load the structured rollout outcome ledger and validate full coverage."""
+
+    path = dataset_root / "meta" / "episode_outcomes.jsonl"
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(
+                "Formal rollout data requires a structured outcome ledger: "
+                f"{path}"
+            )
+        return {}
+
+    rows = load_jsonl(path)
+    if not rows:
+        raise ValueError(f"Episode outcome ledger is empty: {path}")
+
+    mapping: dict[int, dict[str, Any]] = {}
+    for row_index, raw_row in enumerate(rows):
+        row = dict(raw_row)
+        episode_index = row.get("episode_index")
+        if isinstance(episode_index, bool) or not isinstance(episode_index, int):
+            raise ValueError(
+                f"Invalid episode_index at {path} row {row_index}: {episode_index!r}"
+            )
+        episode_index = int(episode_index)
+        if episode_index < 0:
+            raise ValueError(
+                f"Negative episode_index at {path} row {row_index}: {episode_index}"
+            )
+        if episode_index in mapping:
+            raise ValueError(
+                f"Duplicate episode_index {episode_index} in outcome ledger {path}"
+            )
+
+        outcome = row.get("outcome", row.get("episode_outcome"))
+        if outcome not in {"success", "failure"}:
+            raise ValueError(
+                f"Invalid outcome at {path} row {row_index}: {outcome!r}"
+            )
+        success = row.get("success")
+        if success is not None:
+            if not isinstance(success, bool):
+                raise ValueError(
+                    f"success must be boolean at {path} row {row_index}"
+                )
+            if success != (outcome == "success"):
+                raise ValueError(
+                    f"Conflicting success/outcome at {path} row {row_index}"
+                )
+        row["episode_index"] = episode_index
+        row["outcome"] = str(outcome)
+        mapping[episode_index] = row
+
+    if expected_episode_indices is not None:
+        expected = {int(index) for index in expected_episode_indices}
+        observed = set(mapping)
+        missing = sorted(expected - observed)
+        extra = sorted(observed - expected)
+        if missing or extra:
+            raise ValueError(
+                f"Episode outcome ledger coverage mismatch at {path}: "
+                f"missing={missing}, extra={extra}"
+            )
+    return mapping
+
+
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     payload = "".join(
         json.dumps(row, ensure_ascii=True) + "\n" for row in rows
     )
     write_text_atomic(path, payload)
+
+
+def load_episode_split_map(
+    path: Path | None,
+) -> dict[tuple[str, int], str] | None:
+    if path is None:
+        return None
+    resolved = path.expanduser().resolve()
+    rows = load_jsonl(resolved)
+    if not rows:
+        raise ValueError(f"Episode split map is empty: {resolved}")
+    mapping: dict[tuple[str, int], str] = {}
+    for index, row in enumerate(rows):
+        dataset_id = str(row.get("dataset_id") or "")
+        episode_index = row.get("episode_index")
+        split = str(row.get("split") or "")
+        if not dataset_id or isinstance(episode_index, bool) or not isinstance(
+            episode_index, int
+        ):
+            raise ValueError(
+                f"Invalid split-map identity at row {index}: {row}"
+            )
+        if split not in {"train", "val", "test"}:
+            raise ValueError(
+                f"Invalid split {split!r} at split-map row {index}"
+            )
+        key = (dataset_id, int(episode_index))
+        previous = mapping.get(key)
+        if previous is not None and previous != split:
+            raise ValueError(
+                f"Conflicting split assignments for {key}: "
+                f"{previous!r} vs {split!r}"
+            )
+        mapping[key] = split
+    return mapping
+
+
+def resolve_episode_split(
+    *,
+    split_map: dict[tuple[str, int], str] | None,
+    dataset_id: str,
+    episode_index: int,
+    default_split: str,
+) -> str:
+    if split_map is None:
+        return default_split
+    key = (str(dataset_id), int(episode_index))
+    if key not in split_map:
+        raise ValueError(
+            f"Episode split map has no assignment for dataset_id={dataset_id!r}, "
+            f"episode_index={episode_index}."
+        )
+    return split_map[key]
 
 
 @contextmanager
@@ -564,6 +689,8 @@ def init_base(args: argparse.Namespace) -> None:
         created_at=args.created_at,
         dataset_uri=args.dataset_uri,
     )
+    split_map_path = getattr(args, "split_map", None)
+    split_map = load_episode_split_map(split_map_path)
 
     rows: list[dict[str, Any]] = []
     for ep in episodes:
@@ -572,6 +699,12 @@ def init_base(args: argparse.Namespace) -> None:
         outcome = "failure" if is_failure_task(task, args.failure_phrase) else "success"
         if args.force_success:
             outcome = "success"
+        episode_split = resolve_episode_split(
+            split_map=split_map,
+            dataset_id=dataset_id,
+            episode_index=ep_idx,
+            default_split=args.split,
+        )
         rows.append(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -591,7 +724,7 @@ def init_base(args: argparse.Namespace) -> None:
                 "seed": None,
                 "length": int(ep["length"]),
                 "fps": int(info["fps"]),
-                "split": args.split,
+                "split": episode_split,
             }
         )
 
@@ -627,6 +760,11 @@ def init_base(args: argparse.Namespace) -> None:
             "failures": sum(1 for row in rows if row["episode_outcome"] == "failure"),
             "source_type": args.source_type,
             "collection_round": int(args.collection_round),
+            "split_map": (
+                str(split_map_path.expanduser().resolve())
+                if split_map_path is not None
+                else None
+            ),
         },
     )
     print(f"[eve] initialized {eve_root} with {len(rows)} episode rows from {dataset_root}")
@@ -648,6 +786,15 @@ def append_rollout(args: argparse.Namespace) -> None:
     info = load_lerobot_info(rollout_root)
     summary = load_collection_summary(rollout_root)
     attempt_by_ep = attempt_log_by_episode(summary, episode_count=len(episodes))
+    episode_indices = [int(episode["episode_index"]) for episode in episodes]
+    require_explicit_outcomes = bool(
+        getattr(args, "require_explicit_outcomes", False)
+    )
+    structured_outcomes = load_episode_outcome_ledger(
+        rollout_root,
+        required=require_explicit_outcomes,
+        expected_episode_indices=episode_indices,
+    )
     trim_report = load_trim_report(trimmed_root)
     round_id = make_round_id(dataset_id, args.collection_round)
     round_row = make_round_row(
@@ -666,6 +813,8 @@ def append_rollout(args: argparse.Namespace) -> None:
         created_at=args.created_at,
         dataset_uri=args.dataset_uri,
     )
+    split_map_path = getattr(args, "split_map", None)
+    split_map = load_episode_split_map(split_map_path)
 
     episode_rows: list[dict[str, Any]] = []
     event_rows: list[dict[str, Any]] = []
@@ -674,11 +823,24 @@ def append_rollout(args: argparse.Namespace) -> None:
         task_raw = first_task(ep)
         task = strip_failure_phrase(task_raw, args.failure_phrase)
         attempt = attempt_by_ep.get(ep_idx, {})
-        # Prefer the LeRobot task marker because old merged summaries kept
-        # shard-local saved_episode_index values.  The attempt log is still
-        # useful for seed/provenance after the remapping above.
+        structured = structured_outcomes.get(ep_idx)
         task_marks_failure = is_failure_task(task_raw, args.failure_phrase)
-        if task_marks_failure:
+        if structured is not None:
+            outcome = str(structured["outcome"])
+            outcome_source = "structured_outcome_ledger"
+            if task_marks_failure and outcome != "failure":
+                raise ValueError(
+                    f"Episode {ep_idx} task marker says failure but structured "
+                    f"outcome says {outcome!r}"
+                )
+            if "success" in attempt and bool(attempt["success"]) != (
+                outcome == "success"
+            ):
+                raise ValueError(
+                    f"Episode {ep_idx} collection summary disagrees with the "
+                    "structured outcome ledger"
+                )
+        elif task_marks_failure:
             outcome = "failure"
             outcome_source = "task_marker"
         elif "success" in attempt:
@@ -690,6 +852,12 @@ def append_rollout(args: argparse.Namespace) -> None:
 
         length = int(ep["length"])
         failure_type = None if outcome == "success" else args.default_failure_type
+        episode_split = resolve_episode_split(
+            split_map=split_map,
+            dataset_id=dataset_id,
+            episode_index=ep_idx,
+            default_split=args.split,
+        )
         episode_rows.append(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -706,11 +874,21 @@ def append_rollout(args: argparse.Namespace) -> None:
                 "episode_outcome": outcome,
                 "outcome_source": outcome_source,
                 "failure_type": failure_type,
-                "seed": attempt.get("seed"),
-                "attempt_index": attempt.get("attempt_index"),
+                "seed": (
+                    structured.get("seed", attempt.get("seed"))
+                    if structured is not None
+                    else attempt.get("seed")
+                ),
+                "attempt_index": (
+                    structured.get(
+                        "attempt_index", attempt.get("attempt_index")
+                    )
+                    if structured is not None
+                    else attempt.get("attempt_index")
+                ),
                 "length": length,
                 "fps": int(info["fps"]),
-                "split": args.split,
+                "split": episode_split,
             }
         )
 
@@ -767,7 +945,7 @@ def append_rollout(args: argparse.Namespace) -> None:
                     "version": args.annotation_version,
                     "confidence": float(annotation_confidence),
                 },
-                "split": args.split,
+                "split": episode_split,
             }
         )
 
@@ -811,6 +989,20 @@ def append_rollout(args: argparse.Namespace) -> None:
             "source_policy": args.source_policy,
             "collection_round": int(args.collection_round),
             "dataset_fingerprint_sha256": round_row["dataset_fingerprint_sha256"],
+            "outcome_ledger": (
+                str(rollout_root / "meta" / "episode_outcomes.jsonl")
+                if structured_outcomes
+                else None
+            ),
+            "outcome_ledger_sha256": file_sha256(
+                rollout_root / "meta" / "episode_outcomes.jsonl"
+            ),
+            "require_explicit_outcomes": require_explicit_outcomes,
+            "split_map": (
+                str(split_map_path.expanduser().resolve())
+                if split_map_path is not None
+                else None
+            ),
         },
     )
     print(
@@ -857,6 +1049,22 @@ def canonical_ledger_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
         normalized,
         key=lambda row: json.dumps(row, ensure_ascii=True, sort_keys=True),
     )
+
+
+def event_episode_outcome(event: dict[str, Any]) -> str:
+    """Return the linked episode outcome declared by an event row."""
+
+    outcome = event.get("episode_outcome")
+    if outcome is None and event.get("event_outcome") in {"success", "failure"}:
+        # v0.2 failure events predate the explicit episode_outcome field.
+        outcome = event["event_outcome"]
+    if outcome not in {"success", "failure"}:
+        event_id = str(event.get("event_id", "<unknown>"))
+        raise ValueError(
+            f"Event {event_id} must declare episode_outcome when "
+            "event_outcome is not success or failure"
+        )
+    return str(outcome)
 
 
 def validate_event_episode_link(
@@ -909,8 +1117,29 @@ def validate_event_episode_link(
     }
     if mismatches:
         raise ValueError(f"Event {event_id} does not match its episode: {mismatches}")
-    if episode.get("episode_outcome") != "failure":
-        raise ValueError(f"Event {event_id} points to a non-failure episode")
+
+    expected_episode_outcome = event_episode_outcome(event)
+    observed_episode_outcome = episode.get("episode_outcome")
+    if observed_episode_outcome != expected_episode_outcome:
+        raise ValueError(
+            f"Event {event_id} episode_outcome does not match its episode: "
+            f"expected={expected_episode_outcome!r}, "
+            f"observed={observed_episode_outcome!r}"
+        )
+    event_outcome = event.get("event_outcome", expected_episode_outcome)
+    if event_outcome not in {"success", "failure", "unknown"}:
+        raise ValueError(
+            f"Event {event_id} has unsupported event_outcome {event_outcome!r}"
+        )
+    if (
+        event_outcome in {"success", "failure"}
+        and event_outcome != expected_episode_outcome
+    ):
+        raise ValueError(
+            f"Event {event_id} event_outcome does not match episode_outcome: "
+            f"event_outcome={event_outcome!r}, "
+            f"episode_outcome={expected_episode_outcome!r}"
+        )
 
     start_frame = int(event["start_frame"])
     end_frame = int(event["end_frame"])
@@ -920,7 +1149,150 @@ def validate_event_episode_link(
             f"Event {event_id} interval [{start_frame}, {end_frame}) exceeds "
             f"episode length {episode_length}"
         )
+
+    core_start = event.get("core_start_frame")
+    core_end = event.get("core_end_frame")
+    if (core_start is None) != (core_end is None):
+        raise ValueError(
+            f"Event {event_id} must provide both core_start_frame and "
+            "core_end_frame"
+        )
+    if core_start is not None:
+        core_start = int(core_start)
+        core_end = int(core_end)
+        if (
+            core_start < start_frame
+            or core_start >= core_end
+            or core_end > end_frame
+        ):
+            raise ValueError(
+                f"Event {event_id} core interval [{core_start}, {core_end}) "
+                f"must lie inside [{start_frame}, {end_frame})"
+            )
+
+    event_weight = event.get("event_weight")
+    if event_weight is not None and (
+        isinstance(event_weight, bool)
+        or not isinstance(event_weight, (int, float))
+        or not math.isfinite(float(event_weight))
+        or not 0.0 <= float(event_weight) <= 1.0
+    ):
+        raise ValueError(f"Event {event_id} event_weight must be in [0, 1]")
+    for field in ("absolute_confidence", "episode_sampling_weight"):
+        value = event.get(field)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError(f"Event {event_id} {field} must be in [0, 1]")
     return episode
+
+
+def event_matches_type(
+    event: dict[str, Any], event_types: set[str] | None
+) -> bool:
+    return event_types is None or str(event.get("event_type", "")) in event_types
+
+
+def event_manifest_sample(
+    row: dict[str, Any],
+    matching_episode: dict[str, Any],
+    *,
+    episode_outcome: str,
+    success_sample_stride: int,
+    failure_sample_stride: int,
+    failure_action_loss: str,
+    batch_role: str | None = None,
+) -> dict[str, Any]:
+    dataset_id = str(row["dataset_id"])
+    episode_index = int(row["episode_index"])
+    collection_round = int(row.get("collection_round", -1))
+    episode_id = row.get(
+        "episode_id", make_episode_id(dataset_id, episode_index)
+    )
+    event_outcome = str(row.get("event_outcome", episode_outcome))
+    event_type = str(
+        row.get(
+            "event_type",
+            "interaction_candidate"
+            if event_outcome == "unknown"
+            else f"{episode_outcome}_event",
+        )
+    )
+    is_candidate = (
+        event_outcome == "unknown" or event_type == "interaction_candidate"
+    )
+    if episode_outcome == "success":
+        action_loss = "disabled" if batch_role == "auxiliary" else "enabled"
+        if batch_role == "auxiliary":
+            default_role = "success_auxiliary"
+        elif is_candidate:
+            default_role = "success_candidate"
+        else:
+            default_role = "success_context"
+        sample_stride = success_sample_stride
+    else:
+        action_loss = (
+            "disabled"
+            if is_candidate
+            else row.get("action_loss", failure_action_loss)
+        )
+        default_role = (
+            "failure_candidate" if is_candidate else "failure_context"
+        )
+        sample_stride = failure_sample_stride
+
+    sample = {
+        "sample_type": "event",
+        "sample_id": row["event_id"],
+        "event_id": row["event_id"],
+        "dataset_id": dataset_id,
+        "dataset_root": row.get(
+            "dataset_root", matching_episode["dataset_root"]
+        ),
+        "episode_id": episode_id,
+        "episode_index": episode_index,
+        "round_id": row.get(
+            "round_id", make_round_id(dataset_id, collection_round)
+        ),
+        "collection_round": collection_round,
+        "task": row.get("task", matching_episode.get("task", "")),
+        "episode_outcome": episode_outcome,
+        "event_outcome": event_outcome,
+        "event_type": event_type,
+        "event_level": row.get(
+            "event_level",
+            "candidate" if is_candidate else episode_outcome,
+        ),
+        "event_label": row.get("event_label", row.get("failure_type")),
+        "effector": row.get("effector", "global"),
+        "failure_type": row.get("failure_type"),
+        "start_frame": int(row["start_frame"]),
+        "end_frame": int(row["end_frame"]),
+        "failure_frame": row.get("failure_frame"),
+        "action_loss": action_loss,
+        "sample_role": row.get("sample_role", default_role),
+        "sample_stride": int(sample_stride),
+        "annotation": row.get("annotation"),
+        "split": row.get("split", "train"),
+    }
+    if batch_role is not None:
+        sample["batch_role"] = batch_role
+    if batch_role == "auxiliary":
+        sample["window_selection"] = "core_start_anchor"
+    for field in (
+        "absolute_confidence",
+        "episode_sampling_weight",
+        "event_weight",
+        "core_start_frame",
+        "core_end_frame",
+        "core_interval",
+    ):
+        if field in row:
+            sample[field] = row[field]
+    return sample
 
 
 def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
@@ -941,13 +1313,34 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
     if invalid_outcomes:
         raise ValueError(f"Unsupported outcomes: {sorted(invalid_outcomes)}")
     success_dataset_ids = parse_optional_set(args.success_dataset_ids)
+    success_auxiliary_dataset_ids = parse_optional_set(
+        getattr(args, "success_auxiliary_dataset_ids", None)
+    )
     failure_dataset_ids = parse_optional_set(args.failure_dataset_ids)
+    if success_auxiliary_dataset_ids is not None:
+        if success_dataset_ids is None:
+            raise ValueError(
+                "`success-dataset-ids` must be explicit when "
+                "`success-auxiliary-dataset-ids` is used."
+            )
+        overlap = success_dataset_ids & success_auxiliary_dataset_ids
+        if overlap:
+            raise ValueError(
+                "Primary and auxiliary success dataset IDs must be disjoint: "
+                f"{sorted(overlap)}"
+            )
     collection_rounds = (
         None
         if args.collection_rounds is None
         else {int(item) for item in args.collection_rounds}
     )
     splits = parse_optional_set(args.splits)
+    event_types = parse_optional_set(getattr(args, "event_types", None))
+    success_sample_mode = getattr(args, "success_sample_mode", "episode_only")
+    if success_sample_mode not in {"episode_only", "event_only", "both"}:
+        raise ValueError(
+            f"Unsupported success_sample_mode: {success_sample_mode!r}"
+        )
     include_sample_ids = parse_optional_set(args.include_sample_ids)
     exclude_sample_ids = parse_optional_set(args.exclude_sample_ids) or set()
     if include_sample_ids is not None:
@@ -962,50 +1355,129 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
     used_event_rows: dict[str, dict[str, Any]] = {}
 
     if "success" in include_outcomes:
-        for row in episode_rows:
-            if row.get("episode_outcome") != "success":
-                continue
-            if not selected_dataset(row, success_dataset_ids):
-                continue
-            if not row_matches_manifest_selection(
-                row, collection_rounds=collection_rounds, splits=splits
-            ):
-                continue
-            dataset_id = str(row["dataset_id"])
-            episode_index = int(row["episode_index"])
-            collection_round = int(row.get("collection_round", -1))
-            episode_id = row.get(
-                "episode_id", make_episode_id(dataset_id, episode_index)
-            )
-            samples.append(
-                {
-                    "sample_type": "episode",
-                    "sample_id": f"{dataset_id}_ep{episode_index:06d}",
-                    "dataset_id": dataset_id,
-                    "dataset_root": row["dataset_root"],
-                    "episode_id": episode_id,
-                    "episode_index": episode_index,
-                    "round_id": row.get(
-                        "round_id", make_round_id(dataset_id, collection_round)
-                    ),
-                    "collection_round": collection_round,
-                    "task": row.get("task", ""),
-                    "episode_outcome": "success",
-                    "event_outcome": "success",
-                    "start_frame": 0,
-                    "end_frame": int(row["length"]),
-                    "action_loss": "enabled",
-                    "sample_role": "success_episode",
-                    "sample_stride": int(args.success_sample_stride),
-                    "split": row.get("split", "train"),
-                }
-            )
-            used_episode_rows[str(episode_id)] = row
+        if (
+            success_sample_mode in {"episode_only", "both"}
+            or success_auxiliary_dataset_ids is not None
+        ):
+            for row in episode_rows:
+                if row.get("episode_outcome") != "success":
+                    continue
+                is_primary = selected_dataset(row, success_dataset_ids)
+                is_auxiliary = (
+                    success_auxiliary_dataset_ids is not None
+                    and selected_dataset(row, success_auxiliary_dataset_ids)
+                )
+                include_primary = (
+                    is_primary
+                    and (
+                        success_auxiliary_dataset_ids is not None
+                        or success_sample_mode in {"episode_only", "both"}
+                    )
+                )
+                include_auxiliary = (
+                    is_auxiliary
+                    and success_sample_mode in {"episode_only", "both"}
+                )
+                if not include_primary and not include_auxiliary:
+                    continue
+                if not row_matches_manifest_selection(
+                    row, collection_rounds=collection_rounds, splits=splits
+                ):
+                    continue
+                dataset_id = str(row["dataset_id"])
+                episode_index = int(row["episode_index"])
+                collection_round = int(row.get("collection_round", -1))
+                episode_id = row.get(
+                    "episode_id", make_episode_id(dataset_id, episode_index)
+                )
+                samples.append(
+                    {
+                        "sample_type": "episode",
+                        "sample_id": (
+                            f"{dataset_id}_ep{episode_index:06d}_success_aux"
+                            if include_auxiliary
+                            else f"{dataset_id}_ep{episode_index:06d}"
+                        ),
+                        "dataset_id": dataset_id,
+                        "dataset_root": row["dataset_root"],
+                        "episode_id": episode_id,
+                        "episode_index": episode_index,
+                        "round_id": row.get(
+                            "round_id",
+                            make_round_id(dataset_id, collection_round),
+                        ),
+                        "collection_round": collection_round,
+                        "task": row.get("task", ""),
+                        "episode_outcome": "success",
+                        "event_outcome": "success",
+                        "start_frame": 0,
+                        "end_frame": int(row["length"]),
+                        "action_loss": (
+                            "disabled" if include_auxiliary else "enabled"
+                        ),
+                        "sample_role": (
+                            "success_auxiliary"
+                            if include_auxiliary
+                            else "success_episode"
+                        ),
+                        "batch_role": (
+                            "auxiliary" if include_auxiliary else "primary"
+                        ),
+                        "sample_stride": int(args.success_sample_stride),
+                        "split": row.get("split", "train"),
+                    }
+                )
+                used_episode_rows[str(episode_id)] = row
+        if success_sample_mode in {"event_only", "both"}:
+            for row in event_rows:
+                if not event_matches_type(row, event_types):
+                    continue
+                if event_episode_outcome(row) != "success":
+                    continue
+                is_primary = selected_dataset(row, success_dataset_ids)
+                is_auxiliary = (
+                    success_auxiliary_dataset_ids is not None
+                    and selected_dataset(row, success_auxiliary_dataset_ids)
+                )
+                include_primary = (
+                    is_primary and success_auxiliary_dataset_ids is None
+                )
+                if not include_primary and not is_auxiliary:
+                    continue
+                if not row_matches_manifest_selection(
+                    row, collection_rounds=collection_rounds, splits=splits
+                ):
+                    continue
+                dataset_id = str(row["dataset_id"])
+                episode_index = int(row["episode_index"])
+                episode_id = row.get(
+                    "episode_id", make_episode_id(dataset_id, episode_index)
+                )
+                matching_episode = validate_event_episode_link(
+                    row, episode_by_id.get(str(episode_id))
+                )
+                samples.append(
+                    event_manifest_sample(
+                        row,
+                        matching_episode,
+                        episode_outcome="success",
+                        success_sample_stride=int(args.success_sample_stride),
+                        failure_sample_stride=int(args.failure_sample_stride),
+                        failure_action_loss=args.failure_action_loss,
+                        batch_role=(
+                            "auxiliary" if is_auxiliary else "primary"
+                        ),
+                    )
+                )
+                used_event_rows[str(row["event_id"])] = row
+                used_episode_rows[str(episode_id)] = matching_episode
 
     if "failure" in include_outcomes:
         if args.failure_sample_mode in {"event_only", "both"}:
             for row in event_rows:
-                if row.get("event_outcome") != "failure":
+                if not event_matches_type(row, event_types):
+                    continue
+                if event_episode_outcome(row) != "failure":
                     continue
                 if not selected_dataset(row, failure_dataset_ids):
                     continue
@@ -1022,36 +1494,17 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
                 matching_episode = validate_event_episode_link(
                     row, episode_by_id.get(str(episode_id))
                 )
-                sample = {
-                    "sample_type": "event",
-                    "sample_id": row["event_id"],
-                    "event_id": row["event_id"],
-                    "dataset_id": dataset_id,
-                    "dataset_root": row["dataset_root"],
-                    "episode_id": episode_id,
-                    "episode_index": episode_index,
-                    "round_id": row.get(
-                        "round_id", make_round_id(dataset_id, collection_round)
-                    ),
-                    "collection_round": collection_round,
-                    "task": row.get("task", ""),
-                    "episode_outcome": "failure",
-                    "event_outcome": "failure",
-                    "event_type": row.get("event_type", "failure_event"),
-                    "event_level": row.get("event_level", "failure"),
-                    "event_label": row.get("event_label", row.get("failure_type")),
-                    "effector": row.get("effector", "global"),
-                    "failure_type": row.get("failure_type"),
-                    "start_frame": int(row["start_frame"]),
-                    "end_frame": int(row["end_frame"]),
-                    "failure_frame": row.get("failure_frame"),
-                    "action_loss": row.get("action_loss", args.failure_action_loss),
-                    "sample_role": row.get("sample_role", "failure_context"),
-                    "sample_stride": int(args.failure_sample_stride),
-                    "annotation": row.get("annotation"),
-                    "split": row.get("split", "train"),
-                }
-                samples.append(sample)
+                samples.append(
+                    event_manifest_sample(
+                        row,
+                        matching_episode,
+                        episode_outcome="failure",
+                        success_sample_stride=int(args.success_sample_stride),
+                        failure_sample_stride=int(args.failure_sample_stride),
+                        failure_action_loss=args.failure_action_loss,
+                        batch_role="auxiliary",
+                    )
+                )
                 used_event_rows[str(row["event_id"])] = row
                 used_episode_rows[str(episode_id)] = matching_episode
         if args.failure_sample_mode in {"full_episode", "both"}:
@@ -1177,7 +1630,14 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
             "splits": sorted(splits) if splits else None,
             "include_sample_ids": sorted(include_sample_ids) if include_sample_ids else None,
             "exclude_sample_ids": sorted(exclude_sample_ids) if exclude_sample_ids else None,
+            "success_sample_mode": success_sample_mode,
+            "success_auxiliary_dataset_ids": (
+                sorted(success_auxiliary_dataset_ids)
+                if success_auxiliary_dataset_ids
+                else None
+            ),
             "failure_sample_mode": args.failure_sample_mode,
+            "event_types": sorted(event_types) if event_types is not None else None,
         },
         "dataset_roots": dataset_roots,
         "source_round_ids": sorted(selected_round_ids),
@@ -1218,6 +1678,12 @@ def parse_args() -> argparse.Namespace:
     init.add_argument("--source-policy", type=str, default="human_or_expert")
     init.add_argument("--collection-round", type=int, default=-1)
     init.add_argument("--split", type=str, default="train")
+    init.add_argument(
+        "--split-map",
+        type=Path,
+        default=None,
+        help="Frozen JSONL mapping of dataset_id/episode_index to train/val/test.",
+    )
     init.add_argument("--failure-phrase", type=str, default=FAILURE_PHRASE)
     init.add_argument("--default-failure-type", type=str, default="unknown_failure")
     init.add_argument("--force-success", action="store_true", default=False)
@@ -1240,7 +1706,21 @@ def parse_args() -> argparse.Namespace:
     append.add_argument("--source-checkpoint-sha256", type=str, default=None)
     append.add_argument("--collection-round", type=int, required=True)
     append.add_argument("--split", type=str, default="train")
+    append.add_argument(
+        "--split-map",
+        type=Path,
+        default=None,
+        help="Frozen JSONL mapping of dataset_id/episode_index to train/val/test.",
+    )
     append.add_argument("--failure-phrase", type=str, default=FAILURE_PHRASE)
+    append.add_argument(
+        "--require-explicit-outcomes",
+        action="store_true",
+        help=(
+            "Require meta/episode_outcomes.jsonl with exactly one validated "
+            "success/failure row for every rollout episode."
+        ),
+    )
     append.add_argument("--default-failure-type", type=str, default="unknown_failure")
     append.add_argument("--failure-action-loss", choices=["enabled", "disabled"], default="disabled")
     append.add_argument("--annotation-source", choices=["auto", "manual"], default="auto")
@@ -1260,8 +1740,28 @@ def parse_args() -> argparse.Namespace:
     manifest.add_argument("--manifest-name", type=str, required=True)
     manifest.add_argument("--include-outcomes", nargs="+", default=["success", "failure"])
     manifest.add_argument("--success-dataset-ids", nargs="+", default=None)
+    manifest.add_argument(
+        "--success-auxiliary-dataset-ids",
+        nargs="+",
+        default=None,
+        help=(
+            "Success datasets sampled as action-disabled auxiliary video. "
+            "Requires explicit, disjoint --success-dataset-ids."
+        ),
+    )
     manifest.add_argument("--failure-dataset-ids", nargs="+", default=None)
+    manifest.add_argument(
+        "--success-sample-mode",
+        choices=["episode_only", "event_only", "both"],
+        default="episode_only",
+    )
     manifest.add_argument("--failure-sample-mode", choices=["event_only", "full_episode", "both"], default="event_only")
+    manifest.add_argument(
+        "--event-types",
+        nargs="+",
+        default=None,
+        help="Include only event rows whose event_type is listed.",
+    )
     manifest.add_argument("--collection-rounds", nargs="+", type=int, default=None)
     manifest.add_argument("--splits", nargs="+", default=None)
     manifest.add_argument("--include-sample-ids", nargs="+", default=None)
