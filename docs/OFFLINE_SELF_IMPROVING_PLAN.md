@@ -52,7 +52,6 @@ L_pair = w * [distance(S, stopgrad(z+)) + margin_away(S, stopgrad(z-))]
 ```
 
 `stopgrad` 表示 Teacher target 不接收 Student 阶段的反向梯度。Steer 接口借鉴 Sparsh-X 用少量 bottleneck token 压缩交互信息的思路，主实验先使用一个 action-side token；多个 token 只在单 token 有效后比较。Steer 通过零初始化 residual projection 注入 Action Expert，使新增分支从零修正量开始学习。基础 Action Expert 与 B0/B1 使用相同训练规则：只由 success sample 的 action loss 更新，不接收 failure action imitation loss。
-
 ```text
 candidate event pair -> frozen Trajectory Teacher -> z+, z-
 observation + task + proprio -> Student -> steer token
@@ -62,7 +61,6 @@ observation + task + proprio -> Student -> steer token
 failure sample -> world/video loss + weighted pair loss
 success sample -> world/video loss + action loss + weighted pair loss
 ```
-
 Failure sample 的直接 action flow-matching loss 为零；失败动作只作为 Teacher 的表示输入和 pair loss 的 negative。Pair loss 更新 Student representation；零初始化 residual projection 由 success action loss 学习如何使用该 representation。Teacher target 和基础 Fast-WAM feature 在 pair-loss 路径上均停止梯度。World Expert 接收成功和失败视频监督。现有 `outcome_encoder` 会把真实 outcome 放进 shared context，因此不作为主方法；推理接口不接收 outcome、未来 action 或 failure text。
 
 ## 实验
