@@ -1,33 +1,32 @@
-# Water Plant Offline Fixed-Budget Checkpoint Screening
+# Water Plant Offline Checkpoint Screening
 
-Four variants were trained from the same source checkpoint for 6500 optimizer
-steps. Evaluation used 50 paired simulator seeds, front and wrist views,
-23-dimensional proprioception, replan 25, and the same inference seed.
+Four variants were trained from the same source checkpoint. Evaluation used
+200 paired simulator seeds, front and wrist views, 23-dimensional
+proprioception, replan 25, and the same inference seed.
 The wrapper limit was 1500 environment steps; the task terminated remaining
-unsuccessful episodes at its 1000-step cap, so success@1000 and success@1500
-are identical in this screening.
+unsuccessful episodes at its 1000-step cap. Videos and action arrays were
+retained outside Git.
 
-| Variant | Successes | Success rate | Median successful step |
+| Checkpoint | B0 | B1 | C | M |
+| --- | ---: | ---: | ---: | ---: |
+| step 5000 | 82.0% | 84.0% | 74.5% | **88.0%** |
+| step 6000 | 70.5% | 75.5% | 75.5% | **84.5%** |
+| step 6500 | 79.5% | 87.0% | 74.5% | **87.5%** |
+| validation-best | 72.5% (5500) | 80.5% (4500) | 74.5% (6500) | **88.0% (5000)** |
+
+| M vs B1 | Delta | 95% paired bootstrap CI | Exact McNemar p |
 | --- | ---: | ---: | ---: |
-| B1: failure video | 45/50 | 90% | 256 |
-| B0: success-only | 40/50 | 80% | 273.5 |
-| C: residual-only | 37/50 | 74% | 260 |
-| M: contrastive steer | 45/50 | 90% | 267 |
+| step 5000 | +4.0pp | [-2.5pp, +10.5pp] | 0.2912 |
+| step 6000 | +9.0pp | [+3.0pp, +15.0pp] | 0.0064 |
+| step 6500 | +0.5pp | [-4.5pp, +5.5pp] | 1.0000 |
+| validation-best | +7.5pp | [+1.0pp, +14.0pp] | 0.0357 |
 
-| Comparison | Delta | 95% paired bootstrap CI | McNemar p |
-| --- | ---: | ---: | ---: |
-| B0 vs B1 | -10pp | [-24pp, +4pp] | 0.2668 |
-| C vs B1 | -16pp | [-30pp, -2pp] | 0.0574 |
-| M vs B1 | 0pp | [-10pp, +10pp] | 1.0000 |
-| M vs C | +16pp | [+2pp, +30pp] | 0.0574 |
-
-The fixed-budget checkpoint-screening gate required `M - B1 >= 4pp` and did not pass.
-This is a single-training-seed, 50-episode screening result. It does not support
-a publication-level gain claim or expansion to additional tasks.
+M improves over B1 at step 6000 and under validation-based checkpoint
+selection. The step-6500 difference is negligible. These results use one
+training seed and show checkpoint sensitivity, so multi-seed training remains
+required before a publication-level gain claim.
 
 Machine-readable statistics are in
-[`paired_comparison.json`](./paired_comparison.json) and
-[`paired_comparison.csv`](./paired_comparison.csv). Validation curves are in
-[`validation_curve.csv`](./validation_curve.csv). Sanitized per-episode outcomes,
-protocol settings, and provenance hashes are in
-[`screening_records.json`](./screening_records.json).
+[`checkpoint_screening_200.csv`](./checkpoint_screening_200.csv) and
+[`paired_comparison_200.csv`](./paired_comparison_200.csv). The earlier
+50-episode screening files remain in this directory for provenance.

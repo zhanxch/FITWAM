@@ -1,0 +1,5 @@
+candidate,baseline,checkpoint_kind,checkpoint_step,episodes,candidate_successes,baseline_successes,delta,paired_bootstrap_ci95_low,paired_bootstrap_ci95_high,exact_mcnemar_pvalue_two_sided
+M,B1,step,5000,200,176,168,0.040,-0.025,0.105,0.291215
+M,B1,step,6000,200,169,151,0.090,0.030,0.150,0.006427
+M,B1,step,6500,200,175,174,0.005,-0.045,0.055,1.000000
+M,B1,validation_best,,200,176,161,0.075,0.010,0.140,0.035698
