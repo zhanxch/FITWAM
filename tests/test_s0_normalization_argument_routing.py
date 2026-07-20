@@ -81,6 +81,16 @@ def _call_keyword_names(path: Path, function_name: str) -> set[str]:
 
 
 class S0NormalizationArgumentRoutingTest(unittest.TestCase):
+    def test_eval_client_binds_egl_to_its_physical_gpu(self):
+        orchestrator = _load_eval_orchestrator()
+        args = SimpleNamespace(dexjoco_py_root=ROOT / "third_party" / "dexjoco")
+        exports, _ = orchestrator._client_exports(
+            args,
+            SimpleNamespace(gpu=6),
+        )
+        self.assertEqual(exports["MUJOCO_GL"], "egl")
+        self.assertEqual(exports["MUJOCO_EGL_DEVICE_ID"], "6")
+
     def test_eval_orchestrator_forwards_meta_override_to_server(self):
         orchestrator = _load_eval_orchestrator()
         with tempfile.TemporaryDirectory() as tmp:

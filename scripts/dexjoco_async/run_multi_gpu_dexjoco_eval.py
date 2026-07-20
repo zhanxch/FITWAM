@@ -278,11 +278,15 @@ def _server_exports(args: argparse.Namespace, server: ServerSpec) -> tuple[dict[
     return exports, {}
 
 
-def _client_exports(args: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
+def _client_exports(
+    args: argparse.Namespace,
+    server: ServerSpec,
+) -> tuple[dict[str, str], dict[str, str]]:
     pyroot = str(Path(args.dexjoco_py_root).resolve())
     py_path = f"{SRC_ROOT}:{SCRIPTS_ROOT}:{pyroot}:{_retain(args, 'PYTHONPATH')}"
     exports: dict[str, str] = {
         "MUJOCO_GL": "egl",
+        "MUJOCO_EGL_DEVICE_ID": str(server.gpu),
         "PYTHONPATH": _dedupe_path(py_path),
     }
     # LD_LIBRARY_PATH references $CONDA_PREFIX which is only defined after
@@ -509,7 +513,7 @@ def main() -> int:
             shard_dir = out_dir / args.shard_dir_fmt.format(i=shard.shard_id)
             log_path = shard_dir / "client.log"
             argv = _build_client_argv(args, shard, shard_dir)
-            exports, raw_exports = _client_exports(args)
+            exports, raw_exports = _client_exports(args, shard.server)
             cmd = build_conda_command(
                 conda_sh,
                 args.client_conda_env,
