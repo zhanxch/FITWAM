@@ -29,9 +29,17 @@ from fastwam.datasets.eve.pair_targets import PairTargetStore  # noqa: E402
 from fastwam.everobot_schema import validate_manifest  # noqa: E402
 
 
-VARIANTS = {"B0", "B1", "C", "M"}
+BASE_VARIANTS = {"B0", "B1", "C", "M"}
+PAIR_SHUFFLE_VARIANT = "M_PAIR_SHUFFLE"
+VARIANTS = BASE_VARIANTS | {PAIR_SHUFFLE_VARIANT}
+PAIR_VARIANTS = {"M", "M_PAIR_SHUFFLE"}
 BUNDLE_FORMAT = "FITWAMOfflineProtocolBundle"
-BUNDLE_VERSION = 3
+BUNDLE_VERSION = 4
+PAIR_SHUFFLE_PROOF_FORMAT = "FastWAMPairShuffleControl"
+PAIR_SHUFFLE_PROOF_VERSION = "1.0"
+COMMON_INIT_PROOF_FORMAT = "FastWAMCommonInitialization"
+COMMON_INIT_PROOF_VERSION = "1.0"
+STRICT_COMMON_INIT_MODE = "strict_common_init_pair_shuffle"
 PROTOCOL_NAME = "fitwam_offline_self_improving_v1"
 WATER_PLANT_TASK = "Grasp the watering can and apply water to the plant."
 WATER_PLANT_TEXT_CACHE_BASENAME = (
@@ -128,7 +136,14 @@ def code_snapshot_relative_paths(project_root: Path) -> list[str]:
         for path in source_root.rglob("*.py")
         if path.is_file()
     ]
-    return sorted(set(source_paths).union(CODE_SNAPSHOT_STATIC_PATHS))
+    paths = set(source_paths).union(CODE_SNAPSHOT_STATIC_PATHS)
+    pair_shuffle_builder = "scripts/everobot/build_pair_shuffle_control.py"
+    if (project_root / pair_shuffle_builder).is_file():
+        paths.add(pair_shuffle_builder)
+    common_init_builder = "scripts/everobot/build_common_init_checkpoint.py"
+    if (project_root / common_init_builder).is_file():
+        paths.add(common_init_builder)
+    return sorted(paths)
 
 
 def build_code_snapshot(
@@ -194,6 +209,7 @@ def parse_variant_paths(
     specs: Sequence[str],
     *,
     label: str,
+    required_variants: set[str],
 ) -> dict[str, Path]:
     parsed: dict[str, Path] = {}
     for spec in specs:
@@ -208,11 +224,13 @@ def parse_variant_paths(
         if not raw_path.strip():
             raise ValueError(f"{label} path for {variant} must not be empty")
         parsed[variant] = Path(raw_path).expanduser().resolve()
-    missing = sorted(VARIANTS - set(parsed))
-    extra = sorted(set(parsed) - VARIANTS)
+    missing = sorted(required_variants - set(parsed))
+    extra = sorted(set(parsed) - required_variants)
     if missing or extra:
+        expected = "/".join(sorted(required_variants))
         raise ValueError(
-            f"{label} must define exactly B0/B1/C/M; missing={missing}, extra={extra}"
+            f"{label} must define exactly {expected}; "
+            f"missing={missing}, extra={extra}"
         )
     return parsed
 
@@ -381,7 +399,7 @@ def validate_manifest_protocol(
         pair_weight = float(sample.get("pair_weight", 0.0))
         if pair_weight > 0.0:
             positive_pairs += 1
-            if variant != "M":
+            if variant not in PAIR_VARIANTS:
                 raise ValueError(
                     f"Variant {variant} must not carry positive pair supervision"
                 )
@@ -412,9 +430,9 @@ def validate_manifest_protocol(
     else:
         if not all(bucket["failure"] > 0 for bucket in counts.values()):
             raise ValueError(f"{variant} requires failure auxiliary data")
-    if variant == "M" and positive_pairs == 0:
-        raise ValueError("M requires at least one positive failure-event pair")
-    if variant != "M" and targets is not None:
+    if variant in PAIR_VARIANTS and positive_pairs == 0:
+        raise ValueError(f"{variant} requires at least one positive failure-event pair")
+    if variant not in PAIR_VARIANTS and targets is not None:
         raise ValueError(f"{variant} must not load pair targets")
     return {
         "counts": counts,
@@ -478,28 +496,547 @@ def validate_selection_manifest(
     )
 
 
+def _pair_sample_marginals(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for sample in manifest.get("samples", []):
+        row = copy.deepcopy(dict(sample))
+        row.pop("pair_id", None)
+        rows.append(row)
+    return rows
+
+
+def _embedding_sha256(value: Any) -> str:
+    digest = hashlib.sha256()
+    shape = tuple(int(item) for item in getattr(value, "shape", ()))
+    dtype = str(getattr(value, "dtype", type(value).__name__))
+    digest.update(
+        json.dumps(
+            {"dtype": dtype, "shape": shape},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    if hasattr(value, "tobytes"):
+        digest.update(value.tobytes(order="C"))
+    else:
+        digest.update(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+    return digest.hexdigest()
+
+
+def _pair_targets_by_failure(
+    manifest: Mapping[str, Any],
+    targets: PairTargetStore,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    rows: dict[str, dict[str, Any]] = {}
+    pair_ids: set[str] = set()
+    for sample in manifest.get("samples", []):
+        if float(sample.get("pair_weight", 0.0)) <= 0.0:
+            continue
+        pair_id = str(sample.get("pair_id") or "")
+        if not pair_id or pair_id in pair_ids:
+            raise ValueError("Pair-shuffle manifests require unique non-empty pair IDs")
+        pair_ids.add(pair_id)
+        target = targets.get(pair_id)
+        failure_event_id = str(target.failure_event_id)
+        if failure_event_id in rows:
+            raise ValueError(f"Pair targets reuse failure event {failure_event_id!r}")
+        rows[failure_event_id] = {
+            "pair_id": str(target.pair_id),
+            "success_event_id": str(target.success_event_id),
+            "failure_event_id": failure_event_id,
+            "split": str(target.split),
+            "pair_weight": float(target.pair_weight),
+            "z_plus_sha256": _embedding_sha256(target.z_plus),
+            "z_minus_sha256": _embedding_sha256(target.z_minus),
+            "teacher_sha256": str(target.teacher_sha256).lower(),
+        }
+    passthrough: dict[str, dict[str, Any]] = {}
+    for pair_id in targets.pair_ids:
+        if pair_id in pair_ids:
+            continue
+        target = targets.get(pair_id)
+        if str(target.split) == "train":
+            raise ValueError(
+                "Every train pair-target row must be referenced exactly once by "
+                f"its manifest; missing {pair_id!r}"
+            )
+        passthrough[pair_id] = {
+            "pair_id": str(target.pair_id),
+            "success_event_id": str(target.success_event_id),
+            "failure_event_id": str(target.failure_event_id),
+            "split": str(target.split),
+            "pair_weight": float(target.pair_weight),
+            "z_plus_sha256": _embedding_sha256(target.z_plus),
+            "z_minus_sha256": _embedding_sha256(target.z_minus),
+            "teacher_sha256": str(target.teacher_sha256).lower(),
+        }
+    if len(pair_ids) + len(passthrough) != len(targets):
+        raise ValueError(
+            "Pair-target accounting does not cover every referenced and passthrough row"
+        )
+    return rows, passthrough
+
+
+_PAIR_EPISODE_PATTERNS = (
+    re.compile(r"^(?P<episode>.*?_ep(?:isode_)?\d+)(?:_|$)"),
+    re.compile(r"^(?P<episode>.*?:episode:\d+)(?::|_|$)"),
+)
+
+
+def _pair_event_episode_identity(event_id: str) -> str:
+    value = str(event_id).strip()
+    if not value:
+        raise ValueError("Pair success event IDs must be non-empty")
+    for pattern in _PAIR_EPISODE_PATTERNS:
+        match = pattern.match(value)
+        if match is not None:
+            return match.group("episode")
+    return re.sub(r"(?:_|:)candidate(?:_|:)\d+$", "", value)
+
+
+def validate_pair_shuffle_control(
+    *,
+    source_manifest: Mapping[str, Any],
+    shuffled_manifest: Mapping[str, Any],
+    source_targets: PairTargetStore,
+    shuffled_targets: PairTargetStore,
+) -> dict[str, Any]:
+    if _pair_sample_marginals(source_manifest) != _pair_sample_marginals(
+        shuffled_manifest
+    ):
+        raise ValueError(
+            "M_PAIR_SHUFFLE changed manifest samples, order, windows, roles, "
+            "weights, or other non-pair marginals"
+        )
+    source, source_passthrough = _pair_targets_by_failure(
+        source_manifest, source_targets
+    )
+    shuffled, shuffled_passthrough = _pair_targets_by_failure(
+        shuffled_manifest, shuffled_targets
+    )
+    if source_passthrough != shuffled_passthrough:
+        raise ValueError("M_PAIR_SHUFFLE changed non-train passthrough target rows")
+    if set(source) != set(shuffled):
+        raise ValueError("M_PAIR_SHUFFLE changed the failure-event marginal")
+    if len(source) < 2:
+        raise ValueError("M_PAIR_SHUFFLE requires at least two event pairs")
+
+    source_success_marginal: list[tuple[str, str, str]] = []
+    shuffled_success_marginal: list[tuple[str, str, str]] = []
+    relation_rows: list[dict[str, str]] = []
+    for failure_event_id in sorted(source):
+        before = source[failure_event_id]
+        after = shuffled[failure_event_id]
+        for key in ("failure_event_id", "split", "pair_weight", "z_minus_sha256"):
+            if before[key] != after[key]:
+                raise ValueError(
+                    f"M_PAIR_SHUFFLE changed {key} for failure event {failure_event_id}"
+                )
+        if before["teacher_sha256"] != after["teacher_sha256"]:
+            raise ValueError("M_PAIR_SHUFFLE changed the frozen Teacher")
+        if before["success_event_id"] == after["success_event_id"]:
+            raise ValueError(
+                "M_PAIR_SHUFFLE must derange every success/failure relation; "
+                f"{failure_event_id} remained unchanged"
+            )
+        source_episode = _pair_event_episode_identity(before["success_event_id"])
+        shuffled_episode = _pair_event_episode_identity(after["success_event_id"])
+        if source_episode == shuffled_episode:
+            raise ValueError(
+                "M_PAIR_SHUFFLE must use a success donor from another episode; "
+                f"{failure_event_id} stayed in {source_episode!r}"
+            )
+        source_success_marginal.append(
+            (
+                str(before["success_event_id"]),
+                str(before["z_plus_sha256"]),
+                str(before["split"]),
+            )
+        )
+        shuffled_success_marginal.append(
+            (
+                str(after["success_event_id"]),
+                str(after["z_plus_sha256"]),
+                str(after["split"]),
+            )
+        )
+        relation_rows.append(
+            {
+                "failure_event_id": failure_event_id,
+                "source_success_event_id": str(before["success_event_id"]),
+                "shuffled_success_event_id": str(after["success_event_id"]),
+                "source_success_episode_id": source_episode,
+                "shuffled_success_episode_id": shuffled_episode,
+            }
+        )
+    if sorted(source_success_marginal) != sorted(shuffled_success_marginal):
+        raise ValueError("M_PAIR_SHUFFLE changed the success-event or z_plus marginal")
+    return {
+        "pair_count": len(source),
+        "changed_relation_count": len(relation_rows),
+        "all_relations_changed": True,
+        "all_success_episodes_changed": True,
+        "target_row_count": len(source) + len(source_passthrough),
+        "passthrough_unreferenced_target_count": len(source_passthrough),
+        "relation_mapping_sha256": sha256_json(relation_rows),
+        "failure_event_marginal_sha256": sha256_json(sorted(source)),
+        "success_target_marginal_sha256": sha256_json(sorted(source_success_marginal)),
+        "manifest_non_pair_marginal_sha256": sha256_json(
+            _pair_sample_marginals(source_manifest)
+        ),
+    }
+
+
+def validate_pair_shuffle_proof(
+    payload: Mapping[str, Any],
+    *,
+    seed: int,
+    source_manifest_sha256: str,
+    source_pair_targets_sha256: str,
+    output_manifest_sha256: str,
+    output_pair_targets_sha256: str,
+    control_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected_hash = payload.get("proof_sha256")
+    unhashed = dict(payload)
+    unhashed.pop("proof_sha256", None)
+    computed_hash = sha256_json(unhashed)
+    if not isinstance(expected_hash, str) or not hmac.compare_digest(
+        expected_hash, computed_hash
+    ):
+        raise ValueError("Pair-shuffle proof hash does not match its payload")
+    _expect_equal(
+        payload.get("format"),
+        PAIR_SHUFFLE_PROOF_FORMAT,
+        "pair-shuffle proof format",
+    )
+    _expect_equal(
+        payload.get("version"),
+        PAIR_SHUFFLE_PROOF_VERSION,
+        "pair-shuffle proof version",
+    )
+    _expect_equal(payload.get("shuffle_seed"), seed, "pair-shuffle proof seed")
+    source = payload.get("source")
+    output = payload.get("output")
+    if not isinstance(source, Mapping) or not isinstance(output, Mapping):
+        raise ValueError("Pair-shuffle proof requires source and output mappings")
+    _expect_equal(
+        source.get("manifest_file_sha256"),
+        source_manifest_sha256,
+        "pair-shuffle proof source manifest SHA-256",
+    )
+    _expect_equal(
+        source.get("pair_targets_file_sha256"),
+        source_pair_targets_sha256,
+        "pair-shuffle proof source pair-target SHA-256",
+    )
+    _expect_equal(
+        source.get("referenced_pair_count"),
+        control_report["pair_count"],
+        "pair-shuffle proof referenced pair count",
+    )
+    _expect_equal(
+        source.get("target_row_count"),
+        control_report["target_row_count"],
+        "pair-shuffle proof target row count",
+    )
+    _expect_equal(
+        source.get("passthrough_unreferenced_target_count"),
+        control_report["passthrough_unreferenced_target_count"],
+        "pair-shuffle proof passthrough target count",
+    )
+    _expect_equal(
+        output.get("manifest_file_sha256"),
+        output_manifest_sha256,
+        "pair-shuffle proof output manifest SHA-256",
+    )
+    _expect_equal(
+        output.get("pair_targets_file_sha256"),
+        output_pair_targets_sha256,
+        "pair-shuffle proof output pair-target SHA-256",
+    )
+    checks = payload.get("invariant_checks")
+    if not isinstance(checks, Mapping) or not checks:
+        raise ValueError("Pair-shuffle proof requires invariant_checks")
+    required_checks = {
+        "all_referenced_success_identities_deranged",
+        "all_referenced_success_episodes_deranged",
+        "failure_event_ids_preserved_rowwise",
+        "z_minus_preserved_rowwise",
+        "success_event_id_z_plus_multiset_preserved",
+    }
+    missing_checks = sorted(required_checks - set(checks))
+    if missing_checks:
+        raise ValueError(
+            f"Pair-shuffle proof is missing required invariants: {missing_checks}"
+        )
+    failed_checks = sorted(key for key, passed in checks.items() if passed is not True)
+    if failed_checks:
+        raise ValueError(
+            f"Pair-shuffle proof reports failed invariants: {failed_checks}"
+        )
+    mapping = payload.get("mapping")
+    if not isinstance(mapping, list) or len(mapping) != control_report["pair_count"]:
+        raise ValueError("Pair-shuffle proof mapping count is invalid")
+    reduced_mapping: list[dict[str, str]] = []
+    for index, row in enumerate(mapping):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"Pair-shuffle proof mapping[{index}] is not an object")
+        reduced_mapping.append(
+            {
+                "failure_event_id": str(row.get("failure_event_id") or ""),
+                "source_success_event_id": str(
+                    row.get("original_success_event_id") or ""
+                ),
+                "shuffled_success_event_id": str(
+                    row.get("shuffled_success_event_id") or ""
+                ),
+                "source_success_episode_id": str(
+                    row.get("original_success_episode_id") or ""
+                ),
+                "shuffled_success_episode_id": str(
+                    row.get("shuffled_success_episode_id") or ""
+                ),
+            }
+        )
+    reduced_mapping.sort(key=lambda row: row["failure_event_id"])
+    mapping_hash = sha256_json(reduced_mapping)
+    _expect_equal(
+        mapping_hash,
+        control_report["relation_mapping_sha256"],
+        "pair-shuffle proof relation mapping SHA-256",
+    )
+    return {
+        "format": PAIR_SHUFFLE_PROOF_FORMAT,
+        "version": PAIR_SHUFFLE_PROOF_VERSION,
+        "shuffle_seed": seed,
+        "pair_count": control_report["pair_count"],
+        "changed_relation_count": control_report["changed_relation_count"],
+        "all_relations_changed": True,
+        "all_success_episodes_changed": True,
+        "target_row_count": control_report["target_row_count"],
+        "passthrough_unreferenced_target_count": control_report[
+            "passthrough_unreferenced_target_count"
+        ],
+        "relation_mapping_sha256": mapping_hash,
+        "proof_sha256": computed_hash,
+    }
+
+
+def validate_common_init_arguments(
+    *,
+    variant: str,
+    strict_mode: bool,
+    common_init_values: Sequence[Any],
+) -> None:
+    if variant == PAIR_SHUFFLE_VARIANT and not strict_mode:
+        raise ValueError(
+            "M_PAIR_SHUFFLE requires --strict-common-init-comparison"
+        )
+    if strict_mode and variant not in PAIR_VARIANTS:
+        raise ValueError(
+            "Strict common-init comparison is only valid for M or M_PAIR_SHUFFLE"
+        )
+    if strict_mode and any(value is None for value in common_init_values):
+        raise ValueError(
+            "Strict common-init comparison requires weights, proof, config, seed, "
+            "and all four expected SHA-256 values"
+        )
+    if not strict_mode and any(value is not None for value in common_init_values):
+        raise ValueError(
+            "Common-init artifacts require --strict-common-init-comparison"
+        )
+
+
+def validate_common_init_proof(
+    payload: Mapping[str, Any],
+    *,
+    proof_path: Path,
+    common_init_weights: Path,
+    common_init_config: Path,
+    baseline_s0: Path,
+    seed: int,
+    expected_weights_sha256: str,
+    expected_proof_file_sha256: str,
+    expected_baseline_sha256: str,
+    expected_config_sha256: str,
+) -> dict[str, Any]:
+    proof_path = proof_path.expanduser().resolve()
+    common_init_weights = common_init_weights.expanduser().resolve()
+    common_init_config = common_init_config.expanduser().resolve()
+    baseline_s0 = baseline_s0.expanduser().resolve()
+
+    actual_hashes = {
+        "weights": sha256_file(common_init_weights),
+        "proof_file": sha256_file(proof_path),
+        "baseline": sha256_file(baseline_s0),
+        "config": sha256_file(common_init_config),
+    }
+    expected_hashes = {
+        "weights": expected_weights_sha256,
+        "proof_file": expected_proof_file_sha256,
+        "baseline": expected_baseline_sha256,
+        "config": expected_config_sha256,
+    }
+    for label, actual in actual_hashes.items():
+        expected = expected_hashes[label]
+        if not isinstance(expected, str) or not hmac.compare_digest(
+            actual.lower(), expected.lower()
+        ):
+            raise ValueError(
+                f"Common-init {label} SHA-256 mismatch: "
+                f"expected={expected!r} actual={actual}"
+            )
+
+    stored_proof_hash = payload.get("proof_sha256")
+    unhashed = dict(payload)
+    unhashed.pop("proof_sha256", None)
+    computed_proof_hash = sha256_json(unhashed)
+    if not isinstance(stored_proof_hash, str) or not hmac.compare_digest(
+        stored_proof_hash, computed_proof_hash
+    ):
+        raise ValueError("Common-init proof hash does not match its payload")
+    _expect_equal(
+        payload.get("format"),
+        COMMON_INIT_PROOF_FORMAT,
+        "common-init proof format",
+    )
+    _expect_equal(
+        payload.get("schema_version"),
+        COMMON_INIT_PROOF_VERSION,
+        "common-init proof version",
+    )
+    _expect_equal(payload.get("seed"), seed, "common-init seed")
+
+    inputs = payload.get("inputs")
+    output = payload.get("output")
+    if not isinstance(inputs, Mapping) or not isinstance(output, Mapping):
+        raise ValueError("Common-init proof requires inputs and output mappings")
+    config_record = inputs.get("resolved_config")
+    baseline_record = inputs.get("baseline_checkpoint")
+    checkpoint_record = output.get("checkpoint")
+    if not all(
+        isinstance(record, Mapping)
+        for record in (config_record, baseline_record, checkpoint_record)
+    ):
+        raise ValueError("Common-init proof is missing artifact records")
+    assert isinstance(config_record, Mapping)
+    assert isinstance(baseline_record, Mapping)
+    assert isinstance(checkpoint_record, Mapping)
+    artifact_expectations = (
+        (config_record, common_init_config, actual_hashes["config"], "config"),
+        (baseline_record, baseline_s0, actual_hashes["baseline"], "baseline"),
+        (
+            checkpoint_record,
+            common_init_weights,
+            actual_hashes["weights"],
+            "output",
+        ),
+    )
+    for record, expected_path, expected_hash, label in artifact_expectations:
+        _expect_equal(
+            Path(str(record.get("path"))).expanduser().resolve(),
+            expected_path,
+            f"common-init {label} path",
+        )
+        _expect_equal(
+            record.get("sha256"),
+            expected_hash,
+            f"common-init {label} SHA-256",
+        )
+
+    _expect_equal(checkpoint_record.get("step"), 0, "common-init output step")
+    top_level_keys = checkpoint_record.get("top_level_keys")
+    required_keys = {
+        "mot",
+        "offline_steer_student",
+        "offline_steer_residual",
+        "offline_steer_config",
+        "proprio_encoder",
+    }
+    if not isinstance(top_level_keys, list) or not required_keys.issubset(
+        set(top_level_keys)
+    ):
+        raise ValueError("Common-init output does not prove complete steer weights")
+
+    invariants = payload.get("invariants")
+    required_invariants = {
+        "seeded_before_model_instantiation",
+        "full_s0_load",
+        "baseline_exact_structure_match",
+        "baseline_is_steer_free",
+        "steer_unchanged_by_s0_load",
+        "residual_is_zero_initialized",
+        "complete_weight_only_checkpoint",
+        "no_overwrite",
+    }
+    if not isinstance(invariants, Mapping):
+        raise ValueError("Common-init proof is missing invariants")
+    failed = sorted(
+        name for name in required_invariants if invariants.get(name) is not True
+    )
+    if failed:
+        raise ValueError(f"Common-init proof reports failed invariants: {failed}")
+
+    return {
+        "format": COMMON_INIT_PROOF_FORMAT,
+        "version": COMMON_INIT_PROOF_VERSION,
+        "seed": seed,
+        "weights": artifact_record(common_init_weights),
+        "proof": artifact_record(proof_path),
+        "config": artifact_record(common_init_config),
+        "baseline": artifact_record(baseline_s0),
+        "payload_proof_sha256": computed_proof_hash,
+        "comparison_mode": STRICT_COMMON_INIT_MODE,
+    }
+
+
 def validate_protocol_matrix(
     manifests: Mapping[str, Mapping[str, Any]],
     *,
     targets: PairTargetStore | None,
+    pair_shuffle_targets: PairTargetStore | None,
+    include_pair_shuffle_control: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    if set(manifests) != VARIANTS:
-        raise ValueError("Protocol matrix must define exactly B0/B1/C/M manifests")
+    active_variants = set(BASE_VARIANTS)
+    if include_pair_shuffle_control:
+        active_variants.add(PAIR_SHUFFLE_VARIANT)
+    if set(manifests) != active_variants:
+        raise ValueError(
+            "Protocol matrix variants do not match the active control set; "
+            f"expected={sorted(active_variants)}, got={sorted(manifests)}"
+        )
+    if targets is None:
+        raise ValueError("Protocol matrix requires the M pair-target store")
+    if include_pair_shuffle_control and pair_shuffle_targets is None:
+        raise ValueError(
+            "M_PAIR_SHUFFLE control requires its shuffled pair-target store"
+        )
+    if not include_pair_shuffle_control and pair_shuffle_targets is not None:
+        raise ValueError(
+            "Shuffled pair targets require the optional pair-shuffle control"
+        )
     reports: dict[str, dict[str, Any]] = {}
     identities_by_variant: dict[str, list[dict[str, Any]]] = {}
-    for variant in sorted(VARIANTS):
+    for variant in sorted(active_variants):
         reports[variant] = validate_manifest_protocol(
             manifests[variant],
             variant=variant,
-            targets=targets if variant == "M" else None,
+            targets=(
+                targets
+                if variant == "M"
+                else pair_shuffle_targets
+                if variant == "M_PAIR_SHUFFLE"
+                else None
+            ),
         )
-        identities_by_variant[variant] = primary_sample_identities(
-            manifests[variant]
-        )
+        identities_by_variant[variant] = primary_sample_identities(manifests[variant])
 
     reference = identities_by_variant["B0"]
     reference_hash = sha256_json(reference)
-    for variant in ("B1", "C", "M"):
+    for variant in sorted(active_variants - {"B0"}):
         current = identities_by_variant[variant]
         if current != reference:
             reference_rows = {
@@ -522,7 +1059,7 @@ def validate_protocol_matrix(
     reports["B0"]["primary_sample_count"] = len(reference)
 
     reference_auxiliary = reports["B1"]["counts"]["train"]["auxiliary"]
-    for variant in ("B0", "C", "M"):
+    for variant in sorted(active_variants - {"B1"}):
         current_auxiliary = reports[variant]["counts"]["train"]["auxiliary"]
         if current_auxiliary != reference_auxiliary:
             raise ValueError(
@@ -530,8 +1067,18 @@ def validate_protocol_matrix(
                 f"{variant}: B1={reference_auxiliary}, "
                 f"{variant}={current_auxiliary}"
             )
-    for variant in VARIANTS:
+    for variant in active_variants:
         reports[variant]["auxiliary_sample_count"] = reference_auxiliary
+    if include_pair_shuffle_control:
+        assert pair_shuffle_targets is not None
+        reports[PAIR_SHUFFLE_VARIANT]["pair_shuffle_control"] = (
+            validate_pair_shuffle_control(
+                source_manifest=manifests["M"],
+                shuffled_manifest=manifests[PAIR_SHUFFLE_VARIANT],
+                source_targets=targets,
+                shuffled_targets=pair_shuffle_targets,
+            )
+        )
     return reports, reference
 
 
@@ -817,6 +1364,11 @@ def validate_resolved_config(
     pair_targets: Path,
     pair_targets_sha256: str,
     teacher_sha256: str,
+    pair_shuffle_proof_sha256: str | None = None,
+    pair_shuffle_seed: int | None = None,
+    pair_shuffle_source_pair_targets_sha256: str | None = None,
+    strict_common_init: bool = False,
+    common_init_report: Mapping[str, Any] | None = None,
     code_snapshot_sha256: str,
     expected_dataset_roots: Sequence[str],
     expected_normalization_kind: str,
@@ -833,6 +1385,13 @@ def validate_resolved_config(
     init_weights = init_weights.expanduser().resolve()
     pair_targets = pair_targets.expanduser().resolve()
     payload = read_yaml(path)
+    if variant == PAIR_SHUFFLE_VARIANT and not strict_common_init:
+        raise ValueError(
+            "M_PAIR_SHUFFLE cannot be validated outside strict common-init mode"
+        )
+    strict_pair_variant = strict_common_init and variant in PAIR_VARIANTS
+    if strict_pair_variant and common_init_report is None:
+        raise ValueError(f"{variant} strict comparison requires common-init proof")
     training_inputs = validate_training_data_contract(
         payload,
         expected_dataset_roots=expected_dataset_roots,
@@ -849,7 +1408,7 @@ def validate_resolved_config(
         expected_text_cache_sha256,
         f"{variant} text embedding cache SHA-256",
     )
-    steer_enabled = variant in {"C", "M"}
+    steer_enabled = variant in {"C", *PAIR_VARIANTS}
     _expect_equal(payload.get("batch_size"), 4, f"{variant} batch_size")
     _expect_equal(
         nested_get(payload, "role_balanced_sampling", "enabled"),
@@ -911,12 +1470,12 @@ def validate_resolved_config(
     )
     _expect_equal(
         nested_get(payload, "model", "offline_steer", "pair_loss_weight"),
-        0.1 if variant == "M" else 0.0,
+        0.1 if variant in PAIR_VARIANTS else 0.0,
         f"{variant} pair loss weight",
     )
     _expect_equal(
         nested_get(payload, "model", "offline_steer", "pair_loss_warmup_steps"),
-        500 if variant == "M" else 0,
+        500 if variant in PAIR_VARIANTS else 0,
         f"{variant} pair loss warmup",
     )
     _expect_equal(
@@ -935,7 +1494,7 @@ def validate_resolved_config(
             payload, "data", split, "pair_targets_path"
         )
         expected_targets: Any = (
-            pair_targets if variant == "M" and split == "train" else None
+            pair_targets if variant in PAIR_VARIANTS and split == "train" else None
         )
         if configured_targets is not None:
             configured_targets = Path(str(configured_targets)).expanduser().resolve()
@@ -946,7 +1505,9 @@ def validate_resolved_config(
         )
         _expect_equal(
             nested_get(payload, "data", split, "expected_teacher_sha256"),
-            teacher_sha256 if variant == "M" and split == "train" else None,
+            teacher_sha256
+            if variant in PAIR_VARIANTS and split == "train"
+            else None,
             f"{variant} data.{split}.expected_teacher_sha256",
         )
 
@@ -961,9 +1522,9 @@ def validate_resolved_config(
         "manifest_sha256": manifest_sha256,
         "selection_manifest_sha256": selection_manifest_sha256,
         "pair_targets_sha256": (
-            pair_targets_sha256 if variant == "M" else "none"
+            pair_targets_sha256 if variant in PAIR_VARIANTS else "none"
         ),
-        "teacher_sha256": teacher_sha256 if variant == "M" else "none",
+        "teacher_sha256": (teacher_sha256 if variant in PAIR_VARIANTS else "none"),
         "code_snapshot_sha256": code_snapshot_sha256,
         "normalization_kind": expected_normalization_kind,
         "normalization_bundle_sha256": expected_normalization_bundle_sha256,
@@ -975,6 +1536,69 @@ def validate_resolved_config(
             expected,
             f"{variant} experiment_provenance.{key}",
         )
+    common_init_keys = {
+        "comparison_mode",
+        "common_init_checkpoint_sha256",
+        "common_init_proof_file_sha256",
+        "common_init_payload_proof_sha256",
+        "common_init_baseline_sha256",
+        "common_init_config_sha256",
+        "common_init_seed",
+    }
+    if strict_pair_variant:
+        assert common_init_report is not None
+        strict_provenance = {
+            "comparison_mode": STRICT_COMMON_INIT_MODE,
+            "common_init_checkpoint_sha256": common_init_report["weights"][
+                "sha256"
+            ],
+            "common_init_proof_file_sha256": common_init_report["proof"][
+                "sha256"
+            ],
+            "common_init_payload_proof_sha256": common_init_report[
+                "payload_proof_sha256"
+            ],
+            "common_init_baseline_sha256": common_init_report["baseline"][
+                "sha256"
+            ],
+            "common_init_config_sha256": common_init_report["config"][
+                "sha256"
+            ],
+            "common_init_seed": common_init_report["seed"],
+        }
+        for key, expected in strict_provenance.items():
+            _expect_equal(
+                provenance.get(key),
+                expected,
+                f"{variant} experiment_provenance.{key}",
+            )
+    else:
+        unexpected = sorted(common_init_keys.intersection(provenance))
+        if unexpected:
+            raise ValueError(
+                f"{variant} is not a strict common-init comparator but carries "
+                f"strict provenance: {unexpected}"
+            )
+    if variant == "M_PAIR_SHUFFLE":
+        if pair_shuffle_proof_sha256 is None or pair_shuffle_seed is None:
+            raise ValueError(
+                "M_PAIR_SHUFFLE requires proof SHA-256 and shuffle seed provenance"
+            )
+        if pair_shuffle_source_pair_targets_sha256 is None:
+            raise ValueError("M_PAIR_SHUFFLE requires source pair-target provenance")
+        shuffle_provenance = {
+            "pair_shuffle_proof_sha256": pair_shuffle_proof_sha256,
+            "pair_shuffle_seed": pair_shuffle_seed,
+            "pair_shuffle_source_pair_targets_sha256": (
+                pair_shuffle_source_pair_targets_sha256
+            ),
+        }
+        for key, expected in shuffle_provenance.items():
+            _expect_equal(
+                provenance.get(key),
+                expected,
+                f"{variant} experiment_provenance.{key}",
+            )
     expected_run_mode = execution_contract["provenance_run_mode"]
     if expected_run_mode is None:
         if "run_mode" in provenance:
@@ -1000,6 +1624,11 @@ def validate_resolved_config(
         "execution_mode": execution_mode,
         "manifest": str(manifest_path),
         "selection_manifest": str(selection_manifest_path),
+        "initialization_mode": (
+            "common_init" if strict_pair_variant else "s0"
+        ),
+        "init_weights": str(init_weights),
+        "init_weights_sha256": init_weights_sha256,
         "training_inputs": training_inputs,
     }
 
@@ -1144,17 +1773,17 @@ def artifact_record(path: Path) -> dict[str, str]:
 def validate_source_bundle_manifest(
     path: Path,
     *,
-    init_weights: Path,
+    source_checkpoint: Path,
     source_config: Path,
     normalization_bundle_sha256: str,
 ) -> dict[str, Any]:
     path = path.expanduser().resolve()
-    init_weights = init_weights.expanduser().resolve()
+    source_checkpoint = source_checkpoint.expanduser().resolve()
     source_config = source_config.expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
     root = path.parent
-    if init_weights.parent != root or source_config.parent != root:
+    if source_checkpoint.parent != root or source_config.parent != root:
         raise ValueError(
             "S0 checkpoint, source config, and source bundle manifest must "
             "come from the same atomic directory"
@@ -1192,7 +1821,7 @@ def validate_source_bundle_manifest(
             )
         listed[relative] = digest
     for expected_name, artifact_path in (
-        ("step_006500.pt", init_weights),
+        ("step_006500.pt", source_checkpoint),
         ("config.yaml", source_config),
     ):
         expected_hash = listed.get(expected_name)
@@ -1230,6 +1859,7 @@ def validate_source_bundle_manifest(
     )
     return {
         **artifact_record(path),
+        "source_checkpoint": artifact_record(source_checkpoint),
         "normalization_bundle_sha256": normalization_bundle_sha256,
         "artifact_count": len(listed),
     }
@@ -1238,6 +1868,7 @@ def validate_source_bundle_manifest(
 def build_protocol_bundle(
     *,
     init_weights: Path,
+    source_checkpoint: Path,
     source_config: Path,
     manifest_paths: Mapping[str, Path],
     manifests: Mapping[str, Mapping[str, Any]],
@@ -1247,18 +1878,24 @@ def build_protocol_bundle(
     selection_report: Mapping[str, Any],
     resolved_config_reports: Mapping[str, Mapping[str, Any]],
     pair_targets: Path,
+    pair_shuffle_targets: Path | None,
+    pair_shuffle_proof: Path | None,
+    pair_shuffle_proof_report: Mapping[str, Any] | None,
+    pair_shuffle_control_report: Mapping[str, Any] | None,
     teacher_checkpoint: Path,
     teacher_sha256: str,
     primary_identities: Sequence[Mapping[str, Any]],
     code_snapshot: Mapping[str, Any],
     training_inputs: Mapping[str, Any],
     source_bundle_manifest: Mapping[str, Any],
+    common_init_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "format": BUNDLE_FORMAT,
         "version": BUNDLE_VERSION,
         "protocol": PROTOCOL_NAME,
         "init_weights": artifact_record(init_weights),
+        "source_checkpoint": artifact_record(source_checkpoint),
         "source_config": artifact_record(source_config),
         "source_bundle_manifest": copy.deepcopy(
             dict(source_bundle_manifest)
@@ -1272,7 +1909,7 @@ def build_protocol_bundle(
         },
         "resolved_configs": {
             variant: dict(resolved_config_reports[variant])
-            for variant in sorted(VARIANTS)
+            for variant in sorted(resolved_config_reports)
         },
         "pair_targets": artifact_record(pair_targets),
         "teacher_checkpoint": artifact_record(teacher_checkpoint),
@@ -1284,7 +1921,7 @@ def build_protocol_bundle(
             "identity_sha256": sha256_json(list(primary_identities)),
         },
     }
-    for variant in sorted(VARIANTS):
+    for variant in sorted(manifest_paths):
         payload["manifests"][variant] = {
             "path": str(manifest_paths[variant]),
             "file_sha256": sha256_file(manifest_paths[variant]),
@@ -1296,6 +1933,31 @@ def build_protocol_bundle(
                 "primary_identity_sha256"
             ],
         }
+    pair_shuffle_values = (
+        pair_shuffle_targets,
+        pair_shuffle_proof,
+        pair_shuffle_proof_report,
+        pair_shuffle_control_report,
+    )
+    if any(value is not None for value in pair_shuffle_values):
+        if not all(value is not None for value in pair_shuffle_values):
+            raise ValueError(
+                "Pair-shuffle bundle inputs must be supplied together"
+            )
+        assert pair_shuffle_targets is not None
+        assert pair_shuffle_proof is not None
+        assert pair_shuffle_proof_report is not None
+        assert pair_shuffle_control_report is not None
+        payload["pair_shuffle"] = {
+            "pair_targets": artifact_record(pair_shuffle_targets),
+            "proof": artifact_record(pair_shuffle_proof),
+            "proof_report": copy.deepcopy(dict(pair_shuffle_proof_report)),
+            "control_report": copy.deepcopy(dict(pair_shuffle_control_report)),
+        }
+    if common_init_report is not None:
+        payload["strict_common_init"] = copy.deepcopy(
+            dict(common_init_report)
+        )
     payload["bundle_sha256"] = sha256_json(payload)
     return payload
 
@@ -1379,21 +2041,54 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="VARIANT=PATH",
-        help="Repeat exactly once for B0, B1, C, and M.",
+        help=(
+            "Repeat once for B0, B1, C, and M; add M_PAIR_SHUFFLE only "
+            "when that optional control is active."
+        ),
     )
     parser.add_argument(
         "--resolved-config",
         action="append",
         default=[],
         metavar="VARIANT=PATH",
-        help="Canonical resolved config; repeat for B0, B1, C, and M.",
+        help=(
+            "Canonical resolved config for each active protocol variant."
+        ),
     )
     parser.add_argument("--init-weights", type=Path, required=True)
+    parser.add_argument(
+        "--strict-common-init-comparison",
+        action="store_true",
+        help=(
+            "Bind selected M/M_PAIR_SHUFFLE runs to one verified common-init "
+            "artifact. M_PAIR_SHUFFLE requires this mode."
+        ),
+    )
+    parser.add_argument("--common-init-weights", type=Path)
+    parser.add_argument("--common-init-config", type=Path)
+    parser.add_argument("--common-init-seed", type=int)
+    parser.add_argument("--expected-common-init-weights-sha256")
+    parser.add_argument("--expected-common-init-proof-sha256")
+    parser.add_argument("--expected-common-init-baseline-sha256")
+    parser.add_argument("--expected-common-init-config-sha256")
+    parser.add_argument("--source-checkpoint", type=Path, required=True)
+    parser.add_argument("--common-init-proof", type=Path)
     parser.add_argument("--resume-state-dir", type=Path)
     parser.add_argument("--expected-resume-step", type=int)
     parser.add_argument("--source-config", type=Path, required=True)
     parser.add_argument("--source-bundle-manifest", type=Path, required=True)
     parser.add_argument("--pair-targets", type=Path, required=True)
+    parser.add_argument("--pair-shuffle-targets", type=Path)
+    parser.add_argument("--pair-shuffle-proof", type=Path)
+    parser.add_argument("--pair-shuffle-seed", type=int)
+    parser.add_argument(
+        "--include-pair-shuffle-control",
+        action="store_true",
+        help=(
+            "Validate M_PAIR_SHUFFLE in addition to the four base variants. "
+            "Selecting M_PAIR_SHUFFLE enables this automatically."
+        ),
+    )
     parser.add_argument("--teacher-checkpoint", type=Path, required=True)
     parser.add_argument("--expected-teacher-sha256")
     parser.add_argument(
@@ -1418,9 +2113,66 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    common_init_values = (
+        args.common_init_weights,
+        args.common_init_proof,
+        args.common_init_config,
+        args.common_init_seed,
+        args.expected_common_init_weights_sha256,
+        args.expected_common_init_proof_sha256,
+        args.expected_common_init_baseline_sha256,
+        args.expected_common_init_config_sha256,
+    )
+    validate_common_init_arguments(
+        variant=args.variant,
+        strict_mode=args.strict_common_init_comparison,
+        common_init_values=common_init_values,
+    )
+    include_pair_shuffle_control = (
+        args.variant == PAIR_SHUFFLE_VARIANT
+        or args.include_pair_shuffle_control
+    )
+    active_variants = set(BASE_VARIANTS)
+    if include_pair_shuffle_control:
+        active_variants.add(PAIR_SHUFFLE_VARIANT)
+    shuffle_arguments = (
+        args.pair_shuffle_targets,
+        args.pair_shuffle_proof,
+        args.pair_shuffle_seed,
+    )
+    if include_pair_shuffle_control and any(
+        value is None for value in shuffle_arguments
+    ):
+        raise ValueError(
+            "M_PAIR_SHUFFLE requires --pair-shuffle-targets, "
+            "--pair-shuffle-proof, and --pair-shuffle-seed"
+        )
+    if not include_pair_shuffle_control and any(
+        value is not None for value in shuffle_arguments
+    ):
+        raise ValueError(
+            "Pair-shuffle artifacts require M_PAIR_SHUFFLE or "
+            "--include-pair-shuffle-control"
+        )
     manifest_path = args.manifest.expanduser().resolve()
     selection_manifest_path = args.selection_manifest.expanduser().resolve()
     init_weights = args.init_weights.expanduser().resolve()
+    common_init_weights = (
+        args.common_init_weights.expanduser().resolve()
+        if args.common_init_weights is not None
+        else None
+    )
+    common_init_proof_path = (
+        args.common_init_proof.expanduser().resolve()
+        if args.common_init_proof is not None
+        else None
+    )
+    common_init_config = (
+        args.common_init_config.expanduser().resolve()
+        if args.common_init_config is not None
+        else None
+    )
+    source_checkpoint = args.source_checkpoint.expanduser().resolve()
     resume_state_dir = (
         None
         if args.resume_state_dir is None
@@ -1436,17 +2188,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.source_bundle_manifest.expanduser().resolve()
     )
     pair_path = args.pair_targets.expanduser().resolve()
+    pair_shuffle_path = (
+        args.pair_shuffle_targets.expanduser().resolve()
+        if args.pair_shuffle_targets is not None
+        else None
+    )
+    pair_shuffle_proof_path = (
+        args.pair_shuffle_proof.expanduser().resolve()
+        if args.pair_shuffle_proof is not None
+        else None
+    )
     teacher_checkpoint = args.teacher_checkpoint.expanduser().resolve()
     protocol_bundle_path = args.protocol_bundle.expanduser().resolve()
     manifest_paths = parse_variant_paths(
-        args.protocol_manifest, label="--protocol-manifest"
+        args.protocol_manifest,
+        label="--protocol-manifest",
+        required_variants=active_variants,
     )
     resolved_config_paths = parse_variant_paths(
-        args.resolved_config, label="--resolved-config"
+        args.resolved_config,
+        label="--resolved-config",
+        required_variants=active_variants,
     )
-    for path in (
+    required_paths = [
         manifest_path,
         init_weights,
+        source_checkpoint,
         source_config,
         source_bundle_manifest_path,
         pair_path,
@@ -1454,7 +2221,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         selection_manifest_path,
         *manifest_paths.values(),
         *resolved_config_paths.values(),
-    ):
+    ]
+    if include_pair_shuffle_control:
+        assert pair_shuffle_path is not None
+        assert pair_shuffle_proof_path is not None
+        required_paths.extend((pair_shuffle_path, pair_shuffle_proof_path))
+    if args.strict_common_init_comparison:
+        assert common_init_weights is not None
+        assert common_init_proof_path is not None
+        assert common_init_config is not None
+        required_paths.extend(
+            (common_init_weights, common_init_proof_path, common_init_config)
+        )
+    for path in required_paths:
         if not path.is_file():
             raise FileNotFoundError(path)
     if manifest_paths[args.variant] != manifest_path:
@@ -1466,7 +2245,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         pair_path,
         expected_teacher_sha256=args.expected_teacher_sha256,
     )
+    pair_shuffle_store: PairTargetStore | None = None
     try:
+        if include_pair_shuffle_control:
+            assert pair_shuffle_path is not None
+            pair_shuffle_store = PairTargetStore(
+                pair_shuffle_path,
+                expected_teacher_sha256=args.expected_teacher_sha256,
+            )
         teacher_sha256 = sha256_file(teacher_checkpoint)
         if not hmac.compare_digest(
             teacher_sha256.lower(), target_store.teacher_sha256.lower()
@@ -1474,6 +2260,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError(
                 "Pair-target teacher_sha256 does not match --teacher-checkpoint"
             )
+        if pair_shuffle_store is not None:
+            if not hmac.compare_digest(
+                teacher_sha256.lower(), pair_shuffle_store.teacher_sha256.lower()
+            ):
+                raise ValueError(
+                    "Pair-shuffle teacher_sha256 does not match "
+                    "--teacher-checkpoint"
+                )
         manifests = {
             variant: read_json(path)
             for variant, path in manifest_paths.items()
@@ -1482,6 +2276,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest_reports, primary_identities = validate_protocol_matrix(
             manifests,
             targets=target_store,
+            pair_shuffle_targets=pair_shuffle_store,
+            include_pair_shuffle_control=include_pair_shuffle_control,
         )
         selection_report, selection_identities = validate_selection_manifest(
             selection_manifest,
@@ -1502,28 +2298,127 @@ def main(argv: Sequence[str] | None = None) -> int:
         ]
         source_contract = validate_source_config(source_config)
         init_weights_sha256 = sha256_file(init_weights)
+        source_checkpoint_sha256 = sha256_file(source_checkpoint)
+        if not hmac.compare_digest(
+            init_weights_sha256, source_checkpoint_sha256
+        ):
+            raise ValueError(
+                "--init-weights must be the same frozen S0 checkpoint as "
+                "--source-checkpoint"
+            )
         source_config_sha256 = sha256_file(source_config)
+        common_init_report: Mapping[str, Any] | None = None
+        if args.strict_common_init_comparison:
+            assert common_init_weights is not None
+            assert common_init_proof_path is not None
+            assert common_init_config is not None
+            assert args.common_init_seed is not None
+            assert args.expected_common_init_weights_sha256 is not None
+            assert args.expected_common_init_proof_sha256 is not None
+            assert args.expected_common_init_baseline_sha256 is not None
+            assert args.expected_common_init_config_sha256 is not None
+            common_init_report = validate_common_init_proof(
+                read_json(common_init_proof_path),
+                proof_path=common_init_proof_path,
+                common_init_weights=common_init_weights,
+                common_init_config=common_init_config,
+                baseline_s0=source_checkpoint,
+                seed=args.common_init_seed,
+                expected_weights_sha256=(
+                    args.expected_common_init_weights_sha256
+                ),
+                expected_proof_file_sha256=(
+                    args.expected_common_init_proof_sha256
+                ),
+                expected_baseline_sha256=(
+                    args.expected_common_init_baseline_sha256
+                ),
+                expected_config_sha256=(
+                    args.expected_common_init_config_sha256
+                ),
+            )
         pair_targets_sha256 = sha256_file(pair_path)
+        pair_shuffle_targets_sha256: str | None = None
+        pair_shuffle_control_report: Mapping[str, Any] | None = None
+        pair_shuffle_proof_report: Mapping[str, Any] | None = None
+        if include_pair_shuffle_control:
+            assert pair_shuffle_path is not None
+            assert pair_shuffle_proof_path is not None
+            assert args.pair_shuffle_seed is not None
+            pair_shuffle_targets_sha256 = sha256_file(pair_shuffle_path)
+            pair_shuffle_control_report = manifest_reports[
+                PAIR_SHUFFLE_VARIANT
+            ]["pair_shuffle_control"]
+            pair_shuffle_proof_report = validate_pair_shuffle_proof(
+                read_json(pair_shuffle_proof_path),
+                seed=args.pair_shuffle_seed,
+                source_manifest_sha256=sha256_file(manifest_paths["M"]),
+                source_pair_targets_sha256=pair_targets_sha256,
+                output_manifest_sha256=sha256_file(
+                    manifest_paths[PAIR_SHUFFLE_VARIANT]
+                ),
+                output_pair_targets_sha256=pair_shuffle_targets_sha256,
+                control_report=pair_shuffle_control_report,
+            )
         code_snapshot = build_code_snapshot()
         code_snapshot_sha256 = str(code_snapshot["snapshot_sha256"])
         resolved_config_reports: dict[str, dict[str, Any]] = {}
-        for variant in sorted(VARIANTS):
+        for variant in sorted(active_variants):
+            strict_pair_variant = (
+                args.strict_common_init_comparison and variant in PAIR_VARIANTS
+            )
+            variant_init_weights = (
+                common_init_weights if strict_pair_variant else init_weights
+            )
+            if variant_init_weights is None:
+                raise ValueError(f"{variant} is missing common-init weights")
+            variant_init_weights_sha256 = sha256_file(variant_init_weights)
+            variant_pair_targets = (
+                pair_shuffle_path
+                if variant == PAIR_SHUFFLE_VARIANT
+                else pair_path
+            )
+            variant_pair_targets_sha256 = (
+                pair_shuffle_targets_sha256
+                if variant == PAIR_SHUFFLE_VARIANT
+                else pair_targets_sha256
+            )
+            assert variant_pair_targets is not None
+            assert variant_pair_targets_sha256 is not None
             resolved_config_reports[variant] = validate_resolved_config(
                 resolved_config_paths[variant],
                 variant=variant,
                 execution_mode=args.execution_mode,
                 manifest_path=manifest_paths[variant],
                 selection_manifest_path=selection_manifest_path,
-                init_weights=init_weights,
-                init_weights_sha256=init_weights_sha256,
+                init_weights=variant_init_weights,
+                init_weights_sha256=variant_init_weights_sha256,
                 source_config_sha256=source_config_sha256,
                 manifest_sha256=sha256_file(manifest_paths[variant]),
                 selection_manifest_sha256=sha256_file(
                     selection_manifest_path
                 ),
-                pair_targets=pair_path,
-                pair_targets_sha256=pair_targets_sha256,
+                pair_targets=variant_pair_targets,
+                pair_targets_sha256=variant_pair_targets_sha256,
                 teacher_sha256=teacher_sha256,
+                pair_shuffle_proof_sha256=(
+                    sha256_file(pair_shuffle_proof_path)
+                    if variant == PAIR_SHUFFLE_VARIANT
+                    and pair_shuffle_proof_path is not None
+                    else None
+                ),
+                pair_shuffle_seed=(
+                    args.pair_shuffle_seed
+                    if variant == PAIR_SHUFFLE_VARIANT
+                    else None
+                ),
+                pair_shuffle_source_pair_targets_sha256=(
+                    pair_targets_sha256
+                    if variant == PAIR_SHUFFLE_VARIANT
+                    else None
+                ),
+                strict_common_init=args.strict_common_init_comparison,
+                common_init_report=common_init_report,
                 code_snapshot_sha256=code_snapshot_sha256,
                 expected_dataset_roots=manifest_reports[variant][
                     "dataset_roots"
@@ -1544,14 +2439,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         source_bundle_manifest = validate_source_bundle_manifest(
             source_bundle_manifest_path,
-            init_weights=init_weights,
+            source_checkpoint=source_checkpoint,
             source_config=source_config,
             normalization_bundle_sha256=(
                 args.expected_normalization_bundle_sha256
             ),
         )
         training_inputs = resolved_config_reports["B0"]["training_inputs"]
-        for variant in ("B1", "C", "M"):
+        for variant in sorted(active_variants - {"B0"}):
             if (
                 resolved_config_reports[variant]["training_inputs"]
                 != training_inputs
@@ -1561,6 +2456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         bundle = build_protocol_bundle(
             init_weights=init_weights,
+            source_checkpoint=source_checkpoint,
             source_config=source_config,
             manifest_paths=manifest_paths,
             manifests=manifests,
@@ -1570,19 +2466,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             selection_report=selection_report,
             resolved_config_reports=resolved_config_reports,
             pair_targets=pair_path,
+            pair_shuffle_targets=pair_shuffle_path,
+            pair_shuffle_proof=pair_shuffle_proof_path,
+            pair_shuffle_proof_report=pair_shuffle_proof_report,
+            pair_shuffle_control_report=pair_shuffle_control_report,
             teacher_checkpoint=teacher_checkpoint,
             teacher_sha256=teacher_sha256,
             primary_identities=primary_identities,
             code_snapshot=code_snapshot,
             training_inputs=training_inputs,
             source_bundle_manifest=source_bundle_manifest,
+            common_init_report=common_init_report,
         )
-        bundle_status = write_or_validate_protocol_bundle(
-            protocol_bundle_path, bundle
-        )
-        selected_resolved_config = read_yaml(
-            resolved_config_paths[args.variant]
-        )
+        bundle_status = write_or_validate_protocol_bundle(protocol_bundle_path, bundle)
+        selected_resolved_config = read_yaml(resolved_config_paths[args.variant])
         expected_resume_provenance = selected_resolved_config.get(
             "experiment_provenance"
         )
@@ -1622,14 +2519,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             "manifest_file_sha256": sha256_file(manifest_path),
             "manifest_hash": manifest["manifest_hash"],
             "selection_manifest": str(selection_manifest_path),
-            "selection_manifest_file_sha256": sha256_file(
-                selection_manifest_path
-            ),
+            "selection_manifest_file_sha256": sha256_file(selection_manifest_path),
             "selection_manifest_hash": selection_manifest["manifest_hash"],
             "selection": selection_report,
             "selection_identities": selection_identities,
-            "init_weights": str(init_weights),
-            "init_weights_sha256": init_weights_sha256,
+            "init_weights": resolved_config_reports[args.variant][
+                "init_weights"
+            ],
+            "init_weights_sha256": resolved_config_reports[args.variant][
+                "init_weights_sha256"
+            ],
+            "s0_init_weights": str(init_weights),
+            "s0_init_weights_sha256": init_weights_sha256,
             "resume_state": resume_state,
             "load_mode": (
                 "resume_full_state" if resume_state is not None else "init_weights"
@@ -1654,7 +2555,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             "datasets": datasets,
             "system": system,
         }
+        if common_init_report is not None:
+            report["strict_common_init"] = dict(common_init_report)
+        if include_pair_shuffle_control:
+            assert pair_shuffle_path is not None
+            assert pair_shuffle_proof_path is not None
+            report["pair_shuffle"] = {
+                "targets": str(pair_shuffle_path),
+                "targets_sha256": pair_shuffle_targets_sha256,
+                "proof": str(pair_shuffle_proof_path),
+                "proof_report": pair_shuffle_proof_report,
+                "control_report": pair_shuffle_control_report,
+            }
     finally:
+        if pair_shuffle_store is not None:
+            pair_shuffle_store.close()
         target_store.close()
 
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"

@@ -19,6 +19,11 @@ Historical pilots are retained with their evidence status. Only rows with restor
 | water_plant | B0 success-only control, step 6500 | 80.0% | 40 / 50 | -- | controlled checkpoint screening | `B0 - B1 = -10pp`, paired bootstrap CI `[-24pp, +4pp]`. |
 | water_plant | C residual-only, step 6500 | 74.0% | 37 / 50 | -- | controlled checkpoint screening | `C - B1 = -16pp`, paired bootstrap CI `[-30pp, -2pp]`. |
 | water_plant | M contrastive steer, step 6500 | 90.0% | 45 / 50 | -- | controlled checkpoint screening | `M - B1 = 0pp`, paired bootstrap CI `[-10pp, +10pp]`; the +4pp gate did not pass. |
+| water_plant | S0 source policy, E1 step 6500 | 75.0% | 150 / 200 | -- | fresh-seed reference | Seeds `20262000..20262199`, replan 25, max environment steps 1500. |
+| water_plant | B1 failure-video control, E1 step 6000 | 85.0% | 170 / 200 | -- | fresh-seed confirmation | `B1 - S0 = +10.0pp`, 95% paired CI `[+2.5pp, +17.5pp]`, McNemar `p=0.0169`. |
+| water_plant | M contrastive steer, E1 step 6000 | 87.5% | 175 / 200 | -- | fresh-seed confirmation | `M - B1 = +2.5pp`, 95% paired CI `[-3.5pp, +8.5pp]`, McNemar `p=0.511`; the +4pp gate did not pass. |
+| water_plant | M residual bypass, E1 step 6000 | 10.0% | 20 / 200 | -- | inference causal control | `bypass - learned = -77.5pp`, 95% paired CI `[-83.5pp, -71.5pp]`. |
+| water_plant | M cross-episode shuffled steer, E1 step 6000 | 88.0% | 176 / 200 | -- | inference causal control | `shuffled - learned = +0.5pp`, 95% paired CI `[-5.0pp, +6.0pp]`; episode-specific steer content is not established. |
 | hammer_nail | FastWAM success-only, step 6500 | 67.5% | 135 / 200 | -- | historical pilot | Protocol summary is not tracked in this checkout. |
 
 ## Items To Confirm Before Paper Use

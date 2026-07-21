@@ -92,6 +92,20 @@ def control_samples(auxiliary_outcome: str) -> list[dict[str, object]]:
     ]
 
 
+def two_auxiliary_samples(auxiliary_outcome: str) -> list[dict[str, object]]:
+    rows = control_samples(auxiliary_outcome)
+    rows.append(
+        sample(
+            "train-aux-2",
+            split="train",
+            episode_index=2,
+            outcome=auxiliary_outcome,
+            role="auxiliary",
+        )
+    )
+    return rows
+
+
 def selection_samples(*, episode_index: int = 10) -> list[dict[str, object]]:
     return [
         sample(
@@ -127,6 +141,12 @@ def write_deepspeed_state_payload(
 class _Target:
     split: str
     failure_event_id: str
+    pair_id: str = "pair"
+    success_event_id: str = "success-event"
+    pair_weight: float = 0.8
+    z_plus: tuple[float, ...] = (1.0, 2.0)
+    z_minus: tuple[float, ...] = (3.0, 4.0)
+    teacher_sha256: str = "a" * 64
 
 
 class _TargetStore:
@@ -136,8 +156,74 @@ class _TargetStore:
     def __contains__(self, pair_id: object) -> bool:
         return pair_id in self.targets
 
+    def __len__(self) -> int:
+        return len(self.targets)
+
+    @property
+    def pair_ids(self) -> tuple[str, ...]:
+        return tuple(self.targets)
+
     def get(self, pair_id: str) -> _Target:
         return self.targets[pair_id]
+
+
+def pair_control_fixture() -> tuple[
+    dict[str, object],
+    dict[str, object],
+    _TargetStore,
+    _TargetStore,
+]:
+    base_rows = [control_samples("failure")[0]]
+    source_targets: dict[str, _Target] = {}
+    shuffled_targets: dict[str, _Target] = {}
+    source_rows = list(base_rows)
+    shuffled_rows = list(base_rows)
+    failures = ("failure-a", "failure-b")
+    successes = ("success-a", "success-b")
+    for index, failure_event_id in enumerate(failures, start=1):
+        source_pair_id = f"source-pair-{index}"
+        shuffled_pair_id = f"shuffled-pair-{index}"
+        common = sample(
+            f"train-aux-{index}",
+            split="train",
+            episode_index=index,
+            outcome="failure",
+            role="auxiliary",
+            event_id=failure_event_id,
+        )
+        common["pair_weight"] = 0.8
+        source_row = dict(common)
+        source_row["pair_id"] = source_pair_id
+        shuffled_row = dict(common)
+        shuffled_row["pair_id"] = shuffled_pair_id
+        source_rows.append(source_row)
+        shuffled_rows.append(shuffled_row)
+        source_targets[source_pair_id] = _Target(
+            pair_id=source_pair_id,
+            success_event_id=successes[index - 1],
+            failure_event_id=failure_event_id,
+            split="train",
+            z_plus=(float(index), float(index + 1)),
+            z_minus=(float(index + 10), float(index + 11)),
+        )
+        shuffled_success_index = 1 - (index - 1)
+        shuffled_targets[shuffled_pair_id] = _Target(
+            pair_id=shuffled_pair_id,
+            success_event_id=successes[shuffled_success_index],
+            failure_event_id=failure_event_id,
+            split="train",
+            z_plus=(
+                float(shuffled_success_index + 1),
+                float(shuffled_success_index + 2),
+            ),
+            z_minus=(float(index + 10), float(index + 11)),
+        )
+    return (
+        manifest(source_rows),
+        manifest(shuffled_rows),
+        _TargetStore(source_targets),
+        _TargetStore(shuffled_targets),
+    )
 
 
 class PreflightOfflineRunTest(unittest.TestCase):
@@ -221,7 +307,7 @@ class PreflightOfflineRunTest(unittest.TestCase):
             )
             report = preflight_offline_run.validate_source_bundle_manifest(
                 bundle_manifest,
-                init_weights=checkpoint,
+                source_checkpoint=checkpoint,
                 source_config=config,
                 normalization_bundle_sha256=normalization_hash,
             )
@@ -231,7 +317,7 @@ class PreflightOfflineRunTest(unittest.TestCase):
             ):
                 preflight_offline_run.validate_source_bundle_manifest(
                     bundle_manifest,
-                    init_weights=checkpoint,
+                    source_checkpoint=checkpoint,
                     source_config=config,
                     normalization_bundle_sha256="0" * 64,
                 )
@@ -284,6 +370,336 @@ class PreflightOfflineRunTest(unittest.TestCase):
             targets=_TargetStore(targets),
         )
         self.assertEqual(report["positive_pair_samples"], 1)
+
+    def test_pair_shuffle_control_proves_marginals_and_changed_relation(self) -> None:
+        source, shuffled, source_targets, shuffled_targets = pair_control_fixture()
+        report = preflight_offline_run.validate_pair_shuffle_control(
+            source_manifest=source,
+            shuffled_manifest=shuffled,
+            source_targets=source_targets,
+            shuffled_targets=shuffled_targets,
+        )
+        self.assertEqual(report["pair_count"], 2)
+        self.assertEqual(report["changed_relation_count"], 2)
+        self.assertTrue(report["all_relations_changed"])
+        self.assertTrue(report["all_success_episodes_changed"])
+
+        unchanged_targets = _TargetStore(
+            {
+                f"shuffled-pair-{index}": _Target(
+                    pair_id=f"shuffled-pair-{index}",
+                    success_event_id=f"success-{'a' if index == 1 else 'b'}",
+                    failure_event_id=f"failure-{'a' if index == 1 else 'b'}",
+                    split="train",
+                    z_plus=(float(index), float(index + 1)),
+                    z_minus=(float(index + 10), float(index + 11)),
+                )
+                for index in (1, 2)
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "derange every"):
+            preflight_offline_run.validate_pair_shuffle_control(
+                source_manifest=source,
+                shuffled_manifest=shuffled,
+                source_targets=source_targets,
+                shuffled_targets=unchanged_targets,
+            )
+
+        changed_manifest = json.loads(json.dumps(shuffled))
+        changed_manifest["samples"][1]["end_frame"] = 41
+        changed_manifest = manifest(changed_manifest["samples"])
+        with self.assertRaisesRegex(ValueError, "non-pair marginals"):
+            preflight_offline_run.validate_pair_shuffle_control(
+                source_manifest=source,
+                shuffled_manifest=changed_manifest,
+                source_targets=source_targets,
+                shuffled_targets=shuffled_targets,
+            )
+
+        changed_targets = dict(shuffled_targets.targets)
+        original = changed_targets["shuffled-pair-1"]
+        changed_targets["shuffled-pair-1"] = _Target(
+            pair_id=original.pair_id,
+            success_event_id=original.success_event_id,
+            failure_event_id=original.failure_event_id,
+            split=original.split,
+            pair_weight=original.pair_weight,
+            z_plus=original.z_plus,
+            z_minus=(99.0, 100.0),
+        )
+        with self.assertRaisesRegex(ValueError, "z_minus_sha256"):
+            preflight_offline_run.validate_pair_shuffle_control(
+                source_manifest=source,
+                shuffled_manifest=shuffled,
+                source_targets=source_targets,
+                shuffled_targets=_TargetStore(changed_targets),
+            )
+
+    def test_pair_shuffle_rejects_same_episode_different_candidates(self) -> None:
+        source, shuffled, source_targets, shuffled_targets = pair_control_fixture()
+        source_targets.targets["source-pair-1"] = _Target(
+            pair_id="source-pair-1",
+            success_event_id="rollout_ep000001_candidate_000",
+            failure_event_id="failure-a",
+            split="train",
+            z_plus=(1.0, 2.0),
+            z_minus=(11.0, 12.0),
+        )
+        shuffled_targets.targets["shuffled-pair-1"] = _Target(
+            pair_id="shuffled-pair-1",
+            success_event_id="rollout_ep000001_candidate_001",
+            failure_event_id="failure-a",
+            split="train",
+            z_plus=(2.0, 3.0),
+            z_minus=(11.0, 12.0),
+        )
+        with self.assertRaisesRegex(ValueError, "another episode"):
+            preflight_offline_run.validate_pair_shuffle_control(
+                source_manifest=source,
+                shuffled_manifest=shuffled,
+                source_targets=source_targets,
+                shuffled_targets=shuffled_targets,
+            )
+
+    def test_pair_shuffle_proof_is_content_and_artifact_bound(self) -> None:
+        reduced_mapping = [
+            {
+                "failure_event_id": "failure-a",
+                "source_success_event_id": "rollout_ep000001_candidate_000",
+                "shuffled_success_event_id": "rollout_ep000002_candidate_000",
+                "source_success_episode_id": "rollout_ep000001",
+                "shuffled_success_episode_id": "rollout_ep000002",
+            },
+            {
+                "failure_event_id": "failure-b",
+                "source_success_event_id": "rollout_ep000002_candidate_000",
+                "shuffled_success_event_id": "rollout_ep000001_candidate_000",
+                "source_success_episode_id": "rollout_ep000002",
+                "shuffled_success_episode_id": "rollout_ep000001",
+            },
+        ]
+        control_report = {
+            "pair_count": 2,
+            "changed_relation_count": 2,
+            "target_row_count": 2,
+            "passthrough_unreferenced_target_count": 0,
+            "relation_mapping_sha256": preflight_offline_run.sha256_json(
+                reduced_mapping
+            ),
+        }
+        payload = {
+            "format": preflight_offline_run.PAIR_SHUFFLE_PROOF_FORMAT,
+            "version": preflight_offline_run.PAIR_SHUFFLE_PROOF_VERSION,
+            "shuffle_seed": 20260721,
+            "source": {
+                "manifest_file_sha256": "1" * 64,
+                "pair_targets_file_sha256": "2" * 64,
+                "referenced_pair_count": 2,
+                "target_row_count": 2,
+                "passthrough_unreferenced_target_count": 0,
+            },
+            "output": {
+                "manifest_file_sha256": "3" * 64,
+                "pair_targets_file_sha256": "4" * 64,
+            },
+            "mapping": [
+                {
+                    "failure_event_id": row["failure_event_id"],
+                    "original_success_event_id": row["source_success_event_id"],
+                    "shuffled_success_event_id": row["shuffled_success_event_id"],
+                    "original_success_episode_id": row[
+                        "source_success_episode_id"
+                    ],
+                    "shuffled_success_episode_id": row[
+                        "shuffled_success_episode_id"
+                    ],
+                }
+                for row in reduced_mapping
+            ],
+            "invariant_checks": {
+                "sample_order_and_non_pair_fields_preserved": True,
+                "all_referenced_success_identities_deranged": True,
+                "all_referenced_success_episodes_deranged": True,
+                "failure_event_ids_preserved_rowwise": True,
+                "z_minus_preserved_rowwise": True,
+                "success_event_id_z_plus_multiset_preserved": True,
+            },
+        }
+        payload["proof_sha256"] = preflight_offline_run.sha256_json(payload)
+        report = preflight_offline_run.validate_pair_shuffle_proof(
+            payload,
+            seed=20260721,
+            source_manifest_sha256="1" * 64,
+            source_pair_targets_sha256="2" * 64,
+            output_manifest_sha256="3" * 64,
+            output_pair_targets_sha256="4" * 64,
+            control_report=control_report,
+        )
+        self.assertEqual(report["proof_sha256"], payload["proof_sha256"])
+        tampered = dict(payload)
+        tampered["shuffle_seed"] = 7
+        with self.assertRaisesRegex(ValueError, "proof hash"):
+            preflight_offline_run.validate_pair_shuffle_proof(
+                tampered,
+                seed=20260721,
+                source_manifest_sha256="1" * 64,
+                source_pair_targets_sha256="2" * 64,
+                output_manifest_sha256="3" * 64,
+                output_pair_targets_sha256="4" * 64,
+                control_report=control_report,
+            )
+
+    def test_common_init_arguments_are_variant_local(self) -> None:
+        values = ("weights", "proof", "config", 42, "a", "b", "c", "d")
+        preflight_offline_run.validate_common_init_arguments(
+            variant="M",
+            strict_mode=False,
+            common_init_values=(None,) * len(values),
+        )
+        preflight_offline_run.validate_common_init_arguments(
+            variant="B0",
+            strict_mode=False,
+            common_init_values=(None,) * len(values),
+        )
+        preflight_offline_run.validate_common_init_arguments(
+            variant="M",
+            strict_mode=True,
+            common_init_values=values,
+        )
+        preflight_offline_run.validate_common_init_arguments(
+            variant="M_PAIR_SHUFFLE",
+            strict_mode=True,
+            common_init_values=values,
+        )
+        with self.assertRaisesRegex(ValueError, "requires"):
+            preflight_offline_run.validate_common_init_arguments(
+                variant="M_PAIR_SHUFFLE",
+                strict_mode=False,
+                common_init_values=(None,) * len(values),
+            )
+        with self.assertRaisesRegex(ValueError, "only valid"):
+            preflight_offline_run.validate_common_init_arguments(
+                variant="B1",
+                strict_mode=True,
+                common_init_values=values,
+            )
+        with self.assertRaisesRegex(ValueError, "require"):
+            preflight_offline_run.validate_common_init_arguments(
+                variant="M",
+                strict_mode=True,
+                common_init_values=(None,) * len(values),
+            )
+
+    def test_common_init_proof_binds_all_inputs_and_output(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            weights = root / "common.pt"
+            config = root / "resolved.yaml"
+            baseline = root / "s0.pt"
+            proof_path = root / "proof.json"
+            weights.write_bytes(b"complete-common-init")
+            config.write_text("seed: 42\n", encoding="utf-8")
+            baseline.write_bytes(b"frozen-s0")
+            weights_hash = preflight_offline_run.sha256_file(weights)
+            config_hash = preflight_offline_run.sha256_file(config)
+            baseline_hash = preflight_offline_run.sha256_file(baseline)
+            payload = {
+                "format": preflight_offline_run.COMMON_INIT_PROOF_FORMAT,
+                "schema_version": preflight_offline_run.COMMON_INIT_PROOF_VERSION,
+                "seed": 42,
+                "inputs": {
+                    "resolved_config": {
+                        "path": str(config.resolve()),
+                        "sha256": config_hash,
+                    },
+                    "baseline_checkpoint": {
+                        "path": str(baseline.resolve()),
+                        "sha256": baseline_hash,
+                    },
+                },
+                "output": {
+                    "checkpoint": {
+                        "path": str(weights.resolve()),
+                        "sha256": weights_hash,
+                        "step": 0,
+                        "top_level_keys": [
+                            "mot",
+                            "offline_steer_student",
+                            "offline_steer_residual",
+                            "offline_steer_config",
+                            "proprio_encoder",
+                        ],
+                    }
+                },
+                "invariants": {
+                    "seeded_before_model_instantiation": True,
+                    "full_s0_load": True,
+                    "baseline_exact_structure_match": True,
+                    "baseline_is_steer_free": True,
+                    "steer_unchanged_by_s0_load": True,
+                    "residual_is_zero_initialized": True,
+                    "complete_weight_only_checkpoint": True,
+                    "no_overwrite": True,
+                },
+            }
+            payload["proof_sha256"] = preflight_offline_run.sha256_json(payload)
+            proof_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            proof_file_hash = preflight_offline_run.sha256_file(proof_path)
+            report = preflight_offline_run.validate_common_init_proof(
+                payload,
+                proof_path=proof_path,
+                common_init_weights=weights,
+                common_init_config=config,
+                baseline_s0=baseline,
+                seed=42,
+                expected_weights_sha256=weights_hash,
+                expected_proof_file_sha256=proof_file_hash,
+                expected_baseline_sha256=baseline_hash,
+                expected_config_sha256=config_hash,
+            )
+            self.assertEqual(report["weights"]["sha256"], weights_hash)
+            self.assertEqual(report["proof"]["sha256"], proof_file_hash)
+            self.assertEqual(report["seed"], 42)
+
+            expected = {
+                "expected_weights_sha256": weights_hash,
+                "expected_proof_file_sha256": proof_file_hash,
+                "expected_baseline_sha256": baseline_hash,
+                "expected_config_sha256": config_hash,
+            }
+            for field, label in (
+                ("expected_weights_sha256", "weights"),
+                ("expected_proof_file_sha256", "proof_file"),
+                ("expected_baseline_sha256", "baseline"),
+                ("expected_config_sha256", "config"),
+            ):
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError, f"{label} SHA-256 mismatch"
+                ):
+                    bad_expected = dict(expected)
+                    bad_expected[field] = "0" * 64
+                    preflight_offline_run.validate_common_init_proof(
+                        payload,
+                        proof_path=proof_path,
+                        common_init_weights=weights,
+                        common_init_config=config,
+                        baseline_s0=baseline,
+                        seed=42,
+                        **bad_expected,
+                    )
+            with self.assertRaisesRegex(ValueError, "common-init seed"):
+                preflight_offline_run.validate_common_init_proof(
+                    payload,
+                    proof_path=proof_path,
+                    common_init_weights=weights,
+                    common_init_config=config,
+                    baseline_s0=baseline,
+                    seed=7,
+                    **expected,
+                )
 
     def test_training_manifest_rejects_validation_samples(self) -> None:
         rows = control_samples("failure")
@@ -406,30 +822,19 @@ class PreflightOfflineRunTest(unittest.TestCase):
         )
 
     def test_protocol_matrix_requires_identical_primary_samples(self) -> None:
-        b0 = manifest(control_samples("success"))
-        b1 = manifest(control_samples("failure"))
-        c = manifest(control_samples("failure"))
-        m_rows = control_samples("failure")
-        targets: dict[str, _Target] = {}
-        event_id = "train-failure-event"
-        pair_id = "train-pair"
-        m_rows[1] = sample(
-            str(m_rows[1]["sample_id"]),
-            split="train",
-            episode_index=int(m_rows[1]["episode_index"]),
-            outcome="failure",
-            role="auxiliary",
-            event_id=event_id,
-            pair_id=pair_id,
-            pair_weight=0.8,
-        )
-        targets[pair_id] = _Target(
-            split="train", failure_event_id=event_id
-        )
-        manifests = {"B0": b0, "B1": b1, "C": c, "M": manifest(m_rows)}
+        m, shuffled, targets, shuffled_targets = pair_control_fixture()
+        manifests = {
+            "B0": manifest(two_auxiliary_samples("success")),
+            "B1": manifest(two_auxiliary_samples("failure")),
+            "C": manifest(two_auxiliary_samples("failure")),
+            "M": m,
+            "M_PAIR_SHUFFLE": shuffled,
+        }
         reports, identities = preflight_offline_run.validate_protocol_matrix(
             manifests,
-            targets=_TargetStore(targets),
+            targets=targets,
+            pair_shuffle_targets=shuffled_targets,
+            include_pair_shuffle_control=True,
         )
         self.assertEqual(len(identities), 1)
         self.assertEqual(
@@ -443,11 +848,45 @@ class PreflightOfflineRunTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Primary sample identity mismatch"):
             preflight_offline_run.validate_protocol_matrix(
                 manifests,
-                targets=_TargetStore(targets),
+                targets=targets,
+                pair_shuffle_targets=shuffled_targets,
+                include_pair_shuffle_control=True,
+            )
+
+    def test_base_protocol_matrix_does_not_require_pair_shuffle(self) -> None:
+        m, _, targets, _ = pair_control_fixture()
+        manifests = {
+            "B0": manifest(two_auxiliary_samples("success")),
+            "B1": manifest(two_auxiliary_samples("failure")),
+            "C": manifest(two_auxiliary_samples("failure")),
+            "M": m,
+        }
+        reports, identities = preflight_offline_run.validate_protocol_matrix(
+            manifests,
+            targets=targets,
+            pair_shuffle_targets=None,
+        )
+        self.assertEqual(set(reports), preflight_offline_run.BASE_VARIANTS)
+        self.assertEqual(len(identities), 1)
+
+    def test_optional_pair_shuffle_control_requires_fifth_artifacts(self) -> None:
+        m, _, targets, _ = pair_control_fixture()
+        manifests = {
+            "B0": manifest(two_auxiliary_samples("success")),
+            "B1": manifest(two_auxiliary_samples("failure")),
+            "C": manifest(two_auxiliary_samples("failure")),
+            "M": m,
+        }
+        with self.assertRaisesRegex(ValueError, "M_PAIR_SHUFFLE"):
+            preflight_offline_run.validate_protocol_matrix(
+                manifests,
+                targets=targets,
+                pair_shuffle_targets=None,
+                include_pair_shuffle_control=True,
             )
 
     def test_protocol_matrix_requires_equal_auxiliary_budgets(self) -> None:
-        b0_rows = control_samples("success")
+        b0_rows = two_auxiliary_samples("success")
         b0_rows.append(
             sample(
                 "train-aux-extra",
@@ -457,32 +896,20 @@ class PreflightOfflineRunTest(unittest.TestCase):
                 role="auxiliary",
             )
         )
-        event_id = "train-failure-event"
-        pair_id = "train-pair"
-        m_rows = control_samples("failure")
-        m_rows[1] = sample(
-            str(m_rows[1]["sample_id"]),
-            split="train",
-            episode_index=int(m_rows[1]["episode_index"]),
-            outcome="failure",
-            role="auxiliary",
-            event_id=event_id,
-            pair_id=pair_id,
-            pair_weight=0.8,
-        )
+        m, shuffled, targets, shuffled_targets = pair_control_fixture()
         manifests = {
             "B0": manifest(b0_rows),
-            "B1": manifest(control_samples("failure")),
-            "C": manifest(control_samples("failure")),
-            "M": manifest(m_rows),
-        }
-        targets = {
-            pair_id: _Target(split="train", failure_event_id=event_id)
+            "B1": manifest(two_auxiliary_samples("failure")),
+            "C": manifest(two_auxiliary_samples("failure")),
+            "M": m,
+            "M_PAIR_SHUFFLE": shuffled,
         }
         with self.assertRaisesRegex(ValueError, "Auxiliary sample budget mismatch"):
             preflight_offline_run.validate_protocol_matrix(
                 manifests,
-                targets=_TargetStore(targets),
+                targets=targets,
+                pair_shuffle_targets=shuffled_targets,
+                include_pair_shuffle_control=True,
             )
 
     def test_resume_state_must_be_complete_directory(self) -> None:
@@ -704,6 +1131,21 @@ class PreflightOfflineRunTest(unittest.TestCase):
             ):
                 path.write_bytes(content)
             init_hash = preflight_offline_run.sha256_file(init_weights)
+            common_weights = root / "common-init.pt"
+            common_proof = root / "common-init.proof.json"
+            common_config = root / "common-init.yaml"
+            common_weights.write_bytes(b"complete-common-init")
+            common_proof.write_text("{}\n", encoding="utf-8")
+            common_config.write_text("seed: 42\n", encoding="utf-8")
+            common_hash = preflight_offline_run.sha256_file(common_weights)
+            common_report = {
+                "weights": preflight_offline_run.artifact_record(common_weights),
+                "proof": preflight_offline_run.artifact_record(common_proof),
+                "config": preflight_offline_run.artifact_record(common_config),
+                "baseline": preflight_offline_run.artifact_record(init_weights),
+                "payload_proof_sha256": "e" * 64,
+                "seed": 42,
+            }
             source_hash = preflight_offline_run.sha256_file(source_config)
             manifest_hash = preflight_offline_run.sha256_file(manifest_path)
             selection_hash = preflight_offline_run.sha256_file(
@@ -841,6 +1283,67 @@ class PreflightOfflineRunTest(unittest.TestCase):
                 **validation_kwargs,
             )
             self.assertEqual(report["variant"], "M")
+
+            strict_payload = json.loads(json.dumps(formal_payload))
+            strict_payload["resume"] = str(common_weights)
+            strict_payload["experiment_provenance"].update(
+                {
+                    "source_checkpoint_sha256": common_hash,
+                    "comparison_mode": preflight_offline_run.STRICT_COMMON_INIT_MODE,
+                    "common_init_checkpoint_sha256": common_hash,
+                    "common_init_proof_file_sha256": common_report["proof"]["sha256"],
+                    "common_init_payload_proof_sha256": common_report[
+                        "payload_proof_sha256"
+                    ],
+                    "common_init_baseline_sha256": init_hash,
+                    "common_init_config_sha256": common_report["config"]["sha256"],
+                    "common_init_seed": 42,
+                }
+            )
+            config.write_text(json.dumps(strict_payload), encoding="utf-8")
+            strict_kwargs = dict(validation_kwargs)
+            strict_kwargs.update(
+                {
+                    "init_weights": common_weights,
+                    "init_weights_sha256": common_hash,
+                    "strict_common_init": True,
+                    "common_init_report": common_report,
+                }
+            )
+            strict_m_report = preflight_offline_run.validate_resolved_config(
+                config,
+                **strict_kwargs,
+            )
+            self.assertEqual(strict_m_report["initialization_mode"], "common_init")
+
+            shuffle_payload = json.loads(json.dumps(strict_payload))
+            shuffle_payload["experiment_provenance"]["variant"] = "M_PAIR_SHUFFLE"
+            shuffle_payload["experiment_provenance"].update(
+                {
+                    "pair_shuffle_proof_sha256": "f" * 64,
+                    "pair_shuffle_seed": 20260721,
+                    "pair_shuffle_source_pair_targets_sha256": pair_hash,
+                }
+            )
+            config.write_text(json.dumps(shuffle_payload), encoding="utf-8")
+            shuffle_kwargs = dict(strict_kwargs)
+            shuffle_kwargs.update(
+                {
+                    "variant": "M_PAIR_SHUFFLE",
+                    "pair_shuffle_proof_sha256": "f" * 64,
+                    "pair_shuffle_seed": 20260721,
+                    "pair_shuffle_source_pair_targets_sha256": pair_hash,
+                }
+            )
+            shuffle_report = preflight_offline_run.validate_resolved_config(
+                config,
+                **shuffle_kwargs,
+            )
+            self.assertEqual(shuffle_report["variant"], "M_PAIR_SHUFFLE")
+            self.assertEqual(
+                shuffle_report["init_weights"],
+                strict_m_report["init_weights"],
+            )
 
             smoke_payload = json.loads(json.dumps(payload))
             smoke_payload["max_steps"] = 20

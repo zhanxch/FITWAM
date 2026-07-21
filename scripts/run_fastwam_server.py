@@ -4,8 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
+import json
+import math
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +28,429 @@ for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT):
 from fastwam_policy_server import DEFAULT_SERVER_PORT, PolicyServer
 from policy_io import KEY_ACTION, KEY_CONTEXT, KEY_CONTEXT_MASK, KEY_INPUT_IMAGE, KEY_PROMPT, KEY_PROPRIO
 from policy_io import to_inference_tensors, validate_policy_observation
+
+
+STEER_INFERENCE_MODES = ("learned", "bypass", "cached")
+STEER_CACHE_SCHEMA_VERSION = 2
+STEER_PROTOCOL_SCHEMA_VERSION = 1
+STEER_CACHE_COVERAGE_OBSERVED = "observed_contiguous"
+STEER_CACHE_COVERAGE_FULL = "full_horizon"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _normalize_sha256(value: str, *, label: str) -> str:
+    normalized = str(value).strip().lower()
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise ValueError(f"{label} must be a 64-character hexadecimal SHA256.")
+    return normalized
+
+
+def _embedding_sha256(embedding: torch.Tensor) -> str:
+    canonical = embedding.detach().to(device="cpu", dtype=torch.float32).contiguous()
+    return hashlib.sha256(canonical.numpy().tobytes(order="C")).hexdigest()
+
+
+def _canonical_json(payload: Any) -> str:
+    return json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _json_sha256(payload: Any) -> str:
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _normalize_steer_protocol(protocol: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Validate and canonicalize the single-task, single-client cache protocol."""
+
+    if not isinstance(protocol, dict):
+        raise ValueError("Steer protocol must be a JSON object.")
+    canonical = json.loads(_canonical_json(protocol))
+    expected_scalars = {
+        "schema": "fastwam.steer_protocol",
+        "schema_version": STEER_PROTOCOL_SCHEMA_VERSION,
+    }
+    for key, expected in expected_scalars.items():
+        if canonical.get(key) != expected:
+            raise ValueError(
+                f"Steer protocol {key} must be {expected!r}, got {canonical.get(key)!r}."
+            )
+    task = canonical.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise ValueError("Steer protocol requires one non-empty task name.")
+
+    seeds = canonical.get("environment_seeds")
+    episodes = canonical.get("episodes")
+    inference = canonical.get("inference")
+    options = canonical.get("environment_options")
+    model = canonical.get("model")
+    for name, value in (
+        ("environment_seeds", seeds),
+        ("episodes", episodes),
+        ("inference", inference),
+        ("environment_options", options),
+        ("model", model),
+    ):
+        if not isinstance(value, dict):
+            raise ValueError(f"Steer protocol {name} must be an object.")
+
+    integer_fields = (
+        (seeds, "global_base"),
+        (seeds, "global_end_exclusive"),
+        (seeds, "shard_base"),
+        (seeds, "shard_end_exclusive"),
+        (episodes, "global_start"),
+        (episodes, "global_end_exclusive"),
+        (episodes, "shard_global_start"),
+        (episodes, "shard_global_end_exclusive"),
+        (episodes, "local_start"),
+        (episodes, "local_end_exclusive"),
+        (episodes, "shard_id"),
+        (inference, "replan_steps"),
+        (inference, "max_env_steps"),
+        (inference, "max_requests_per_episode"),
+    )
+    for container, key in integer_fields:
+        value = container.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"Steer protocol field {key} must be an integer.")
+    inference_seed = inference.get("seed")
+    if inference_seed is not None and (
+        isinstance(inference_seed, bool) or not isinstance(inference_seed, int)
+    ):
+        raise ValueError("Steer protocol inference.seed must be an integer or null.")
+    if inference.get("control_mode") != "blocking":
+        raise ValueError(
+            "Steer cache replay/recording currently requires blocking control mode."
+        )
+    if inference.get("async_fallback") not in ("wait", "hold_last"):
+        raise ValueError("Steer protocol inference.async_fallback is invalid.")
+    for key in ("action_horizon_override", "num_inference_steps_override"):
+        value = inference.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            raise ValueError(f"Steer protocol inference.{key} must be positive or null.")
+
+    if episodes["global_start"] != 0 or episodes["local_start"] != 0:
+        raise ValueError("Steer protocol global/local episode ranges must start at zero.")
+    local_count = episodes["local_end_exclusive"]
+    shard_count = episodes["shard_global_end_exclusive"] - episodes["shard_global_start"]
+    seed_count = seeds["shard_end_exclusive"] - seeds["shard_base"]
+    if local_count <= 0 or local_count != shard_count or local_count != seed_count:
+        raise ValueError("Steer protocol shard episode and seed ranges must have equal positive size.")
+    if seeds["global_end_exclusive"] - seeds["global_base"] != episodes["global_end_exclusive"]:
+        raise ValueError("Steer protocol global seed and episode ranges must have equal size.")
+    if seeds["shard_base"] != seeds["global_base"] + episodes["shard_global_start"]:
+        raise ValueError("Steer protocol shard seed base does not match its global episode offset.")
+    if inference["replan_steps"] <= 0 or inference["max_env_steps"] <= 0:
+        raise ValueError("Steer protocol replan_steps and max_env_steps must be positive.")
+    expected_requests = math.ceil(
+        inference["max_env_steps"] / inference["replan_steps"]
+    )
+    if inference["max_requests_per_episode"] != expected_requests:
+        raise ValueError(
+            "Steer protocol max_requests_per_episode must equal "
+            "ceil(max_env_steps / replan_steps)."
+        )
+    for key in ("randomize", "randomize_dynamics", "action_clip"):
+        if not isinstance(options.get(key), bool):
+            raise ValueError(f"Steer protocol environment_options.{key} must be boolean.")
+    for key in ("clip_max_xyz_step", "clip_max_dz_down"):
+        value = options.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"Steer protocol environment_options.{key} must be finite.")
+    if not isinstance(options.get("task_config_dir"), str) or not options["task_config_dir"]:
+        raise ValueError("Steer protocol environment_options.task_config_dir is required.")
+    for key in ("checkpoint_path", "config_path"):
+        if not isinstance(model.get(key), str) or not model[key]:
+            raise ValueError(f"Steer protocol model.{key} must be a non-empty path.")
+    for key in ("checkpoint_sha256", "config_sha256"):
+        model[key] = _normalize_sha256(model.get(key, ""), label=f"protocol model.{key}")
+    return canonical, _json_sha256(canonical)
+
+
+def _parse_steer_protocol_json(value: str | None) -> tuple[dict[str, Any], str]:
+    if value is None:
+        raise ValueError(
+            "Steer cache replay/recording requires --steer-protocol-json from the eval orchestrator."
+        )
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid --steer-protocol-json: {error}") from error
+    return _normalize_steer_protocol(payload)
+
+
+def _cache_keyset_sha256(keys: set[tuple[int, int]]) -> str:
+    return _json_sha256(
+        [{"episode": episode, "request": request} for episode, request in sorted(keys)]
+    )
+
+
+def _validate_cache_coverage(
+    keys: set[tuple[int, int]],
+    *,
+    protocol: dict[str, Any],
+    coverage_policy: str,
+) -> dict[str, int]:
+    episodes = protocol["episodes"]
+    inference = protocol["inference"]
+    local_episode_ids = range(
+        int(episodes["local_start"]),
+        int(episodes["local_end_exclusive"]),
+    )
+    request_counts: dict[str, int] = {}
+    expected_keys: set[tuple[int, int]] = set()
+    for episode in local_episode_ids:
+        requests = sorted(request for ep, request in keys if ep == episode)
+        if not requests:
+            raise ValueError(f"Steer cache is missing episode {episode}.")
+        if requests != list(range(requests[-1] + 1)):
+            raise ValueError(f"Steer cache episode {episode} has non-contiguous requests.")
+        request_counts[str(episode)] = len(requests)
+        if coverage_policy == STEER_CACHE_COVERAGE_FULL:
+            expected_keys.update(
+                (episode, request)
+                for request in range(int(inference["max_requests_per_episode"]))
+            )
+    valid_episode_ids = set(local_episode_ids)
+    unexpected_episodes = sorted({episode for episode, _ in keys} - valid_episode_ids)
+    if unexpected_episodes:
+        raise ValueError(f"Steer cache contains out-of-range episodes {unexpected_episodes}.")
+    if coverage_policy == STEER_CACHE_COVERAGE_FULL and keys != expected_keys:
+        missing = len(expected_keys - keys)
+        extra = len(keys - expected_keys)
+        raise ValueError(
+            "Steer cache full_horizon coverage mismatch: "
+            f"missing={missing}, extra={extra}."
+        )
+    if coverage_policy not in (
+        STEER_CACHE_COVERAGE_OBSERVED,
+        STEER_CACHE_COVERAGE_FULL,
+    ):
+        raise ValueError(f"Unknown steer cache coverage_policy {coverage_policy!r}.")
+    return request_counts
+
+
+class SteerEmbeddingCache:
+    """Complete protocol-bound JSONL cache for deterministic steer replay."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        expected_file_sha256: str,
+        checkpoint_sha256: str,
+        config_sha256: str,
+        embedding_dim: int,
+        protocol: dict[str, Any],
+        required_coverage_policy: str = STEER_CACHE_COVERAGE_FULL,
+    ) -> None:
+        expected_file_sha256 = _normalize_sha256(
+            expected_file_sha256,
+            label="expected_file_sha256",
+        )
+        actual_file_sha256 = _sha256_file(path)
+        if actual_file_sha256 != expected_file_sha256:
+            raise ValueError(
+                f"Steer cache SHA256 mismatch: expected {expected_file_sha256}, "
+                f"got {actual_file_sha256}."
+            )
+        self.path = path
+        self.file_sha256 = actual_file_sha256
+        self.entries: dict[tuple[int, int], torch.Tensor] = {}
+        expected_protocol, expected_protocol_sha256 = _normalize_steer_protocol(protocol)
+        with path.open("r", encoding="utf-8") as stream:
+            lines = [line for line in stream if line.strip()]
+        if not lines:
+            raise ValueError(f"Steer cache is empty: {path}")
+        header = json.loads(lines[0])
+        expected_header = {
+            "type": "header",
+            "schema_version": STEER_CACHE_SCHEMA_VERSION,
+            "checkpoint_sha256": checkpoint_sha256,
+            "config_sha256": config_sha256,
+            "embedding_dim": int(embedding_dim),
+            "protocol": expected_protocol,
+            "protocol_sha256": expected_protocol_sha256,
+            "coverage_policy": required_coverage_policy,
+        }
+        for key, expected in expected_header.items():
+            if header.get(key) != expected:
+                raise ValueError(
+                    f"Steer cache header mismatch for {key}: expected {expected!r}, "
+                    f"got {header.get(key)!r}."
+                )
+        footer = json.loads(lines[-1])
+        if footer.get("type") != "footer":
+            raise ValueError("Steer cache is incomplete: missing completion footer.")
+        if footer.get("complete") is not True:
+            raise ValueError("Steer cache completion footer is not complete=true.")
+        for line_number, line in enumerate(lines[1:-1], start=2):
+            entry = json.loads(line)
+            if entry.get("type") != "entry":
+                raise ValueError(
+                    f"Steer cache line {line_number} must have type='entry'."
+                )
+            episode = int(entry.get("episode", -1))
+            request = int(entry.get("request", -1))
+            if episode < 0 or request < 0:
+                raise ValueError(
+                    f"Steer cache line {line_number} has a negative episode/request key."
+                )
+            key = (episode, request)
+            if key in self.entries:
+                raise ValueError(f"Duplicate steer cache key {key} at line {line_number}.")
+            embedding = torch.tensor(entry.get("embedding"), dtype=torch.float32)
+            if embedding.ndim != 1 or embedding.shape[0] != embedding_dim:
+                raise ValueError(
+                    f"Steer cache key {key} must have shape [{embedding_dim}], "
+                    f"got {tuple(embedding.shape)}."
+                )
+            if not torch.isfinite(embedding).all():
+                raise ValueError(f"Steer cache key {key} contains non-finite values.")
+            actual_embedding_sha256 = _embedding_sha256(embedding)
+            if entry.get("embedding_sha256") != actual_embedding_sha256:
+                raise ValueError(
+                    f"Steer cache key {key} embedding SHA256 mismatch."
+                )
+            self.entries[key] = embedding
+        if not self.entries:
+            raise ValueError(f"Steer cache contains no entries: {path}")
+        keys = set(self.entries)
+        request_counts = _validate_cache_coverage(
+            keys,
+            protocol=expected_protocol,
+            coverage_policy=required_coverage_policy,
+        )
+        expected_footer = {
+            "schema_version": STEER_CACHE_SCHEMA_VERSION,
+            "protocol_sha256": expected_protocol_sha256,
+            "coverage_policy": required_coverage_policy,
+            "entry_count": len(keys),
+            "episode_request_counts": request_counts,
+            "keyset_sha256": _cache_keyset_sha256(keys),
+        }
+        for key, expected in expected_footer.items():
+            if footer.get(key) != expected:
+                raise ValueError(
+                    f"Steer cache footer mismatch for {key}: expected {expected!r}, "
+                    f"got {footer.get(key)!r}."
+                )
+        self.protocol = expected_protocol
+        self.protocol_sha256 = expected_protocol_sha256
+        self.coverage_policy = required_coverage_policy
+
+    def get(self, episode: int, request: int) -> torch.Tensor:
+        key = (int(episode), int(request))
+        if key not in self.entries:
+            raise KeyError(f"Missing steer cache entry for episode/request {key}.")
+        return self.entries[key].unsqueeze(0).clone()
+
+
+class SteerEmbeddingRecorder:
+    """Record complete observed request keys and seal them with a footer."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        checkpoint_sha256: str,
+        config_sha256: str,
+        embedding_dim: int,
+        protocol: dict[str, Any],
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self.embedding_dim = int(embedding_dim)
+        self.protocol, self.protocol_sha256 = _normalize_steer_protocol(protocol)
+        self._stream = path.open("x", encoding="utf-8")
+        self._keys: set[tuple[int, int]] = set()
+        self._finalized = False
+        header = {
+            "type": "header",
+            "schema_version": STEER_CACHE_SCHEMA_VERSION,
+            "checkpoint_sha256": checkpoint_sha256,
+            "config_sha256": config_sha256,
+            "embedding_dim": self.embedding_dim,
+            "protocol": self.protocol,
+            "protocol_sha256": self.protocol_sha256,
+            "coverage_policy": STEER_CACHE_COVERAGE_OBSERVED,
+        }
+        self._stream.write(_canonical_json(header) + "\n")
+        self._stream.flush()
+
+    def record(self, episode: int, request: int, embedding: torch.Tensor) -> None:
+        key = (int(episode), int(request))
+        if key in self._keys:
+            raise ValueError(f"Duplicate steer cache recording key {key}.")
+        canonical = embedding.detach().to(device="cpu", dtype=torch.float32).contiguous()
+        if canonical.ndim == 2 and canonical.shape[0] == 1:
+            canonical = canonical[0]
+        if canonical.ndim != 1 or canonical.shape[0] != self.embedding_dim:
+            raise ValueError(
+                f"Recorded steer embedding must have shape [{self.embedding_dim}], "
+                f"got {tuple(canonical.shape)}."
+            )
+        if not torch.isfinite(canonical).all():
+            raise ValueError("Recorded steer embedding contains non-finite values.")
+        payload = {
+            "type": "entry",
+            "episode": key[0],
+            "request": key[1],
+            "embedding": canonical.tolist(),
+            "embedding_sha256": _embedding_sha256(canonical),
+        }
+        self._stream.write(_canonical_json(payload) + "\n")
+        self._stream.flush()
+        self._keys.add(key)
+
+    def close(self) -> None:
+        if self._stream.closed:
+            return
+        complete = True
+        error_message = None
+        request_counts: dict[str, int] = {}
+        try:
+            request_counts = _validate_cache_coverage(
+                self._keys,
+                protocol=self.protocol,
+                coverage_policy=STEER_CACHE_COVERAGE_OBSERVED,
+            )
+        except ValueError as error:
+            complete = False
+            error_message = str(error)
+        footer = {
+            "type": "footer",
+            "schema_version": STEER_CACHE_SCHEMA_VERSION,
+            "complete": complete,
+            "protocol_sha256": self.protocol_sha256,
+            "coverage_policy": STEER_CACHE_COVERAGE_OBSERVED,
+            "entry_count": len(self._keys),
+            "episode_request_counts": request_counts,
+            "keyset_sha256": _cache_keyset_sha256(self._keys),
+            "error": error_message,
+        }
+        self._stream.write(_canonical_json(footer) + "\n")
+        self._stream.flush()
+        self._stream.close()
+        self._finalized = True
+        if not complete:
+            raise ValueError(f"Cannot finalize incomplete steer cache: {error_message}")
 
 
 class MockFastWAMPolicy:
@@ -62,6 +490,11 @@ class FastWAMPolicy:
         seed: int | None = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        steer_inference_mode: str = "learned",
+        steer_cache: SteerEmbeddingCache | None = None,
+        steer_cache_recorder: SteerEmbeddingRecorder | None = None,
+        steer_protocol: dict[str, Any] | None = None,
+        model_provenance: dict[str, Any] | None = None,
     ) -> None:
         self.model = model
         self.processor = processor
@@ -75,15 +508,65 @@ class FastWAMPolicy:
         self.seed = seed
         self.rand_device = str(rand_device)
         self.tiled = bool(tiled)
+        self.steer_inference_mode = str(steer_inference_mode).strip().lower()
+        if self.steer_inference_mode not in STEER_INFERENCE_MODES:
+            raise ValueError(
+                f"steer_inference_mode must be one of {STEER_INFERENCE_MODES}, "
+                f"got {steer_inference_mode!r}."
+            )
+        if self.steer_inference_mode == "cached" and steer_cache is None:
+            raise ValueError("cached steer mode requires a loaded steer cache.")
+        if self.steer_inference_mode != "cached" and steer_cache is not None:
+            raise ValueError("A steer cache may only be supplied in cached mode.")
+        if steer_cache_recorder is not None and self.steer_inference_mode != "learned":
+            raise ValueError("Steer cache recording is only supported in learned mode.")
+        self.steer_cache = steer_cache
+        self.steer_cache_recorder = steer_cache_recorder
+        self.steer_protocol = steer_protocol
+        self.model_provenance = dict(model_provenance or {})
+        self._steer_lock = threading.Lock()
+        self._steer_episode_index = -1
+        self._steer_request_index = 0
         self._episode = 0
 
     def get_modality_config(self) -> dict:
-        return {"shape_meta": OmegaConf.to_container(self.processor.shape_meta, resolve=True)}
+        return {
+            "shape_meta": OmegaConf.to_container(self.processor.shape_meta, resolve=True),
+            "steer_inference": {
+                "mode": self.steer_inference_mode,
+                "cache_path": (
+                    None if self.steer_cache is None else str(self.steer_cache.path)
+                ),
+                "cache_sha256": (
+                    None if self.steer_cache is None else self.steer_cache.file_sha256
+                ),
+                "record_path": (
+                    None
+                    if self.steer_cache_recorder is None
+                    else str(self.steer_cache_recorder.path)
+                ),
+                "protocol": self.steer_protocol,
+                "protocol_sha256": (
+                    None
+                    if self.steer_protocol is None
+                    else _json_sha256(self.steer_protocol)
+                ),
+                "client_semantics": "single_client_per_server",
+            },
+            "model_provenance": self.model_provenance,
+        }
+
+    def close(self) -> None:
+        if self.steer_cache_recorder is not None:
+            self.steer_cache_recorder.close()
 
     def reset(self, options: dict | None = None) -> dict:
         del options
-        self._episode += 1
-        return {"episode": self._episode}
+        with self._steer_lock:
+            self._episode += 1
+            self._steer_episode_index += 1
+            self._steer_request_index = 0
+            return {"episode": self._episode}
 
     def _select_modality_value(self, value: Any, meta_name: str, field_name: str) -> Any:
         if not isinstance(value, dict):
@@ -158,6 +641,16 @@ class FastWAMPolicy:
         return normalized
 
     def get_action(self, observation: dict, options: dict | None = None) -> tuple[dict, dict]:
+        if self.steer_cache is not None or self.steer_cache_recorder is not None:
+            with self._steer_lock:
+                return self._get_action_impl(observation, options)
+        return self._get_action_impl(observation, options)
+
+    def _get_action_impl(
+        self,
+        observation: dict,
+        options: dict | None = None,
+    ) -> tuple[dict, dict]:
         del options
         observation = self._normalize_observation(observation)
         validate_policy_observation(observation)
@@ -186,10 +679,41 @@ class FastWAMPolicy:
             "rand_device": self.rand_device,
             "tiled": self.tiled,
         }
-        if "num_video_frames" in inspect.signature(self.model.infer_action).parameters:
+        infer_parameters = inspect.signature(self.model.infer_action).parameters
+        if "num_video_frames" in infer_parameters:
             if self.num_video_frames is None:
                 raise ValueError("Model infer_action requires num_video_frames, but config did not provide it.")
             infer_kwargs["num_video_frames"] = self.num_video_frames
+
+        cache_key: tuple[int, int] | None = None
+        explicit_steer_embedding: torch.Tensor | None = None
+        if self.steer_cache is not None or self.steer_cache_recorder is not None:
+            if self._steer_episode_index < 0:
+                raise RuntimeError(
+                    "Steer cache replay/recording requires reset() before get_action()."
+                )
+            cache_key = (self._steer_episode_index, self._steer_request_index)
+        if self.steer_cache is not None:
+            explicit_steer_embedding = self.steer_cache.get(*cache_key)
+
+        if self.steer_inference_mode != "learned" or explicit_steer_embedding is not None:
+            if "steer_inference_mode" not in infer_parameters:
+                raise RuntimeError(
+                    "The loaded model does not support inference-only steer interventions."
+                )
+            infer_kwargs["steer_inference_mode"] = (
+                "explicit"
+                if self.steer_inference_mode == "cached"
+                else self.steer_inference_mode
+            )
+        if explicit_steer_embedding is not None:
+            if "steer_embedding" not in infer_parameters:
+                raise RuntimeError("The loaded model does not accept explicit steer embeddings.")
+            infer_kwargs["steer_embedding"] = explicit_steer_embedding
+        if self.steer_cache_recorder is not None:
+            if "return_steer_embedding" not in infer_parameters:
+                raise RuntimeError("The loaded model cannot return learned steer embeddings.")
+            infer_kwargs["return_steer_embedding"] = True
 
         if KEY_CONTEXT in tensors:
             infer_kwargs[KEY_CONTEXT] = tensors[KEY_CONTEXT]
@@ -205,6 +729,14 @@ class FastWAMPolicy:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             raise
+
+        if self.steer_cache_recorder is not None:
+            learned_embedding = pred.get("steer_embedding")
+            if learned_embedding is None:
+                raise RuntimeError("Learned steer cache recording produced no embedding.")
+            self.steer_cache_recorder.record(*cache_key, learned_embedding)
+        if cache_key is not None:
+            self._steer_request_index += 1
 
         action_tensor = pred[KEY_ACTION]
         if action_tensor.ndim == 2:
@@ -424,6 +956,11 @@ def _build_policy_from_run(
     num_inference_steps: int | None,
     load_text_encoder: bool,
     inference_seed: int | None = None,
+    steer_inference_mode: str = "learned",
+    steer_cache_path: str | None = None,
+    steer_cache_sha256: str | None = None,
+    steer_cache_record_path: str | None = None,
+    steer_protocol_json: str | None = None,
 ) -> FastWAMPolicy:
     from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcessor
     from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
@@ -459,6 +996,78 @@ def _build_policy_from_run(
     model.load_checkpoint(str(checkpoint_path))
     model.eval()
 
+    steer_inference_mode = str(steer_inference_mode).strip().lower()
+    if steer_inference_mode not in STEER_INFERENCE_MODES:
+        raise ValueError(
+            f"steer_inference_mode must be one of {STEER_INFERENCE_MODES}, "
+            f"got {steer_inference_mode!r}."
+        )
+    if steer_inference_mode == "cached":
+        if steer_cache_path is None or steer_cache_sha256 is None:
+            raise ValueError(
+                "cached steer mode requires --steer-cache-path and "
+                "--steer-cache-sha256."
+            )
+    elif steer_cache_path is not None or steer_cache_sha256 is not None:
+        raise ValueError(
+            "--steer-cache-path/--steer-cache-sha256 require cached steer mode."
+        )
+    if steer_cache_record_path is not None and steer_inference_mode != "learned":
+        raise ValueError("--steer-cache-record-path requires learned steer mode.")
+    uses_steer_cache_io = steer_cache_path is not None or steer_cache_record_path is not None
+    if uses_steer_cache_io and steer_protocol_json is None:
+        raise ValueError(
+            "Steer cache replay/recording requires --steer-protocol-json."
+        )
+    if not uses_steer_cache_io and steer_protocol_json is not None:
+        raise ValueError("--steer-protocol-json requires cache replay or recording.")
+
+    steer_cache = None
+    steer_cache_recorder = None
+    steer_protocol = None
+    checkpoint_sha256 = None
+    config_sha256 = None
+    if uses_steer_cache_io:
+        if not bool(getattr(model, "offline_steer_enabled", False)):
+            raise ValueError("Steer cache replay/recording requires offline_steer.enabled=true.")
+        embedding_dim = int(model.offline_steer_config["embedding_dim"])
+        checkpoint_sha256 = _sha256_file(checkpoint_path)
+        config_sha256 = _sha256_file(config_path)
+        steer_protocol, _ = _parse_steer_protocol_json(steer_protocol_json)
+        expected_model = {
+            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_sha256": checkpoint_sha256,
+            "config_path": str(config_path.resolve()),
+            "config_sha256": config_sha256,
+        }
+        if steer_protocol["model"] != expected_model:
+            raise ValueError(
+                "Steer protocol model provenance does not match the resolved server model: "
+                f"expected {expected_model!r}, got {steer_protocol['model']!r}."
+            )
+        if steer_cache_path is not None:
+            expected_cache_sha256 = _normalize_sha256(
+                steer_cache_sha256,
+                label="--steer-cache-sha256",
+            )
+            steer_cache = SteerEmbeddingCache(
+                Path(steer_cache_path).expanduser().resolve(),
+                expected_file_sha256=expected_cache_sha256,
+                checkpoint_sha256=checkpoint_sha256,
+                config_sha256=config_sha256,
+                embedding_dim=embedding_dim,
+                protocol=steer_protocol,
+                required_coverage_policy=STEER_CACHE_COVERAGE_FULL,
+            )
+        if steer_cache_record_path is not None:
+            steer_cache_recorder = SteerEmbeddingRecorder(
+                Path(steer_cache_record_path).expanduser().resolve(),
+                checkpoint_sha256=checkpoint_sha256,
+                config_sha256=config_sha256,
+                embedding_dim=embedding_dim,
+                protocol=steer_protocol,
+            )
+
     processor: FastWAMProcessor = instantiate(processor_cfg)
     processor.eval()
     if normalization_kind == "meta":
@@ -491,6 +1100,12 @@ def _build_policy_from_run(
     print(f"  Num video frames: {num_video_frames}", flush=True)
     print(f"  Num inference steps: {num_inference_steps}", flush=True)
     print(f"  Inference seed: {resolved_inference_seed}", flush=True)
+    print(f"  Steer inference mode: {steer_inference_mode}", flush=True)
+    if steer_cache is not None:
+        print(f"  Steer cache: {steer_cache.path}", flush=True)
+        print(f"  Steer cache SHA256: {steer_cache.file_sha256}", flush=True)
+    if steer_cache_recorder is not None:
+        print(f"  Steer cache record path: {steer_cache_recorder.path}", flush=True)
 
     return FastWAMPolicy(
         model=model,
@@ -505,6 +1120,16 @@ def _build_policy_from_run(
         seed=resolved_inference_seed,
         rand_device=str(evaluation_cfg.get("rand_device", "cpu")),
         tiled=bool(evaluation_cfg.get("tiled", False)),
+        steer_inference_mode=steer_inference_mode,
+        steer_cache=steer_cache,
+        steer_cache_recorder=steer_cache_recorder,
+        steer_protocol=steer_protocol,
+        model_provenance={
+            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_sha256": checkpoint_sha256,
+            "config_path": str(config_path.resolve()),
+            "config_sha256": config_sha256,
+        },
     )
 
 
@@ -524,6 +1149,26 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Override EVALUATION.seed for deterministic diffusion sampling.",
+    )
+    parser.add_argument(
+        "--steer-inference-mode",
+        choices=STEER_INFERENCE_MODES,
+        default="learned",
+        help="Inference-only steer intervention. cached replays explicit embeddings.",
+    )
+    parser.add_argument("--steer-cache-path", type=str, default=None)
+    parser.add_argument("--steer-cache-sha256", type=str, default=None)
+    parser.add_argument(
+        "--steer-cache-record-path",
+        type=str,
+        default=None,
+        help="Record learned steer embeddings as strict JSONL for later replay.",
+    )
+    parser.add_argument(
+        "--steer-protocol-json",
+        type=str,
+        default=None,
+        help="Canonical per-shard rollout protocol bound into steer caches.",
     )
     parser.add_argument(
         "--load-text-encoder",
@@ -561,16 +1206,29 @@ def main() -> None:
             num_inference_steps=args.num_inference_steps,
             load_text_encoder=args.load_text_encoder,
             inference_seed=args.inference_seed,
+            steer_inference_mode=args.steer_inference_mode,
+            steer_cache_path=args.steer_cache_path,
+            steer_cache_sha256=args.steer_cache_sha256,
+            steer_cache_record_path=args.steer_cache_record_path,
+            steer_protocol_json=args.steer_protocol_json,
         )
         print(f"  Run dir: {_resolve_run_dir(run_dir)}", flush=True)
         print(f"  Device: {args.device}", flush=True)
 
     server = PolicyServer(policy=policy, host=args.host, port=args.port, api_token=args.api_token)
     print(f"\n✓ Server ready — listening on {args.host}:{args.port}\n", flush=True)
+    def _terminate(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _terminate)
     try:
         server.run()
     except KeyboardInterrupt:
         print("\nShutting down server...", flush=True)
+    finally:
+        close_policy = getattr(policy, "close", None)
+        if close_policy is not None:
+            close_policy()
 
 
 if __name__ == "__main__":

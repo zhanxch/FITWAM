@@ -259,6 +259,44 @@ class FastWAMOfflineSteerIntegrationTest(unittest.TestCase):
         self.assertIsNone(model.offline_steer_student)
         self.assertIsNone(model.offline_steer_residual)
 
+    def test_inference_bypass_skips_residual_projection_including_bias(self) -> None:
+        model = make_model(steer_enabled=True)
+        with torch.no_grad():
+            model.offline_steer_residual.projection.weight.fill_(2.0)
+            model.offline_steer_residual.projection.bias.fill_(7.0)
+        tokens = torch.randn(2, 3, 4)
+        action_pre = {"tokens": tokens}
+
+        model._inject_offline_steer(
+            action_pre,
+            steer_embedding=None,
+            steer_inference_mode="bypass",
+        )
+
+        self.assertIs(action_pre["tokens"], tokens)
+        self.assertTrue(torch.equal(action_pre["tokens"], tokens))
+
+    def test_explicit_inference_mode_requires_embedding_and_legacy_is_preserved(self) -> None:
+        embedding = torch.randn(1, 3)
+        self.assertEqual(
+            FastWAM._resolve_steer_inference_mode(None, steer_embedding=embedding),
+            "explicit",
+        )
+        self.assertEqual(
+            FastWAM._resolve_steer_inference_mode(None, steer_embedding=None),
+            "learned",
+        )
+        with self.assertRaisesRegex(ValueError, "requires `steer_embedding`"):
+            FastWAM._resolve_steer_inference_mode(
+                "explicit",
+                steer_embedding=None,
+            )
+        with self.assertRaisesRegex(ValueError, "does not accept"):
+            FastWAM._resolve_steer_inference_mode(
+                "bypass",
+                steer_embedding=embedding,
+            )
+
     def test_student_uses_only_current_frame_and_zero_init_is_exact_noop(self) -> None:
         model = make_model(steer_enabled=True)
         student = CountingStudent(embedding_dim=3)
@@ -471,6 +509,32 @@ class FastWAMOfflineSteerIntegrationTest(unittest.TestCase):
 
         self.assertEqual(tuple(output["action"].shape), (2, 2))
         self.assertEqual(student.calls, 1)
+
+    def test_infer_action_bypass_matches_vanilla_despite_nonzero_bias(self) -> None:
+        model = make_model(steer_enabled=True)
+        with torch.no_grad():
+            model.offline_steer_residual.projection.weight.fill_(2.0)
+            model.offline_steer_residual.projection.bias.fill_(7.0)
+        vanilla = make_model(steer_enabled=False)
+        kwargs = {
+            "prompt": None,
+            "input_image": torch.zeros(3, 16, 16),
+            "action_horizon": 2,
+            "context": torch.zeros(2, 5),
+            "context_mask": torch.ones(2, dtype=torch.bool),
+            "num_inference_steps": 3,
+            "seed": 5,
+        }
+
+        bypass = model.infer_action(
+            **kwargs,
+            steer_inference_mode="bypass",
+            return_steer_embedding=True,
+        )
+        vanilla_output = vanilla.infer_action(**kwargs)
+
+        torch.testing.assert_close(bypass["action"], vanilla_output["action"])
+        self.assertIsNone(bypass["steer_embedding"])
 
     def test_checkpoint_roundtrip_restores_steer_modules(self) -> None:
         source = make_model(steer_enabled=True)

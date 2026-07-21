@@ -356,6 +356,13 @@ class PairTargetStore:
         self._require_open()
         return isinstance(pair_id, str) and pair_id in self._index
 
+    @property
+    def pair_ids(self) -> tuple[str, ...]:
+        """Return the immutable row-order pair identifiers."""
+
+        self._require_open()
+        return tuple(str(value) for value in self._pair_ids)
+
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("PairTargetStore is closed")

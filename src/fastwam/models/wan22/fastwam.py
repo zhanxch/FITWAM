@@ -462,12 +462,49 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`steer_embedding` must contain only finite values.")
         return steer_embedding.to(device=self.device, dtype=self.torch_dtype)
 
+    @staticmethod
+    def _resolve_steer_inference_mode(
+        steer_inference_mode: Optional[str],
+        *,
+        steer_embedding: Optional[torch.Tensor],
+    ) -> str:
+        """Resolve inference-only steer control without changing legacy callers."""
+        if steer_inference_mode is None:
+            return "explicit" if steer_embedding is not None else "learned"
+        mode = str(steer_inference_mode).strip().lower()
+        if mode not in {"learned", "bypass", "explicit"}:
+            raise ValueError(
+                "`steer_inference_mode` must be one of "
+                "['learned', 'bypass', 'explicit'], "
+                f"got {steer_inference_mode!r}."
+            )
+        if mode == "bypass" and steer_embedding is not None:
+            raise ValueError("`bypass` mode does not accept `steer_embedding`.")
+        if mode == "explicit" and steer_embedding is None:
+            raise ValueError("`explicit` mode requires `steer_embedding`.")
+        if mode == "learned" and steer_embedding is not None:
+            raise ValueError(
+                "`learned` mode computes its own embedding; use `explicit` for a "
+                "provided embedding."
+            )
+        return mode
+
     def _inject_offline_steer(
         self,
         action_pre: dict[str, Any],
         *,
         steer_embedding: Optional[torch.Tensor],
+        steer_inference_mode: str = "learned",
     ) -> None:
+        if steer_inference_mode == "bypass":
+            if steer_embedding is not None:
+                raise ValueError("`bypass` mode does not accept `steer_embedding`.")
+            return
+        if steer_inference_mode not in {"learned", "explicit"}:
+            raise ValueError(
+                "Internal steer mode must be learned, bypass, or explicit; "
+                f"got {steer_inference_mode!r}."
+            )
         if not self.offline_steer_enabled:
             if steer_embedding is not None:
                 raise ValueError(
@@ -491,8 +528,15 @@ class FastWAM(torch.nn.Module):
         context_mask: torch.Tensor,
         fuse_vae_embedding_in_latents: bool,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: Optional[str] = None,
     ) -> Optional[torch.Tensor]:
-        if steer_embedding is not None:
+        mode = self._resolve_steer_inference_mode(
+            steer_inference_mode,
+            steer_embedding=steer_embedding,
+        )
+        if mode == "bypass":
+            return None
+        if mode == "explicit":
             return self._validate_explicit_steer_embedding(
                 steer_embedding,
                 batch_size=first_frame_latents.shape[0],
@@ -1204,6 +1248,7 @@ class FastWAM(torch.nn.Module):
         gt_action: Optional[torch.Tensor] = None,
         state: Optional[torch.Tensor] = None,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: str = "learned",
     ) -> tuple[torch.Tensor, torch.Tensor]:
         video_pre = self.video_expert.pre_dit(
             x=latents_video,
@@ -1219,7 +1264,11 @@ class FastWAM(torch.nn.Module):
             context=context,
             context_mask=context_mask,
         )
-        if self.offline_steer_enabled and steer_embedding is None:
+        if (
+            steer_inference_mode == "learned"
+            and self.offline_steer_enabled
+            and steer_embedding is None
+        ):
             steer_embedding = self._compute_offline_steer_embedding(
                 video_tokens=video_pre["tokens"],
                 video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
@@ -1229,6 +1278,7 @@ class FastWAM(torch.nn.Module):
         self._inject_offline_steer(
             action_pre,
             steer_embedding=steer_embedding,
+            steer_inference_mode=steer_inference_mode,
         )
         state_pre = self._state_condition_pre_dit(
             state=state,
@@ -1297,6 +1347,7 @@ class FastWAM(torch.nn.Module):
         fuse_vae_embedding_in_latents: bool,
         state: Optional[torch.Tensor] = None,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: str = "learned",
     ) -> torch.Tensor:
         timestep_video = torch.zeros_like(timestep_action, dtype=first_frame_latents.dtype, device=self.device)
         video_pre = self.video_expert.pre_dit(
@@ -1313,7 +1364,11 @@ class FastWAM(torch.nn.Module):
             context=context,
             context_mask=context_mask,
         )
-        if self.offline_steer_enabled and steer_embedding is None:
+        if (
+            steer_inference_mode == "learned"
+            and self.offline_steer_enabled
+            and steer_embedding is None
+        ):
             steer_embedding = self._compute_offline_steer_embedding(
                 video_tokens=video_pre["tokens"],
                 video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
@@ -1323,6 +1378,7 @@ class FastWAM(torch.nn.Module):
         self._inject_offline_steer(
             action_pre,
             steer_embedding=steer_embedding,
+            steer_inference_mode=steer_inference_mode,
         )
         state_pre = self._state_condition_pre_dit(
             state=state,
@@ -1388,6 +1444,7 @@ class FastWAM(torch.nn.Module):
         attention_mask: torch.Tensor,
         video_seq_len: int,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: str = "learned",
     ) -> torch.Tensor:
         action_pre = self.action_expert.pre_dit(
             action_tokens=latents_action,
@@ -1398,6 +1455,7 @@ class FastWAM(torch.nn.Module):
         self._inject_offline_steer(
             action_pre,
             steer_embedding=steer_embedding,
+            steer_inference_mode=steer_inference_mode,
         )
         action_tokens = self.mot.forward_action_with_video_cache(
             action_tokens=action_pre["tokens"],
@@ -1426,6 +1484,8 @@ class FastWAM(torch.nn.Module):
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: Optional[str] = None,
+        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
@@ -1436,6 +1496,10 @@ class FastWAM(torch.nn.Module):
         test_action_with_infer_action: bool = True,
     ) -> dict[str, Any]:
         self.eval()
+        resolved_steer_mode = self._resolve_steer_inference_mode(
+            steer_inference_mode,
+            steer_embedding=steer_embedding,
+        )
         if test_action_with_infer_action:
             if seed is None:
                 raise ValueError("`test_action_with_infer_action=True` requires non-null `seed`.")
@@ -1457,6 +1521,7 @@ class FastWAM(torch.nn.Module):
                     if isinstance(steer_embedding, torch.Tensor)
                     else steer_embedding
                 ),
+                steer_inference_mode=resolved_steer_mode,
             )["action"]
         
         if input_image.ndim == 3:
@@ -1568,6 +1633,7 @@ class FastWAM(torch.nn.Module):
             context_mask=steer_context_mask,
             fuse_vae_embedding_in_latents=fuse_flag,
             steer_embedding=steer_embedding,
+            steer_inference_mode=resolved_steer_mode,
         )
 
         infer_timesteps_video, infer_deltas_video = self.infer_video_scheduler.build_inference_schedule(
@@ -1602,6 +1668,7 @@ class FastWAM(torch.nn.Module):
                 gt_action=action,
                 state=state_cond,
                 steer_embedding=steer_embedding,
+                steer_inference_mode=resolved_steer_mode,
             )
             pred_video = pred_video_posi
             pred_action = pred_action_posi
@@ -1618,10 +1685,17 @@ class FastWAM(torch.nn.Module):
                     f"Action from infer_joint and infer_action differ with max abs diff {max_abs_diff:.6f}. "
                 )
 
-        return {
+        result = {
             "video": self._decode_latents(latents_video, tiled=tiled),
             "action": action_out,
         }
+        if return_steer_embedding:
+            result["steer_embedding"] = (
+                None
+                if steer_embedding is None
+                else steer_embedding.detach().to(device="cpu", dtype=torch.float32)
+            )
+        return result
 
     @torch.no_grad()
     def infer_action(
@@ -1634,6 +1708,8 @@ class FastWAM(torch.nn.Module):
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: Optional[str] = None,
+        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
@@ -1643,6 +1719,10 @@ class FastWAM(torch.nn.Module):
         tiled: bool = False,
     ) -> dict[str, Any]:
         self.eval()
+        resolved_steer_mode = self._resolve_steer_inference_mode(
+            steer_inference_mode,
+            steer_embedding=steer_embedding,
+        )
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
             raise ValueError(
                 "`infer_action` requires `video_attention_mask_mode='first_frame_causal'`."
@@ -1738,18 +1818,20 @@ class FastWAM(torch.nn.Module):
             action=None,
             fuse_vae_embedding_in_latents=fuse_flag,
         )
-        if steer_embedding is not None:
+        if resolved_steer_mode == "explicit":
             steer_embedding = self._validate_explicit_steer_embedding(
                 steer_embedding,
                 batch_size=first_frame_latents.shape[0],
             )
-        elif self.offline_steer_enabled:
+        elif resolved_steer_mode == "learned" and self.offline_steer_enabled:
             steer_embedding = self._compute_offline_steer_embedding(
                 video_tokens=video_pre["tokens"],
                 video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
                 context=steer_context,
                 context_mask=steer_context_mask,
             )
+        else:
+            steer_embedding = None
         video_seq_len = int(video_pre["tokens"].shape[1])
         if state_cond is None:
             attention_mask = self._build_mot_attention_mask(
@@ -1791,6 +1873,7 @@ class FastWAM(torch.nn.Module):
                     attention_mask=attention_mask,
                     video_seq_len=video_seq_len,
                     steer_embedding=steer_embedding,
+                    steer_inference_mode=resolved_steer_mode,
                 )
             else:
                 pred_action_posi = self._predict_action_noise(
@@ -1802,14 +1885,22 @@ class FastWAM(torch.nn.Module):
                     fuse_vae_embedding_in_latents=fuse_flag,
                     state=state_cond,
                     steer_embedding=steer_embedding,
+                    steer_inference_mode=resolved_steer_mode,
                 )
             pred_action = pred_action_posi
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 
-        return {
+        result = {
             "action": latents_action[0].detach().to(device="cpu", dtype=torch.float32),
         }
+        if return_steer_embedding:
+            result["steer_embedding"] = (
+                None
+                if steer_embedding is None
+                else steer_embedding.detach().to(device="cpu", dtype=torch.float32)
+            )
+        return result
 
     @torch.no_grad()
     def infer(
@@ -1824,6 +1915,8 @@ class FastWAM(torch.nn.Module):
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
         steer_embedding: Optional[torch.Tensor] = None,
+        steer_inference_mode: Optional[str] = None,
+        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
         text_cfg_scale: float = 5.0,
         action_cfg_scale: float = 1.0,
@@ -1844,6 +1937,8 @@ class FastWAM(torch.nn.Module):
             context_mask=context_mask,
             outcome_flag=outcome_flag,
             steer_embedding=steer_embedding,
+            steer_inference_mode=steer_inference_mode,
+            return_steer_embedding=return_steer_embedding,
             negative_prompt=negative_prompt,
             text_cfg_scale=text_cfg_scale,
             num_inference_steps=num_inference_steps,

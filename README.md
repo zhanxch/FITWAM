@@ -22,7 +22,7 @@ DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 | **success-only 历史参考** | step 6500 为 `70/100`；另一次 source-policy rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **rollout continuation pilot** | rollout text-failure LoRA continuation 为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **EveRobot sidecar v0.2 已实现** | 不可变 round ledger、可复核 manifest hash、round/sample 子集和路径重映射已覆盖测试；历史 round1 数据仍是 v0.1 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
-| **offline steer 受控筛选** | 200 个配对种子下，validation-best B1 为 `80.5%`，M 为 `88.0%`；差值 `+7.5pp`，exact McNemar `p=0.0357` | [`results/dexjoco_water_plant_offline_v1/README.md`](./results/dexjoco_water_plant_offline_v1/README.md) |
+| **offline steer 开发集筛选** | E0 的 200 个配对种子下，validation-best B1 为 `80.5%`，M 为 `88.0%`；E1 fresh seeds 的固定 step-6000 复核为 `85.0%` 对 `87.5%`，差值 `+2.5pp`，95% CI 包含 0 | [`results/dexjoco_water_plant_offline_v1/README.md`](./results/dexjoco_water_plant_offline_v1/README.md) |
 
 注意：前三项是 mixed-protocol 历史 pilot，当前 checkout 没有保存全部 raw summary。`151/200` 和 `163/200` 属于 source-policy rollout 与 LoRA continuation 计数，不能据此单独归因于 EveRobot 或 M4，也不与后面的受控筛选结果混成最终主表。
 
@@ -32,8 +32,8 @@ DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 |-----------|------------|----------|
 | **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | 200 个配对种子下，B1 在 step 5000/6000/6500 均高于 B0；仍需训练 seed 复现 |
 | **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 builder/loader 已实现；历史 round1 数据待重建和对齐 |
-| **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned residual steer | Teacher/Student/residual 已实现；validation-best M 比 B1 高 `7.5pp`，但不同 checkpoint 的增益不稳定 |
-| **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 单轮数据闭环和受控筛选已跑通；主方法增益未建立 |
+| **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned residual steer | Teacher/Student/residual 已实现；E1 固定步数复核仅 `+2.5pp` 且不显著，因果性仍待验证 |
+| **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 单轮数据闭环和开发集筛选已跑通；进入多轮前仍需通过 fresh-seed efficacy 与 steer 因果 gate |
 | **M5 Online self-improvement** | 在线更新 steer，并用新观测校正 world expert | 待 offline steer 通过后开展 |
 | **M6 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
 
@@ -203,6 +203,11 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | Offline B0 success-only control | 72.5% | validation-best step 5500, 200 paired seeds |
 | Offline C residual-only | 74.5% | validation-best step 6500, 200 paired seeds |
 | Offline M contrastive steer | 88.0% | validation-best step 5000; `M - B1 = +7.5pp`, 95% paired bootstrap CI `[+1pp, +14pp]` |
+| Offline B1 fresh confirmation | 85.0% | E1 step 6000, `170/200` paired fresh seeds |
+| Offline M fresh confirmation | 87.5% | E1 step 6000, `175/200`; `M - B1 = +2.5pp`, 95% CI `[-3.5pp, +8.5pp]`, McNemar `p=0.511` |
+| FastWAM S0 fresh reference | 75.0% | E1 source step 6500, `150/200`; same seeds and rollout protocol |
+| Offline M residual bypass | 10.0% | E1 step 6000, `20/200`; learned steer minus bypass `+77.5pp` |
+| Offline M shuffled steer | 88.0% | E1 step 6000, `176/200`; shuffled minus learned `+0.5pp`, 95% CI `[-5.0pp, +6.0pp]` |
 | External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
 | External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
@@ -269,8 +274,8 @@ papers/II/
 
 1. M1：保留 `water_plant` 历史 pilot；B0/B1 的 200-episode 配对筛选已完成，下一步做多训练 seed 复现。
 2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
-3. M3：首轮 offline contrastive steer 已实现并完成 Water Plant gate；validation-best 已超过 B1，下一轮验证 checkpoint 稳定性和多训练 seed 复现。
-4. M4：用冻结协议完成多轮 rollout -> append -> retrain，验证 offline self-evolution。
+3. M3：首轮 offline contrastive steer 已实现；E1 fixed-step efficacy gate 未通过，下一步完成 S0、推理干预和共同初始化 pair-shuffle 因果对照。
+4. M4：M3 的 efficacy 与 causality gate 通过后，再用冻结协议完成多轮 rollout -> append -> retrain。
 5. M5：M3/M4 通过后，再参考 RL Token 更新 online steer，并参考 World Guidance / AdaJEPA 做 adaptive key-frame 或 tactile prediction 与 world-expert update。
 6. M6：真机实验和触觉模块。
 

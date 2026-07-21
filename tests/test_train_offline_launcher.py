@@ -15,8 +15,10 @@ class TrainOfflineLauncherTest(unittest.TestCase):
     def run_validation(
         self,
         *arguments: str,
+        variant: str = "B0",
         preformal_mode: str | None = None,
         resume_state_dir: str | None = None,
+        strict_common_init: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(os.environ)
         environment["FITWAM_VALIDATE_OVERRIDES_ONLY"] = "1"
@@ -30,8 +32,12 @@ class TrainOfflineLauncherTest(unittest.TestCase):
             environment.pop("RESUME_STATE_DIR", None)
         else:
             environment["RESUME_STATE_DIR"] = resume_state_dir
+        if strict_common_init:
+            environment["FITWAM_STRICT_COMMON_INIT_COMPARISON"] = "1"
+        else:
+            environment.pop("FITWAM_STRICT_COMMON_INIT_COMPARISON", None)
         return subprocess.run(
-            ["bash", str(LAUNCHER), "B0", *arguments],
+            ["bash", str(LAUNCHER), variant, *arguments],
             cwd=ROOT,
             env=environment,
             text=True,
@@ -44,6 +50,59 @@ class TrainOfflineLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("execution_mode=formal max_steps=6500", result.stdout)
         self.assertIn("save_weights_every=0", result.stdout)
+
+    def test_pair_shuffle_is_a_separately_labeled_variant(self) -> None:
+        rejected = self.run_validation(variant="M_PAIR_SHUFFLE")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn(
+            "requires FITWAM_STRICT_COMMON_INIT_COMPARISON=1",
+            rejected.stderr,
+        )
+        result = self.run_validation(
+            variant="M_PAIR_SHUFFLE",
+            strict_common_init=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("execution_mode=formal max_steps=6500", result.stdout)
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("M_PAIR_SHUFFLE_MANIFEST_PATH", text)
+        self.assertIn("PAIR_SHUFFLE_TARGETS_PATH", text)
+        self.assertIn("PAIR_SHUFFLE_PROOF_PATH", text)
+        self.assertIn("pair_shuffle_proof_sha256", text)
+        self.assertIn(
+            'if [[ "${VARIANT}" == "M_PAIR_SHUFFLE" ]]; then',
+            text,
+        )
+
+    def test_base_variants_do_not_require_pair_shuffle_environment(self) -> None:
+        for variant in ("B0", "B1", "C", "M"):
+            with self.subTest(variant=variant):
+                result = self.run_validation(variant=variant)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        strict_b0 = self.run_validation(variant="B0", strict_common_init=True)
+        self.assertEqual(strict_b0.returncode, 0, strict_b0.stderr)
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("PROTOCOL_VARIANTS=(B0 B1 C M)", text)
+        self.assertIn(
+            'if [[ "${INCLUDE_PAIR_SHUFFLE_CONTROL}" == "1" ]]; then',
+            text,
+        )
+        self.assertIn("PAIR_SHUFFLE_PREFLIGHT_ARGS=()", text)
+
+    def test_m_historical_and_strict_modes_have_distinct_initialization(self) -> None:
+        historical = self.run_validation(variant="M")
+        strict = self.run_validation(variant="M", strict_common_init=True)
+        self.assertEqual(historical.returncode, 0, historical.stderr)
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('SELECTED_INIT_WEIGHTS="${INIT_WEIGHTS}"', text)
+        self.assertIn('SELECTED_INIT_WEIGHTS="${COMMON_INIT_WEIGHTS}"', text)
+        self.assertIn(
+            'export FASTWAM_RESUME="${RESUME_STATE_DIR:-${SELECTED_INIT_WEIGHTS}}"',
+            text,
+        )
+        self.assertIn("strict_common_init_pair_shuffle", text)
+        self.assertIn("COMMON_INIT_PREFLIGHT_ARGS=()", text)
 
     def test_protocol_overrides_are_rejected(self) -> None:
         for override in (
@@ -151,7 +210,7 @@ class TrainOfflineLauncherTest(unittest.TestCase):
         self.assertEqual(text.count("build_code_snapshot()"), 1)
         self.assertLess(
             text.index("export FITWAM_CODE_SNAPSHOT_SHA256="),
-            text.index("for protocol_variant in B0 B1 C M"),
+            text.index("PROTOCOL_VARIANTS=(B0 B1 C M)"),
         )
         self.assertIn(
             "+experiment_provenance.run_mode=preformal_smoke",
@@ -201,6 +260,46 @@ class TrainOfflineLauncherTest(unittest.TestCase):
         self.assertIn("MANIFEST_B0_MATCH_DIAGNOSTICS", text)
         self.assertIn("render_state_line_audit.py", text)
         self.assertIn("--num-episodes 20", text)
+        self.assertIn("build_pair_shuffle_control.py", text)
+        self.assertIn(
+            'FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL="${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL:-0}"',
+            text,
+        )
+        self.assertLess(
+            text.index('"${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" == "1"'),
+            text.index("PAIR_SHUFFLE_OUTPUTS=("),
+        )
+        self.assertIn('--output-manifest "${MANIFEST_M_PAIR_SHUFFLE}"', text)
+        self.assertIn('--output-pair-targets "${PAIR_SHUFFLE_TARGETS}"', text)
+        self.assertIn('--proof-output "${PAIR_SHUFFLE_PROOF}"', text)
+        self.assertIn('--shuffle-seed "${PAIR_SHUFFLE_SEED}"', text)
+        self.assertIn("PAIR_SHUFFLE_TARGETS_PATH \\", text)
+        self.assertIn("PAIR_SHUFFLE_PROOF_PATH \\", text)
+        self.assertIn("PAIR_SHUFFLE_SEED \\", text)
+        self.assertIn("build_common_init_checkpoint.py", text)
+        self.assertIn(
+            'FITWAM_STRICT_COMMON_INIT_COMPARISON="${FITWAM_STRICT_COMMON_INIT_COMPARISON:-0}"',
+            text,
+        )
+        self.assertIn(
+            '--expected-config-sha256 "${COMMON_INIT_CONFIG_SHA256}"',
+            text,
+        )
+        self.assertIn(
+            '--expected-baseline-sha256 "${SOURCE_CHECKPOINT_SHA256}"',
+            text,
+        )
+        for variable in (
+            "COMMON_INIT_WEIGHTS",
+            "COMMON_INIT_PROOF",
+            "COMMON_INIT_CONFIG",
+            "COMMON_INIT_SEED",
+            "COMMON_INIT_WEIGHTS_SHA256",
+            "COMMON_INIT_PROOF_SHA256",
+            "COMMON_INIT_BASELINE_SHA256",
+            "COMMON_INIT_CONFIG_SHA256",
+        ):
+            self.assertIn(f"{variable} \\", text)
 
 
 if __name__ == "__main__":

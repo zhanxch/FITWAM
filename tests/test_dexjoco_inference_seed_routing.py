@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 import types
@@ -151,7 +152,12 @@ def _runtime_stubs() -> dict[str, types.ModuleType]:
     }
 
 
-def _build_policy_with_seed(config_seed: int | None, inference_seed: int | None):
+def _build_policy_with_seed(
+    config_seed: int | None,
+    inference_seed: int | None,
+    *,
+    steer_inference_mode: str = "learned",
+):
     with tempfile.TemporaryDirectory() as tmp:
         run_dir = Path(tmp)
         (run_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
@@ -198,6 +204,7 @@ def _build_policy_with_seed(config_seed: int | None, inference_seed: int | None)
                 num_inference_steps=None,
                 load_text_encoder=False,
                 inference_seed=inference_seed,
+                steer_inference_mode=steer_inference_mode,
             )
 
 
@@ -270,6 +277,35 @@ def _load_orchestrator():
 ORCHESTRATOR = _load_orchestrator()
 
 
+def _model_provenance(root: Path) -> dict:
+    return {
+        "run_dir": str(root),
+        "checkpoint_path": str(root / "step_000001.pt"),
+        "checkpoint_sha256": "a" * 64,
+        "config_path": str(root / "config.yaml"),
+        "config_sha256": "b" * 64,
+    }
+
+
+def _steer_protocol_args(root: Path) -> dict:
+    return {
+        "tasks": ["water_plant"],
+        "episodes": 8,
+        "seed": 100,
+        "replan_steps": 25,
+        "max_env_steps": 1500,
+        "control_mode": "blocking",
+        "async_fallback": "wait",
+        "randomize": False,
+        "randomize_dynamics": False,
+        "action_clip": False,
+        "clip_max_xyz_step": 0.05,
+        "clip_max_dz_down": 0.03,
+        "task_config_dir": root / "rand_obj",
+        "_model_provenance": _model_provenance(root),
+    }
+
+
 class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
     def test_policy_builder_seed_override_wins_over_config(self):
         policy = _build_policy_with_seed(config_seed=17, inference_seed=0)
@@ -278,6 +314,16 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
     def test_policy_builder_falls_back_to_config_seed(self):
         policy = _build_policy_with_seed(config_seed=17, inference_seed=None)
         self.assertEqual(policy.seed, 17)
+
+    def test_bypass_builder_still_loads_the_full_checkpoint(self):
+        policy = _build_policy_with_seed(
+            config_seed=17,
+            inference_seed=0,
+            steer_inference_mode="bypass",
+        )
+
+        self.assertEqual(policy.steer_inference_mode, "bypass")
+        self.assertEqual(Path(policy.model.checkpoint).name, "step_000001.pt")
 
     def test_async_server_forwards_inference_seed_to_policy_builder(self):
         base_policy = SimpleNamespace(
@@ -309,6 +355,9 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             port=5556,
             api_token=None,
             num_workers=2,
+            steer_cache_path=None,
+            steer_cache_record_path=None,
+            steer_protocol_json=None,
         )
         with (
             mock.patch.object(ASYNC_SERVER, "parse_args", return_value=args),
@@ -325,6 +374,11 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
         ):
             ASYNC_SERVER.main()
         self.assertEqual(build_policy.call_args.kwargs["inference_seed"], 314)
+        self.assertEqual(
+            build_policy.call_args.kwargs["steer_inference_mode"],
+            "learned",
+        )
+        self.assertIsNone(build_policy.call_args.kwargs["steer_cache_path"])
 
     def test_multi_gpu_servers_receive_the_same_inference_seed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -370,6 +424,7 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             action_clip=False,
             clip_max_xyz_step=0.05,
             clip_max_dz_down=0.03,
+            _model_provenance=_model_provenance(Path("/tmp/run")),
         )
         metadata = ORCHESTRATOR._combined_summary_metadata(
             args,
@@ -377,6 +432,12 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             ports=[5570, 5571, 5572, 5573],
         )
         self.assertEqual(metadata["inference_seed"], 2718)
+        self.assertEqual(metadata["steer_inference"]["mode"], "learned")
+        self.assertEqual(len(metadata["steer_inference"]["servers"]), 4)
+        self.assertEqual(
+            metadata["model_provenance"]["checkpoint_sha256"],
+            "a" * 64,
+        )
         args.inference_seed = None
         metadata = ORCHESTRATOR._combined_summary_metadata(
             args,
@@ -385,11 +446,155 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
         )
         self.assertIsNone(metadata["inference_seed"])
 
+    def test_cached_steer_routes_shard_path_hash_and_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = SimpleNamespace(
+                server_script=root / "server.py",
+                server_num_workers=8,
+                mock=False,
+                run_dir=root,
+                checkpoint="step_000001.pt",
+                dataset_stats_path=None,
+                norm_stats_meta_dir=None,
+                action_horizon=None,
+                num_inference_steps=None,
+                inference_seed=2718,
+                load_text_encoder=False,
+                api_token=None,
+                steer_inference_mode="cached",
+                steer_cache_path=str(root / "cache-{shard}-{gpu}-{port}.jsonl"),
+                steer_cache_sha256=f"{'a' * 64},{'b' * 64}",
+                steer_cache_record_path=None,
+                **_steer_protocol_args(root),
+            )
+            server = SimpleNamespace(
+                gpu=5,
+                device="cuda",
+                bind_host="0.0.0.0",
+                port=5571,
+            )
+            shard = SimpleNamespace(
+                shard_id=1,
+                base_seed=102,
+                num_episodes=2,
+                global_episode_start=2,
+            )
+
+            argv = ORCHESTRATOR._build_server_argv(
+                args, server, shard_id=1, shard=shard
+            )
+
+        self.assertEqual(argv[argv.index("--steer-inference-mode") + 1], "cached")
+        self.assertTrue(
+            argv[argv.index("--steer-cache-path") + 1].endswith(
+                "cache-1-5-5571.jsonl"
+            )
+        )
+        self.assertEqual(
+            argv[argv.index("--steer-cache-sha256") + 1],
+            "b" * 64,
+        )
+        self.assertEqual(argv[argv.index("--num-workers") + 1], "1")
+        protocol = json.loads(argv[argv.index("--steer-protocol-json") + 1])
+        self.assertEqual(protocol["task"], "water_plant")
+        self.assertEqual(protocol["environment_seeds"]["shard_base"], 102)
+        self.assertEqual(protocol["episodes"]["shard_global_start"], 2)
+        self.assertEqual(protocol["inference"]["max_requests_per_episode"], 60)
+
+    def test_bypass_and_learned_recording_are_first_class(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = {
+                "server_script": root / "server.py",
+                "server_num_workers": 8,
+                "mock": False,
+                "run_dir": root,
+                "checkpoint": "step_000001.pt",
+                "dataset_stats_path": None,
+                "norm_stats_meta_dir": None,
+                "action_horizon": None,
+                "num_inference_steps": None,
+                "inference_seed": 2718,
+                "load_text_encoder": False,
+                "api_token": None,
+                "steer_cache_path": None,
+                "steer_cache_sha256": None,
+                **_steer_protocol_args(root),
+            }
+            server = SimpleNamespace(
+                gpu=4,
+                device="cuda",
+                bind_host="0.0.0.0",
+                port=5570,
+            )
+            bypass = ORCHESTRATOR._build_server_argv(
+                SimpleNamespace(
+                    **base,
+                    steer_inference_mode="bypass",
+                    steer_cache_record_path=None,
+                ),
+                server,
+            )
+            learned = ORCHESTRATOR._build_server_argv(
+                SimpleNamespace(
+                    **base,
+                    steer_inference_mode="learned",
+                    steer_cache_record_path=str(root / "record-{shard}.jsonl"),
+                ),
+                server,
+                shard_id=2,
+                shard=SimpleNamespace(
+                    shard_id=2,
+                    base_seed=104,
+                    num_episodes=2,
+                    global_episode_start=4,
+                ),
+            )
+
+        self.assertEqual(
+            bypass[bypass.index("--steer-inference-mode") + 1],
+            "bypass",
+        )
+        self.assertEqual(
+            learned[learned.index("--steer-inference-mode") + 1],
+            "learned",
+        )
+        self.assertTrue(
+            learned[learned.index("--steer-cache-record-path") + 1].endswith(
+                "record-2.jsonl"
+            )
+        )
+        self.assertEqual(learned[learned.index("--num-workers") + 1], "1")
+        self.assertIn("--steer-protocol-json", learned)
+
+    def test_no_launch_servers_fails_closed_for_real_model(self):
+        with mock.patch.object(
+            ORCHESTRATOR,
+            "parse_args",
+            return_value=SimpleNamespace(launch_servers=False, mock=False),
+        ):
+            with self.assertRaisesRegex(ValueError, "disabled for real-model"):
+                ORCHESTRATOR.main()
+
+    def test_async_cache_mode_rejects_concurrent_workers(self):
+        args = SimpleNamespace(
+            mock=False,
+            steer_cache_path="/tmp/cache.jsonl",
+            steer_cache_record_path=None,
+            num_workers=2,
+        )
+        with mock.patch.object(ASYNC_SERVER, "parse_args", return_value=args):
+            with self.assertRaisesRegex(ValueError, "requires --num-workers 1"):
+                ASYNC_SERVER.main()
+
     def test_omitting_flag_preserves_cli_and_server_argv_behavior(self):
         with mock.patch.object(sys, "argv", ["server", "--mock"]):
             self.assertIsNone(SYNC_SERVER.parse_args().inference_seed)
+            self.assertEqual(SYNC_SERVER.parse_args().steer_inference_mode, "learned")
         with mock.patch.object(sys, "argv", ["server-async", "--mock"]):
             self.assertIsNone(ASYNC_SERVER.parse_args().inference_seed)
+            self.assertEqual(ASYNC_SERVER.parse_args().steer_inference_mode, "learned")
         with mock.patch.object(
             sys,
             "argv",
@@ -408,6 +613,10 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             ],
         ):
             self.assertIsNone(ORCHESTRATOR.parse_args().inference_seed)
+            self.assertEqual(
+                ORCHESTRATOR.parse_args().steer_inference_mode,
+                "learned",
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

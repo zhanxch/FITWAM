@@ -21,10 +21,30 @@ retained outside Git.
 | step 6500 | +0.5pp | [-4.5pp, +5.5pp] | 1.0000 |
 | validation-best | +7.5pp | [+1.0pp, +14.0pp] | 0.0357 |
 
-M improves over B1 at step 6000 and under validation-based checkpoint
-selection. The step-6500 difference is negligible. These results use one
-training seed and show checkpoint sensitivity, so multi-seed training remains
-required before a publication-level gain claim.
+This table is E0 development-set checkpoint screening. M improves over B1 at
+step 6000 and under validation-based checkpoint selection, while the step-6500
+difference is negligible.
+
+On the separate E1 fresh seeds `20262000..20262199`, fixed step-6000 B1 scored
+`170/200 = 85.0%` and M scored `175/200 = 87.5%`. The paired difference was
+`+2.5pp` (95% paired bootstrap CI `[-3.5pp, +8.5pp]`; exact McNemar
+`p=0.511`). E1 therefore did not confirm the E0 gain. The matching S0 source
+policy scored `150/200 = 75.0%`. Paired B1-S0 was `+10.0pp` (95% CI
+`[+2.5pp, +17.5pp]`, McNemar `p=0.0169`); paired M-S0 was `+12.5pp` (95% CI
+`[+5.5pp, +19.5pp]`, `p=0.00126`). Steer-intervention controls remain required
+before a causal claim. Machine-readable E1 statistics are in
+[`fresh_seed_confirmation_200.json`](./fresh_seed_confirmation_200.json) and
+[`fresh_seed_confirmation_200.csv`](./fresh_seed_confirmation_200.csv).
+
+Using the same M step-6000 checkpoint and E1 seeds, learned steer scored
+`175/200 = 87.5%`, exact residual bypass scored `20/200 = 10.0%`, and
+cross-episode shuffled steer scored `176/200 = 88.0%`. Bypass minus learned was
+`-77.5pp` (95% CI `[-83.5pp, -71.5pp]`; McNemar `p=1.73e-45`), while shuffled
+minus learned was `+0.5pp` (95% CI `[-5.0pp, +6.0pp]`; `p=1.0`). The steer
+path is necessary for this checkpoint, but these results do not show that its
+episode-specific embedding content improves success. Machine-readable results
+are in [`inference_causality_step6000_200.json`](./inference_causality_step6000_200.json)
+and [`inference_causality_step6000_200.csv`](./inference_causality_step6000_200.csv).
 
 Machine-readable statistics are in
 [`checkpoint_screening_200.csv`](./checkpoint_screening_200.csv) and

@@ -49,6 +49,27 @@ PREFLIGHT_GPUS="${PREFLIGHT_GPUS:-0,1,2,3}"
 TEACHER_OUTPUT="${TEACHER_OUTPUT:-${EVE_ROOT}/teacher/offline_steer_v1}"
 SKIP_TEACHER="${SKIP_TEACHER:-0}"
 RESUME_EXISTING_EVE="${RESUME_EXISTING_EVE:-0}"
+FITWAM_STRICT_COMMON_INIT_COMPARISON="${FITWAM_STRICT_COMMON_INIT_COMPARISON:-0}"
+case "${FITWAM_STRICT_COMMON_INIT_COMPARISON}" in
+  0|1) ;;
+  *)
+    echo "FITWAM_STRICT_COMMON_INIT_COMPARISON must be 0 or 1." >&2
+    exit 2
+    ;;
+esac
+FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL="${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL:-0}"
+case "${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" in
+  0|1) ;;
+  *)
+    echo "FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL must be 0 or 1." >&2
+    exit 2
+    ;;
+esac
+if [[ "${FITWAM_STRICT_COMMON_INIT_COMPARISON}" == "1" ]]; then
+  FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL=1
+fi
+export FITWAM_STRICT_COMMON_INIT_COMPARISON
+export FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL
 PAIR_QUALITY_GATE_MODE="${PAIR_QUALITY_GATE_MODE:-formal}"
 if [[ "${RESUME_EXISTING_EVE}" != "0" && "${RESUME_EXISTING_EVE}" != "1" ]]; then
   echo "RESUME_EXISTING_EVE must be 0 or 1." >&2
@@ -159,12 +180,32 @@ PAIR_QUALITY_REPORT="${EVE_ROOT}/quality/offline_event_pair_quality_v1.json"
 STATE_LINE_AUDIT_DIR="${EVE_ROOT}/quality/state_line_audit_seed${SPLIT_SEED}"
 STATE_LINE_AUDIT_INDEX="${STATE_LINE_AUDIT_DIR}/audit_index.json"
 PAIR_TARGETS="${TEACHER_OUTPUT}/pair_targets.npz"
+PAIR_SHUFFLE_SEED="${PAIR_SHUFFLE_SEED:-20260721}"
+if [[ "${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" == "1" && \
+      ! "${PAIR_SHUFFLE_SEED}" =~ ^[0-9]+$ ]]; then
+  echo "PAIR_SHUFFLE_SEED must be a non-negative integer." >&2
+  exit 2
+fi
+PAIR_SHUFFLE_TARGETS="${TEACHER_OUTPUT}/pair_targets_pair_shuffle_seed${PAIR_SHUFFLE_SEED}.npz"
+PAIR_SHUFFLE_PROOF="${EVE_ROOT}/pairs/offline_steer_pair_shuffle_seed${PAIR_SHUFFLE_SEED}_proof.json"
 MANIFEST_B0_RAW="${EVE_ROOT}/manifests/offline_b0_success_budget_control_raw.json"
 MANIFEST_B0="${EVE_ROOT}/manifests/offline_b0_success_budget_control.json"
 MANIFEST_B0_MATCH_DIAGNOSTICS="${EVE_ROOT}/manifests/offline_b0_auxiliary_budget_match.json"
 MANIFEST_B1="${EVE_ROOT}/manifests/offline_b1_failure_video_control.json"
 MANIFEST_M="${EVE_ROOT}/manifests/offline_m_failure_steer.json"
+MANIFEST_M_PAIR_SHUFFLE="${EVE_ROOT}/manifests/offline_m_pair_shuffle_seed${PAIR_SHUFFLE_SEED}.json"
 MANIFEST_SELECTION="${EVE_ROOT}/manifests/offline_selection_primary_success.json"
+COMMON_INIT_SEED="${COMMON_INIT_SEED:-42}"
+COMMON_INIT_DEVICE="${COMMON_INIT_DEVICE:-cuda:0}"
+COMMON_INIT_ROOT="${EVE_ROOT}/common_init/seed${COMMON_INIT_SEED}"
+COMMON_INIT_CONFIG="${COMMON_INIT_ROOT}/resolved_model.yaml"
+COMMON_INIT_WEIGHTS="${COMMON_INIT_ROOT}/common_init_step_000000.pt"
+COMMON_INIT_PROOF="${COMMON_INIT_ROOT}/common_init_step_000000.proof.json"
+if [[ "${FITWAM_STRICT_COMMON_INIT_COMPARISON}" == "1" && \
+      ! "${COMMON_INIT_SEED}" =~ ^[0-9]+$ ]]; then
+  echo "COMMON_INIT_SEED must be a non-negative integer." >&2
+  exit 2
+fi
 
 hash_file() {
   python - "$1" <<'PY'
@@ -565,6 +606,43 @@ if [[ "${SKIP_TEACHER}" != "1" && ! -f "${MANIFEST_M}" ]]; then
     --attach-side failure
 fi
 
+if [[ "${SKIP_TEACHER}" != "1" && \
+      "${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" == "1" ]]; then
+  PAIR_SHUFFLE_OUTPUTS=(
+    "${MANIFEST_M_PAIR_SHUFFLE}"
+    "${PAIR_SHUFFLE_TARGETS}"
+    "${PAIR_SHUFFLE_PROOF}"
+  )
+  PAIR_SHUFFLE_PRESENT=0
+  for artifact in "${PAIR_SHUFFLE_OUTPUTS[@]}"; do
+    if [[ -e "${artifact}" ]]; then
+      PAIR_SHUFFLE_PRESENT=$((PAIR_SHUFFLE_PRESENT + 1))
+    fi
+  done
+  if [[ "${PAIR_SHUFFLE_PRESENT}" -ne 0 && \
+        "${PAIR_SHUFFLE_PRESENT}" -ne "${#PAIR_SHUFFLE_OUTPUTS[@]}" ]]; then
+    echo \
+      "Partial M_PAIR_SHUFFLE artifacts exist; use a new EVE_ROOT instead of " \
+      "mixing protocol generations." \
+      >&2
+    exit 2
+  fi
+  if [[ "${PAIR_SHUFFLE_PRESENT}" -eq 0 ]]; then
+    PAIR_SHUFFLE_BUILDER="scripts/everobot/build_pair_shuffle_control.py"
+    if [[ ! -f "${PAIR_SHUFFLE_BUILDER}" ]]; then
+      echo "Missing required pair-shuffle builder: ${PAIR_SHUFFLE_BUILDER}" >&2
+      exit 2
+    fi
+    python "${PAIR_SHUFFLE_BUILDER}" \
+      --manifest "${MANIFEST_M}" \
+      --pair-targets "${PAIR_TARGETS}" \
+      --output-manifest "${MANIFEST_M_PAIR_SHUFFLE}" \
+      --output-pair-targets "${PAIR_SHUFFLE_TARGETS}" \
+      --proof-output "${PAIR_SHUFFLE_PROOF}" \
+      --shuffle-seed "${PAIR_SHUFFLE_SEED}"
+  fi
+fi
+
 if [[ "${SKIP_TEACHER}" != "1" ]]; then
   PAIR_TARGETS_TEACHER_SHA256="$(
     python - "${PAIR_TARGETS}" <<'PY'
@@ -578,6 +656,7 @@ with PairTargetStore(Path(sys.argv[1])) as store:
 PY
   )"
   export INIT_WEIGHTS="${SOURCE_CHECKPOINT}"
+  export SOURCE_CHECKPOINT
   export FASTWAM_SOURCE_CONFIG="${SOURCE_CONFIG}"
   export B0_MANIFEST_PATH="${MANIFEST_B0}"
   export B1_MANIFEST_PATH="${MANIFEST_B1}"
@@ -585,6 +664,12 @@ PY
   export M_MANIFEST_PATH="${MANIFEST_M}"
   export EVE_VAL_MANIFEST_PATH="${MANIFEST_SELECTION}"
   export PAIR_TARGETS_PATH="${PAIR_TARGETS}"
+  if [[ "${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" == "1" ]]; then
+    export M_PAIR_SHUFFLE_MANIFEST_PATH="${MANIFEST_M_PAIR_SHUFFLE}"
+    export PAIR_SHUFFLE_TARGETS_PATH="${PAIR_SHUFFLE_TARGETS}"
+    export PAIR_SHUFFLE_PROOF_PATH="${PAIR_SHUFFLE_PROOF}"
+    export PAIR_SHUFFLE_SEED
+  fi
   export PAIR_LEDGER_PATH="${PAIR_LEDGER}"
   export PAIR_CALIBRATION_PATH="${PAIR_CALIBRATION}"
   export PAIR_DIAGNOSTICS_PATH="${PAIR_DIAGNOSTICS}"
@@ -593,6 +678,141 @@ PY
   export B0_AUXILIARY_MATCH_DIAGNOSTICS_PATH="${MANIFEST_B0_MATCH_DIAGNOSTICS}"
   export TEACHER_CHECKPOINT="${TEACHER_OUTPUT}/best_teacher.pt"
   export PAIR_TARGETS_TEACHER_SHA256
+  if [[ "${FITWAM_STRICT_COMMON_INIT_COMPARISON}" == "1" ]]; then
+    mkdir -p "${COMMON_INIT_ROOT}"
+    COMMON_INIT_CONFIG_TMP="${COMMON_INIT_CONFIG}.tmp"
+    python - \
+      "${SOURCE_CONFIG}" \
+      "${SOURCE_CHECKPOINT}" \
+      "${SOURCE_CHECKPOINT_SHA256}" \
+      "${COMMON_INIT_SEED}" \
+      "${COMMON_INIT_CONFIG_TMP}" <<'PY'
+import copy
+from pathlib import Path
+import sys
+
+import yaml
+
+
+source_path, baseline_path, baseline_sha256, raw_seed, output_path = sys.argv[1:]
+source = yaml.safe_load(Path(source_path).read_text(encoding="utf-8"))
+if not isinstance(source, dict) or not isinstance(source.get("model"), dict):
+    raise SystemExit("Resolved S0 config must contain a model mapping")
+model = copy.deepcopy(source["model"])
+model["skip_dit_load_from_pretrain"] = True
+model["offline_steer"] = {
+    "enabled": True,
+    "hidden_dim": 256,
+    "embedding_dim": 256,
+    "num_heads": 4,
+    "dropout": 0.0,
+    "detach_backbone_inputs": True,
+    "pair_loss_weight": 0.1,
+    "pair_loss_margin": 0.2,
+    "pair_loss_warmup_steps": 500,
+}
+payload = {
+    "seed": int(raw_seed),
+    "mixed_precision": source.get("mixed_precision", "bf16"),
+    "resume": str(Path(baseline_path).expanduser().resolve()),
+    "resume_experts": None,
+    "experiment_provenance": {
+        "source_checkpoint_sha256": baseline_sha256,
+    },
+    "model": model,
+}
+Path(output_path).write_text(
+    yaml.safe_dump(payload, allow_unicode=False, sort_keys=True),
+    encoding="utf-8",
+)
+PY
+    if [[ -e "${COMMON_INIT_CONFIG}" ]]; then
+      if ! cmp -s "${COMMON_INIT_CONFIG_TMP}" "${COMMON_INIT_CONFIG}"; then
+        echo \
+          "Existing common-init config differs: ${COMMON_INIT_CONFIG}. " \
+          "Use a new EVE_ROOT or COMMON_INIT_SEED." \
+          >&2
+        rm -f "${COMMON_INIT_CONFIG_TMP}"
+        exit 2
+      fi
+      rm -f "${COMMON_INIT_CONFIG_TMP}"
+    else
+      mv "${COMMON_INIT_CONFIG_TMP}" "${COMMON_INIT_CONFIG}"
+    fi
+
+    COMMON_INIT_PRESENT=0
+    for artifact in "${COMMON_INIT_WEIGHTS}" "${COMMON_INIT_PROOF}"; do
+      if [[ -e "${artifact}" ]]; then
+        COMMON_INIT_PRESENT=$((COMMON_INIT_PRESENT + 1))
+      fi
+    done
+    if [[ "${COMMON_INIT_PRESENT}" -eq 1 ]]; then
+      echo \
+        "Partial common-init artifacts exist; refusing an ambiguous strict comparison." \
+        >&2
+      exit 2
+    fi
+    COMMON_INIT_CONFIG_SHA256="$(hash_file "${COMMON_INIT_CONFIG}")"
+    if [[ "${COMMON_INIT_PRESENT}" -eq 0 ]]; then
+      python scripts/everobot/build_common_init_checkpoint.py \
+        --resolved-config "${COMMON_INIT_CONFIG}" \
+        --baseline-checkpoint "${SOURCE_CHECKPOINT}" \
+        --output "${COMMON_INIT_WEIGHTS}" \
+        --proof-output "${COMMON_INIT_PROOF}" \
+        --seed "${COMMON_INIT_SEED}" \
+        --device "${COMMON_INIT_DEVICE}" \
+        --expected-config-sha256 "${COMMON_INIT_CONFIG_SHA256}" \
+        --expected-baseline-sha256 "${SOURCE_CHECKPOINT_SHA256}"
+    fi
+    COMMON_INIT_WEIGHTS_SHA256="$(hash_file "${COMMON_INIT_WEIGHTS}")"
+    COMMON_INIT_PROOF_SHA256="$(hash_file "${COMMON_INIT_PROOF}")"
+    COMMON_INIT_BASELINE_SHA256="${SOURCE_CHECKPOINT_SHA256}"
+    python - \
+      "${COMMON_INIT_PROOF}" \
+      "${COMMON_INIT_WEIGHTS}" \
+      "${COMMON_INIT_CONFIG}" \
+      "${SOURCE_CHECKPOINT}" \
+      "${COMMON_INIT_SEED}" \
+      "${COMMON_INIT_WEIGHTS_SHA256}" \
+      "${COMMON_INIT_PROOF_SHA256}" \
+      "${COMMON_INIT_BASELINE_SHA256}" \
+      "${COMMON_INIT_CONFIG_SHA256}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+from scripts.everobot.preflight_offline_run import validate_common_init_proof
+
+
+(
+    proof_path,
+    weights_path,
+    config_path,
+    baseline_path,
+    raw_seed,
+    weights_sha256,
+    proof_sha256,
+    baseline_sha256,
+    config_sha256,
+) = sys.argv[1:]
+proof = Path(proof_path)
+validate_common_init_proof(
+    json.loads(proof.read_text(encoding="utf-8")),
+    proof_path=proof,
+    common_init_weights=Path(weights_path),
+    common_init_config=Path(config_path),
+    baseline_s0=Path(baseline_path),
+    seed=int(raw_seed),
+    expected_weights_sha256=weights_sha256,
+    expected_proof_file_sha256=proof_sha256,
+    expected_baseline_sha256=baseline_sha256,
+    expected_config_sha256=config_sha256,
+)
+PY
+    export COMMON_INIT_WEIGHTS COMMON_INIT_PROOF COMMON_INIT_CONFIG
+    export COMMON_INIT_SEED COMMON_INIT_WEIGHTS_SHA256 COMMON_INIT_PROOF_SHA256
+    export COMMON_INIT_BASELINE_SHA256 COMMON_INIT_CONFIG_SHA256
+  fi
   export PROTOCOL_BUNDLE_PATH="${EVE_ROOT}/protocol/offline_v1.json"
   EXECUTION_ENV="${EVE_ROOT}/protocol/offline_v1.env"
   mkdir -p "$(dirname "${EXECUTION_ENV}")"
@@ -604,6 +824,7 @@ PY
       BASE_DATASET \
       ROLLOUT_RAW \
       INIT_WEIGHTS \
+      SOURCE_CHECKPOINT \
       FASTWAM_SOURCE_CONFIG \
       SOURCE_BUNDLE_MANIFEST \
       FORMAL_VALIDATION_REPORT \
@@ -611,6 +832,7 @@ PY
       B1_MANIFEST_PATH \
       C_MANIFEST_PATH \
       M_MANIFEST_PATH \
+      M_PAIR_SHUFFLE_MANIFEST_PATH \
       EVE_VAL_MANIFEST_PATH \
       PAIR_LEDGER_PATH \
       PAIR_CALIBRATION_PATH \
@@ -618,9 +840,22 @@ PY
       PAIR_QUALITY_REPORT_PATH \
       PAIR_QUALITY_GATE_MODE \
       PAIR_QUALITY_GATE_STATUS \
+      FITWAM_STRICT_COMMON_INIT_COMPARISON \
+      FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL \
       STATE_LINE_AUDIT_INDEX_PATH \
       B0_AUXILIARY_MATCH_DIAGNOSTICS_PATH \
       PAIR_TARGETS_PATH \
+      PAIR_SHUFFLE_TARGETS_PATH \
+      PAIR_SHUFFLE_PROOF_PATH \
+      PAIR_SHUFFLE_SEED \
+      COMMON_INIT_WEIGHTS \
+      COMMON_INIT_PROOF \
+      COMMON_INIT_CONFIG \
+      COMMON_INIT_SEED \
+      COMMON_INIT_WEIGHTS_SHA256 \
+      COMMON_INIT_PROOF_SHA256 \
+      COMMON_INIT_BASELINE_SHA256 \
+      COMMON_INIT_CONFIG_SHA256 \
       TEACHER_CHECKPOINT \
       PAIR_TARGETS_TEACHER_SHA256 \
       PROTOCOL_BUNDLE_PATH \
@@ -665,5 +900,14 @@ echo "[offline-prepare] selection=${MANIFEST_SELECTION}"
 if [[ "${SKIP_TEACHER}" != "1" ]]; then
   echo "[offline-prepare] M=${MANIFEST_M}"
   echo "[offline-prepare] pair_targets=${PAIR_TARGETS}"
+  if [[ "${FITWAM_ENABLE_PAIR_SHUFFLE_CONTROL}" == "1" ]]; then
+    echo "[offline-prepare] M_PAIR_SHUFFLE=${MANIFEST_M_PAIR_SHUFFLE}"
+    echo "[offline-prepare] pair_shuffle_targets=${PAIR_SHUFFLE_TARGETS}"
+    echo "[offline-prepare] pair_shuffle_proof=${PAIR_SHUFFLE_PROOF}"
+  fi
+  if [[ "${FITWAM_STRICT_COMMON_INIT_COMPARISON}" == "1" ]]; then
+    echo "[offline-prepare] common_init_weights=${COMMON_INIT_WEIGHTS}"
+    echo "[offline-prepare] common_init_proof=${COMMON_INIT_PROOF}"
+  fi
   echo "[offline-prepare] execution_env=${EXECUTION_ENV}"
 fi

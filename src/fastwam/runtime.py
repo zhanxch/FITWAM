@@ -1,6 +1,7 @@
 import logging
 import os
 import inspect
+import random
 from pathlib import Path
 
 import torch
@@ -407,6 +408,15 @@ def _resolve_train_device() -> str:
     return f"cuda:{local_rank}"
 
 
+def _seed_model_initialization(seed: int) -> None:
+    """Seed every rank identically before constructing trainable modules."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def run_training(cfg: DictConfig):
     setup_logging(
         log_level=logging.INFO,
@@ -420,6 +430,7 @@ def run_training(cfg: DictConfig):
     model_device = _resolve_train_device()
     mixed_precision = _normalize_mixed_precision(cfg.mixed_precision)
     model_dtype = _mixed_precision_to_model_dtype(mixed_precision)
+    _seed_model_initialization(int(cfg.seed))
     model = instantiate(cfg.model, model_dtype=model_dtype, device=model_device)
     train_ds, val_ds = build_datasets(cfg.data)
 
