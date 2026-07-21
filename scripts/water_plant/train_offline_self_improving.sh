@@ -338,7 +338,77 @@ else
   export PROTOCOL_BUNDLE_PATH="${PROTOCOL_BUNDLE_PATH}.${PREFORMAL_MODE}"
 fi
 
+REUSED_PREFLIGHT_REPORT="${FITWAM_REUSE_PREFLIGHT_REPORT:-}"
+if [[ -n "${REUSED_PREFLIGHT_REPORT}" ]]; then
+  if [[ "${STRICT_COMMON_INIT_FOR_SELECTED}" != "1" ]]; then
+    echo "Pinned preflight reuse is limited to strict common-init comparisons." >&2
+    exit 2
+  fi
+  python - \
+    "${REUSED_PREFLIGHT_REPORT}" \
+    "${FITWAM_REUSE_PREFLIGHT_REPORT_SHA256:-}" \
+    "${VARIANT}" \
+    "${PREFORMAL_MODE}" \
+    "${PROTOCOL_BUNDLE_PATH}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1]).expanduser().resolve()
+expected_sha256, variant, execution_mode = sys.argv[2:5]
+protocol_bundle = str(pathlib.Path(sys.argv[5]).expanduser().resolve())
+
+if not expected_sha256:
+    raise SystemExit("FITWAM_REUSE_PREFLIGHT_REPORT_SHA256 is required")
+payload = report_path.read_bytes()
+actual_sha256 = hashlib.sha256(payload).hexdigest()
+if actual_sha256 != expected_sha256:
+    raise SystemExit(
+        f"reused preflight SHA256 mismatch: {actual_sha256} != {expected_sha256}"
+    )
+report = json.loads(payload)
+expected = {
+    "status": "passed",
+    "variant": variant,
+    "execution_mode": execution_mode,
+    "protocol_bundle": protocol_bundle,
+}
+for key, value in expected.items():
+    observed = report.get(key)
+    if observed != value:
+        raise SystemExit(
+            f"reused preflight {key} mismatch: {observed!r} != {value!r}"
+        )
+print(f"[offline] validated pinned preflight report {report_path}")
+PY
+fi
+
 hash_file() {
+  if [[ -n "${REUSED_PREFLIGHT_REPORT}" ]]; then
+    case "$1" in
+      "${INIT_WEIGHTS}"|"${SOURCE_CHECKPOINT}")
+        printf '%s\n' "${COMMON_INIT_BASELINE_SHA256}"
+        return
+        ;;
+      "${COMMON_INIT_WEIGHTS}")
+        printf '%s\n' "${COMMON_INIT_WEIGHTS_SHA256}"
+        return
+        ;;
+      "${COMMON_INIT_PROOF}")
+        printf '%s\n' "${COMMON_INIT_PROOF_SHA256}"
+        return
+        ;;
+      "${COMMON_INIT_CONFIG}")
+        printf '%s\n' "${COMMON_INIT_CONFIG_SHA256}"
+        return
+        ;;
+      "${TEACHER_CHECKPOINT}")
+        printf '%s\n' "${PAIR_TARGETS_TEACHER_SHA256}"
+        return
+        ;;
+    esac
+  fi
   python - "$1" <<'PY'
 import hashlib
 from pathlib import Path
@@ -673,31 +743,47 @@ if [[ "${STRICT_COMMON_INIT_FOR_SELECTED}" == "1" ]]; then
   )
 fi
 
-python scripts/everobot/preflight_offline_run.py \
-  --variant "${VARIANT}" \
-  --manifest "${EVE_MANIFEST_PATH}" \
-  --selection-manifest "${EVE_VAL_MANIFEST_PATH}" \
-  "${PROTOCOL_MANIFEST_ARGS[@]}" \
-  "${RESOLVED_CONFIG_ARGS[@]}" \
-  --init-weights "${INIT_WEIGHTS}" \
-  --source-checkpoint "${SOURCE_CHECKPOINT}" \
-  "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" \
-  --source-config "${FASTWAM_SOURCE_CONFIG}" \
-  --source-bundle-manifest "${SOURCE_BUNDLE_MANIFEST}" \
-  --pair-targets "${PAIR_TARGETS_ARTIFACT_PATH}" \
-  "${PAIR_SHUFFLE_PREFLIGHT_ARGS[@]+"${PAIR_SHUFFLE_PREFLIGHT_ARGS[@]}"}" \
-  "${COMMON_INIT_PREFLIGHT_ARGS[@]+"${COMMON_INIT_PREFLIGHT_ARGS[@]}"}" \
-  --teacher-checkpoint "${TEACHER_CHECKPOINT}" \
-  --expected-teacher-sha256 "${TEACHER_FILE_SHA256}" \
-  --expected-normalization-bundle-sha256 "${NORM_STATS_BUNDLE_SHA256}" \
-  --expected-text-cache-sha256 "${TEXT_EMBEDDING_CACHE_SHA256}" \
-  --protocol-bundle "${PROTOCOL_BUNDLE_PATH}" \
-  --execution-mode "${PREFORMAL_MODE}" \
-  --gpus "${CUDA_VISIBLE_DEVICES}" \
-  --disk-root "${FITWAM_DISK_ROOT:-/data_all}" \
-  --min-disk-free-gib "${MIN_DISK_FREE_GIB}" \
-  "${SYSTEM_CHECK_ARGS[@]+"${SYSTEM_CHECK_ARGS[@]}"}" \
-  --output "${PREFLIGHT_REPORT}"
+if [[ -n "${REUSED_PREFLIGHT_REPORT}" ]]; then
+  python - "${REUSED_PREFLIGHT_REPORT}" "${EVE_MANIFEST_PATH}" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+manifest = str(pathlib.Path(sys.argv[2]).expanduser().resolve())
+if report.get("manifest") != manifest:
+    raise SystemExit(
+        f"reused preflight manifest mismatch: {report.get('manifest')!r} != {manifest!r}"
+    )
+PY
+  cp "${REUSED_PREFLIGHT_REPORT}" "${PREFLIGHT_REPORT}"
+else
+  python scripts/everobot/preflight_offline_run.py \
+    --variant "${VARIANT}" \
+    --manifest "${EVE_MANIFEST_PATH}" \
+    --selection-manifest "${EVE_VAL_MANIFEST_PATH}" \
+    "${PROTOCOL_MANIFEST_ARGS[@]}" \
+    "${RESOLVED_CONFIG_ARGS[@]}" \
+    --init-weights "${INIT_WEIGHTS}" \
+    --source-checkpoint "${SOURCE_CHECKPOINT}" \
+    "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" \
+    --source-config "${FASTWAM_SOURCE_CONFIG}" \
+    --source-bundle-manifest "${SOURCE_BUNDLE_MANIFEST}" \
+    --pair-targets "${PAIR_TARGETS_ARTIFACT_PATH}" \
+    "${PAIR_SHUFFLE_PREFLIGHT_ARGS[@]+"${PAIR_SHUFFLE_PREFLIGHT_ARGS[@]}"}" \
+    "${COMMON_INIT_PREFLIGHT_ARGS[@]+"${COMMON_INIT_PREFLIGHT_ARGS[@]}"}" \
+    --teacher-checkpoint "${TEACHER_CHECKPOINT}" \
+    --expected-teacher-sha256 "${TEACHER_FILE_SHA256}" \
+    --expected-normalization-bundle-sha256 "${NORM_STATS_BUNDLE_SHA256}" \
+    --expected-text-cache-sha256 "${TEXT_EMBEDDING_CACHE_SHA256}" \
+    --protocol-bundle "${PROTOCOL_BUNDLE_PATH}" \
+    --execution-mode "${PREFORMAL_MODE}" \
+    --gpus "${CUDA_VISIBLE_DEVICES}" \
+    --disk-root "${FITWAM_DISK_ROOT:-/data_all}" \
+    --min-disk-free-gib "${MIN_DISK_FREE_GIB}" \
+    "${SYSTEM_CHECK_ARGS[@]+"${SYSTEM_CHECK_ARGS[@]}"}" \
+    --output "${PREFLIGHT_REPORT}"
+fi
 
 echo "[offline] preflight=${PREFLIGHT_REPORT}"
 echo "[offline] variant=${VARIANT} run_id=${RUN_ID} gpus=${CUDA_VISIBLE_DEVICES}"

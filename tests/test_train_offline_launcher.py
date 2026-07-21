@@ -222,6 +222,20 @@ class TrainOfflineLauncherTest(unittest.TestCase):
             text,
         )
 
+    def test_reused_preflight_must_be_pinned_and_match_the_run(self) -> None:
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("FITWAM_REUSE_PREFLIGHT_REPORT", text)
+        self.assertIn("FITWAM_REUSE_PREFLIGHT_REPORT_SHA256 is required", text)
+        self.assertIn("reused preflight SHA256 mismatch", text)
+        for field in (
+            '"status": "passed"',
+            '"variant": variant',
+            '"execution_mode": execution_mode',
+            '"protocol_bundle": protocol_bundle',
+        ):
+            self.assertIn(field, text)
+        self.assertIn("reused preflight manifest mismatch", text)
+
     def test_prepare_freezes_training_inputs_and_writes_reusable_env(self) -> None:
         text = PREPARE.read_text(encoding="utf-8")
         self.assertIn('export ROLLOUT_RAW="${ROLLOUT_DATASET}"', text)
