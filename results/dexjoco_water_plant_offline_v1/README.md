@@ -31,8 +31,8 @@ On the separate E1 fresh seeds `20262000..20262199`, fixed step-6000 B1 scored
 `p=0.511`). E1 therefore did not confirm the E0 gain. The matching S0 source
 policy scored `150/200 = 75.0%`. Paired B1-S0 was `+10.0pp` (95% CI
 `[+2.5pp, +17.5pp]`, McNemar `p=0.0169`); paired M-S0 was `+12.5pp` (95% CI
-`[+5.5pp, +19.5pp]`, `p=0.00126`). Steer-intervention controls remain required
-before a causal claim. Machine-readable E1 statistics are in
+`[+5.5pp, +19.5pp]`, `p=0.00126`). These efficacy results do not establish a
+causal benefit from episode-specific steer content. Machine-readable E1 statistics are in
 [`fresh_seed_confirmation_200.json`](./fresh_seed_confirmation_200.json) and
 [`fresh_seed_confirmation_200.csv`](./fresh_seed_confirmation_200.csv).
 

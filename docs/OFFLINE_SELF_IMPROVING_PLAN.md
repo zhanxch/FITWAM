@@ -126,9 +126,9 @@ builder 不直接用于正式训练。
 ## Gate
 
 1. **实现正确：** failure text 不进模型；failure sample 的直接 action loss 为零；Teacher 先冻结再训练 Student；Teacher/Student/residual branch 的梯度路径符合设计；推理接口没有 outcome。
-2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 S0 和 B1 都至少提高 4pp，且 paired CI 下界不低于 0。
-3. **Steer 因果性：** E1 上 learned steer 相对 residual bypass 和 cross-episode shuffled steer 都至少提高 4pp；E2 上 M 相对严格 M-pair-shuffle 满足同一 gate。
-4. **数据冻结：** E1 前完成 W-state/W-tail-state 审计。只有发现系统性无效尾段时才训练四臂并切换 extractor；否则 W-state 冻结到 multi-round 完成。
+2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 B1 为 `+2.5pp`，95% CI 包含 0，因此该 gate 未通过；strict E2 继续使用同一 `+4pp` 与非负 CI 下界标准。
+3. **Steer 因果性：** E1 learned steer 明显优于 bypass，但不优于 cross-episode shuffled steer；E2 上 M 相对严格 M-pair-shuffle 仍需满足 `+4pp` 与非负 CI 下界标准。
+4. **数据冻结：** strict E2 或 multi-round 前完成 W-state/W-tail-state 审计。只有发现系统性无效尾段时才训练四臂并切换 extractor；否则 W-state 冻结到 multi-round 完成。
 5. **自改进：** R0->R1 的 new-data continuation 必须同时优于 no-update 和 old-data-extra-step；只有 R1->R2 再次提高才称为 multi-round。
 6. **加固：** Water Plant 完成 R1->R2 后复现 Hammer Nail，并分阶段增加 training seeds；
    若 Water Plant 无法继续采到足够 failure，则提前把迭代闭环迁移到 Hammer Nail。
@@ -158,11 +158,11 @@ checkpoint rule；E1 固定使用两侧共同的 step 6000，并完整保留 E0 
 训练数据 collection seeds 为 `20260718..20260917`；当前 200 次评估使用
 `20261000..20261199`，两者没有重叠。因此现有结果不存在直接的 rollout-seed
 训练泄漏。由于多个 checkpoint 已在这组评估 seeds 上被比较，它从此只作为开发评估集。
-下一组确认 seeds 固定为 `20262000..20262199`。
+E1 确认 seeds 为 `20262000..20262199`，已经完成并冻结为只读评估集。
 
 机器可读统计位于
 [`results/dexjoco_water_plant_offline_v1/`](../results/dexjoco_water_plant_offline_v1/)。
-现有两个 200-result CSV 只含汇总统计；提交前还需导出不含私人路径的 seed-level
+现有公开 CSV 只含汇总统计；提交前还需导出不含私人路径的 seed-level
 outcomes、checkpoint hashes、discordant counts 和 bootstrap seed，使 paired statistics
 可独立复算。
 
@@ -182,13 +182,12 @@ round state，因此该数字只作为并行候选证据，不与 E1 合并，�
 
 ## 下一阶段
 
-1. **Freeze + data audit：** 保存当前 M/B1/checkpoint/manifest hashes；先做不占 GPU 的
-   W-state/W-tail-state 差异审计。若没有系统性污染，冻结 W-state，不训练 tail variants。
-2. **E1 causal completion：** 同 seed S0 已完成；在同一 M-6000 checkpoint 上评估
-   exact bypass 和 cross-episode shuffled steer。结果分别为 `10.0%` 和 `88.0%`，
-   learned 为 `87.5%`。当前 steer 通路本身是必要的，但 episode-specific token 内容
-   没有显示额外作用。Learned M/B1 已完成，不重测 B0/C/T/5000/6500 或
-   validation-best。
+1. **Freeze + data audit：** 当前 M/B1/checkpoint/manifest hashes 已冻结；W-state/W-tail-state
+   差异审计与视频复核不占 GPU，并行进行，不阻塞 strict pair-shuffle。
+2. **E1 causal completion：** S0、learned、exact bypass 和 cross-episode shuffled steer
+   已完成。结果分别为 `75.0%`、`87.5%`、`10.0%` 和 `88.0%`。当前 steer 通路本身
+   是必要的，但 episode-specific token 内容没有显示额外作用；不重测 B0/C/T/5000/6500
+   或 validation-best。
 3. **Pair causality + efficacy confirmation：** 现有 M 的新增 Student/residual 在全局 seed 生效前初始化，不能与
    新训练的 pair-shuffle 构成严格初始化对照。修复初始化顺序后，先序列化一份共同初始
    weights，再由它分别训练 M 与 M-pair-shuffle；固定比较 step 6000，并在独立 E2 的

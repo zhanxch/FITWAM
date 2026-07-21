@@ -15,10 +15,10 @@ Historical pilots are retained with their evidence status. Only rows with restor
 | water_plant | text-failure pilot, step 11000 | 81.0% | 81 / 100 | -- | historical pilot | Training provenance is incomplete in this checkout. |
 | water_plant | text-failure pilot, step 12240 | 82.0% | 82 / 100 | -- | historical raw count | Training provenance is incomplete and the protocol differs from the controlled continuation study. |
 | water_plant | rollout text-failure LoRA continuation | 81.5% | 163 / 200 | -- | historical raw count | Continued from the success-only source policy. |
-| water_plant | B1 failure-video control, step 6500 | 90.0% | 45 / 50 | -- | controlled checkpoint screening | Paired seeds, replan 25; protocol and artifacts validated with per-episode records and provenance hashes. |
-| water_plant | B0 success-only control, step 6500 | 80.0% | 40 / 50 | -- | controlled checkpoint screening | `B0 - B1 = -10pp`, paired bootstrap CI `[-24pp, +4pp]`. |
-| water_plant | C residual-only, step 6500 | 74.0% | 37 / 50 | -- | controlled checkpoint screening | `C - B1 = -16pp`, paired bootstrap CI `[-30pp, -2pp]`. |
-| water_plant | M contrastive steer, step 6500 | 90.0% | 45 / 50 | -- | controlled checkpoint screening | `M - B1 = 0pp`, paired bootstrap CI `[-10pp, +10pp]`; the +4pp gate did not pass. |
+| water_plant | B1 failure-video control, E0 step 6500 | 87.0% | 174 / 200 | -- | development checkpoint screening | Paired seeds, replan 25; this E0 set was used to screen checkpoints. |
+| water_plant | B0 success-only control, E0 step 6500 | 79.5% | 159 / 200 | -- | development checkpoint screening | Same checkpoint step and paired E0 seeds as B1. |
+| water_plant | C residual-only, E0 step 6500 | 74.5% | 149 / 200 | -- | development checkpoint screening | Same checkpoint step and paired E0 seeds as B1. |
+| water_plant | M contrastive steer, E0 step 6500 | 87.5% | 175 / 200 | -- | development checkpoint screening | `M - B1 = +0.5pp`, 95% paired bootstrap CI `[-4.5pp, +5.5pp]`; the +4pp gate did not pass. |
 | water_plant | S0 source policy, E1 step 6500 | 75.0% | 150 / 200 | -- | fresh-seed reference | Seeds `20262000..20262199`, replan 25, max environment steps 1500. |
 | water_plant | B1 failure-video control, E1 step 6000 | 85.0% | 170 / 200 | -- | fresh-seed confirmation | `B1 - S0 = +10.0pp`, 95% paired CI `[+2.5pp, +17.5pp]`, McNemar `p=0.0169`. |
 | water_plant | M contrastive steer, E1 step 6000 | 87.5% | 175 / 200 | -- | fresh-seed confirmation | `M - B1 = +2.5pp`, 95% paired CI `[-3.5pp, +8.5pp]`, McNemar `p=0.511`; the +4pp gate did not pass. |

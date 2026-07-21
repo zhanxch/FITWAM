@@ -272,9 +272,9 @@ papers/II/
 
 ## 当前 TODO
 
-1. M1：保留 `water_plant` 历史 pilot；B0/B1 的 200-episode 配对筛选已完成，下一步做多训练 seed 复现。
+1. M1：保留 `water_plant` 历史 pilot；B0/B1 的 200-episode 配对筛选与 E1 fresh-seed 复核已完成。
 2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
-3. M3：首轮 offline contrastive steer 已实现；E1 fixed-step efficacy gate 未通过，下一步完成 S0、推理干预和共同初始化 pair-shuffle 因果对照。
+3. M3：首轮 offline contrastive steer 已实现；S0 与推理干预已完成，E1 fixed-step efficacy gate 未通过；下一步完成共同初始化 M/M-pair-shuffle 与独立 E2 对照。
 4. M4：M3 的 efficacy 与 causality gate 通过后，再用冻结协议完成多轮 rollout -> append -> retrain。
 5. M5：M3/M4 通过后，再参考 RL Token 更新 online steer，并参考 World Guidance / AdaJEPA 做 adaptive key-frame 或 tactile prediction 与 world-expert update。
 6. M6：真机实验和触觉模块。

@@ -8,5 +8,5 @@
 
 | Comparison | Delta | 95% paired bootstrap CI | Exact McNemar p |
 | --- | ---: | ---: | ---: |
-| bypass_vs_learned | -77.5% | [-83.5%, -71.5%] | 1.72973e-45 |
-| shuffled_vs_learned | +0.5% | [-5.0%, +6.0%] | 1 |
+| bypass_vs_learned | -77.5pp | [-83.5pp, -71.5pp] | 1.72973e-45 |
+| shuffled_vs_learned | +0.5pp | [-5.0pp, +6.0pp] | 1 |
