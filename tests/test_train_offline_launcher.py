@@ -104,6 +104,18 @@ class TrainOfflineLauncherTest(unittest.TestCase):
         self.assertIn("strict_common_init_pair_shuffle", text)
         self.assertIn("COMMON_INIT_PREFLIGHT_ARGS=()", text)
 
+    def test_c_can_use_the_frozen_common_initialization(self) -> None:
+        historical = self.run_validation(variant="C")
+        strict = self.run_validation(variant="C", strict_common_init=True)
+        self.assertEqual(historical.returncode, 0, historical.stderr)
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn(
+            '( "${VARIANT}" == "C" || "${VARIANT}" == "M" ||',
+            text,
+        )
+        self.assertIn("C|M|M_PAIR_SHUFFLE)", text)
+
     def test_protocol_overrides_are_rejected(self) -> None:
         for override in (
             "model.offline_steer.enabled=true",

@@ -33,6 +33,7 @@ BASE_VARIANTS = {"B0", "B1", "C", "M"}
 PAIR_SHUFFLE_VARIANT = "M_PAIR_SHUFFLE"
 VARIANTS = BASE_VARIANTS | {PAIR_SHUFFLE_VARIANT}
 PAIR_VARIANTS = {"M", "M_PAIR_SHUFFLE"}
+COMMON_INIT_VARIANTS = {"C", *PAIR_VARIANTS}
 BUNDLE_FORMAT = "FITWAMOfflineProtocolBundle"
 BUNDLE_VERSION = 4
 PAIR_SHUFFLE_PROOF_FORMAT = "FastWAMPairShuffleControl"
@@ -835,9 +836,10 @@ def validate_common_init_arguments(
         raise ValueError(
             "M_PAIR_SHUFFLE requires --strict-common-init-comparison"
         )
-    if strict_mode and variant not in PAIR_VARIANTS:
+    if strict_mode and variant not in COMMON_INIT_VARIANTS:
         raise ValueError(
-            "Strict common-init comparison is only valid for M or M_PAIR_SHUFFLE"
+            "Strict common-init comparison is only valid for C, M, or "
+            "M_PAIR_SHUFFLE"
         )
     if strict_mode and any(value is None for value in common_init_values):
         raise ValueError(
@@ -1080,6 +1082,50 @@ def validate_protocol_matrix(
             )
         )
     return reports, reference
+
+
+def validate_pair_stripped_sample_equivalence(
+    control_manifest: Mapping[str, Any],
+    pair_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Prove that pair supervision is the only row-level data difference."""
+
+    ignored_fields = {"pair_id", "pair_weight"}
+
+    def stripped_rows(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                key: copy.deepcopy(value)
+                for key, value in sample.items()
+                if key not in ignored_fields
+            }
+            for sample in manifest.get("samples", [])
+        ]
+
+    control_rows = stripped_rows(control_manifest)
+    pair_rows = stripped_rows(pair_manifest)
+    if control_rows != pair_rows:
+        first_mismatch = next(
+            (
+                index
+                for index, (control, paired) in enumerate(
+                    zip(control_rows, pair_rows)
+                )
+                if control != paired
+            ),
+            min(len(control_rows), len(pair_rows)),
+        )
+        raise ValueError(
+            "Strict common-init comparison requires B1 and pair variants to "
+            "have identical sample rows after removing pair_id/pair_weight; "
+            f"first_mismatch={first_mismatch}, B1_count={len(control_rows)}, "
+            f"pair_count={len(pair_rows)}"
+        )
+    return {
+        "sample_count": len(control_rows),
+        "ignored_fields": sorted(ignored_fields),
+        "pair_stripped_sample_sha256": sha256_json(control_rows),
+    }
 
 
 def _expect_equal(actual: Any, expected: Any, label: str) -> None:
@@ -1389,8 +1435,8 @@ def validate_resolved_config(
         raise ValueError(
             "M_PAIR_SHUFFLE cannot be validated outside strict common-init mode"
         )
-    strict_pair_variant = strict_common_init and variant in PAIR_VARIANTS
-    if strict_pair_variant and common_init_report is None:
+    strict_common_variant = strict_common_init and variant in COMMON_INIT_VARIANTS
+    if strict_common_variant and common_init_report is None:
         raise ValueError(f"{variant} strict comparison requires common-init proof")
     training_inputs = validate_training_data_contract(
         payload,
@@ -1545,7 +1591,7 @@ def validate_resolved_config(
         "common_init_config_sha256",
         "common_init_seed",
     }
-    if strict_pair_variant:
+    if strict_common_variant:
         assert common_init_report is not None
         strict_provenance = {
             "comparison_mode": STRICT_COMMON_INIT_MODE,
@@ -1625,7 +1671,7 @@ def validate_resolved_config(
         "manifest": str(manifest_path),
         "selection_manifest": str(selection_manifest_path),
         "initialization_mode": (
-            "common_init" if strict_pair_variant else "s0"
+            "common_init" if strict_common_variant else "s0"
         ),
         "init_weights": str(init_weights),
         "init_weights_sha256": init_weights_sha256,
@@ -1933,6 +1979,10 @@ def build_protocol_bundle(
                 "primary_identity_sha256"
             ],
         }
+        if "pair_stripped_sample_sha256" in manifest_reports[variant]:
+            payload["manifests"][variant]["pair_stripped_sample_sha256"] = (
+                manifest_reports[variant]["pair_stripped_sample_sha256"]
+            )
     pair_shuffle_values = (
         pair_shuffle_targets,
         pair_shuffle_proof,
@@ -2279,6 +2329,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             pair_shuffle_targets=pair_shuffle_store,
             include_pair_shuffle_control=include_pair_shuffle_control,
         )
+        strict_sample_equivalence: dict[str, dict[str, Any]] = {}
+        if args.strict_common_init_comparison:
+            for pair_variant in sorted(PAIR_VARIANTS.intersection(manifests)):
+                equivalence = validate_pair_stripped_sample_equivalence(
+                    manifests["B1"],
+                    manifests[pair_variant],
+                )
+                strict_sample_equivalence[pair_variant] = equivalence
+                manifest_reports[pair_variant][
+                    "pair_stripped_sample_sha256"
+                ] = equivalence["pair_stripped_sample_sha256"]
+            manifest_reports["B1"]["pair_stripped_sample_sha256"] = (
+                strict_sample_equivalence["M"]["pair_stripped_sample_sha256"]
+            )
         selection_report, selection_identities = validate_selection_manifest(
             selection_manifest,
             training_manifests=manifests,
@@ -2364,11 +2428,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         code_snapshot_sha256 = str(code_snapshot["snapshot_sha256"])
         resolved_config_reports: dict[str, dict[str, Any]] = {}
         for variant in sorted(active_variants):
-            strict_pair_variant = (
-                args.strict_common_init_comparison and variant in PAIR_VARIANTS
+            strict_common_variant = (
+                args.strict_common_init_comparison
+                and variant in COMMON_INIT_VARIANTS
             )
             variant_init_weights = (
-                common_init_weights if strict_pair_variant else init_weights
+                common_init_weights if strict_common_variant else init_weights
             )
             if variant_init_weights is None:
                 raise ValueError(f"{variant} is missing common-init weights")
@@ -2550,6 +2615,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "protocol_bundle_status": bundle_status,
             "protocol_bundle_sha256": bundle["bundle_sha256"],
             "protocol_matrix": manifest_reports,
+            "strict_sample_equivalence": strict_sample_equivalence,
             "resolved_configs": resolved_config_reports,
             "protocol": protocol,
             "datasets": datasets,

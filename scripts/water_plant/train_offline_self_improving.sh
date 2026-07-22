@@ -33,7 +33,8 @@ if [[ "${VARIANT}" == "M_PAIR_SHUFFLE" && \
 fi
 STRICT_COMMON_INIT_FOR_SELECTED=0
 if [[ "${STRICT_COMMON_INIT_COMPARISON}" == "1" && \
-      ( "${VARIANT}" == "M" || "${VARIANT}" == "M_PAIR_SHUFFLE" ) ]]; then
+      ( "${VARIANT}" == "C" || "${VARIANT}" == "M" || \
+        "${VARIANT}" == "M_PAIR_SHUFFLE" ) ]]; then
   STRICT_COMMON_INIT_FOR_SELECTED=1
 fi
 INCLUDE_PAIR_SHUFFLE_CONTROL=0
@@ -240,14 +241,14 @@ if [[ ! -f "${SOURCE_CHECKPOINT}" ]]; then
 fi
 SELECTED_INIT_WEIGHTS="${INIT_WEIGHTS}"
 if [[ "${STRICT_COMMON_INIT_FOR_SELECTED}" == "1" ]]; then
-  export COMMON_INIT_WEIGHTS="${COMMON_INIT_WEIGHTS:?Strict M comparison requires COMMON_INIT_WEIGHTS}"
-  export COMMON_INIT_PROOF="${COMMON_INIT_PROOF:?Strict M comparison requires COMMON_INIT_PROOF}"
-  export COMMON_INIT_CONFIG="${COMMON_INIT_CONFIG:?Strict M comparison requires COMMON_INIT_CONFIG}"
-  export COMMON_INIT_SEED="${COMMON_INIT_SEED:?Strict M comparison requires COMMON_INIT_SEED}"
-  export COMMON_INIT_WEIGHTS_SHA256="${COMMON_INIT_WEIGHTS_SHA256:?Strict M comparison requires COMMON_INIT_WEIGHTS_SHA256}"
-  export COMMON_INIT_PROOF_SHA256="${COMMON_INIT_PROOF_SHA256:?Strict M comparison requires COMMON_INIT_PROOF_SHA256}"
-  export COMMON_INIT_BASELINE_SHA256="${COMMON_INIT_BASELINE_SHA256:?Strict M comparison requires COMMON_INIT_BASELINE_SHA256}"
-  export COMMON_INIT_CONFIG_SHA256="${COMMON_INIT_CONFIG_SHA256:?Strict M comparison requires COMMON_INIT_CONFIG_SHA256}"
+  export COMMON_INIT_WEIGHTS="${COMMON_INIT_WEIGHTS:?Strict common-init comparison requires COMMON_INIT_WEIGHTS}"
+  export COMMON_INIT_PROOF="${COMMON_INIT_PROOF:?Strict common-init comparison requires COMMON_INIT_PROOF}"
+  export COMMON_INIT_CONFIG="${COMMON_INIT_CONFIG:?Strict common-init comparison requires COMMON_INIT_CONFIG}"
+  export COMMON_INIT_SEED="${COMMON_INIT_SEED:?Strict common-init comparison requires COMMON_INIT_SEED}"
+  export COMMON_INIT_WEIGHTS_SHA256="${COMMON_INIT_WEIGHTS_SHA256:?Strict common-init comparison requires COMMON_INIT_WEIGHTS_SHA256}"
+  export COMMON_INIT_PROOF_SHA256="${COMMON_INIT_PROOF_SHA256:?Strict common-init comparison requires COMMON_INIT_PROOF_SHA256}"
+  export COMMON_INIT_BASELINE_SHA256="${COMMON_INIT_BASELINE_SHA256:?Strict common-init comparison requires COMMON_INIT_BASELINE_SHA256}"
+  export COMMON_INIT_CONFIG_SHA256="${COMMON_INIT_CONFIG_SHA256:?Strict common-init comparison requires COMMON_INIT_CONFIG_SHA256}"
   for common_artifact in \
     "${COMMON_INIT_WEIGHTS}" \
     "${COMMON_INIT_PROOF}" \
@@ -501,7 +502,7 @@ pair_targets_for_variant() {
 
 init_weights_for_variant() {
   case "$1" in
-    M|M_PAIR_SHUFFLE)
+    C|M|M_PAIR_SHUFFLE)
       if [[ "${STRICT_COMMON_INIT_FOR_SELECTED}" == "1" ]]; then
         printf '%s\n' "${COMMON_INIT_WEIGHTS}"
       else
@@ -584,7 +585,8 @@ generate_resolved_config() (
   export FASTWAM_RESUME="${init_weights_path}"
   export FASTWAM_RESUME_SHA256="$(hash_file "${init_weights_path}")"
   if [[ "${STRICT_COMMON_INIT_FOR_SELECTED}" == "1" && \
-        ( "${protocol_variant}" == "M" || \
+        ( "${protocol_variant}" == "C" || \
+          "${protocol_variant}" == "M" || \
           "${protocol_variant}" == "M_PAIR_SHUFFLE" ) ]]; then
     COMMON_INIT_PAYLOAD_PROOF_SHA256="$(
       python - "${COMMON_INIT_PROOF}" <<'PY'

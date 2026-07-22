@@ -567,6 +567,11 @@ class PreflightOfflineRunTest(unittest.TestCase):
             common_init_values=values,
         )
         preflight_offline_run.validate_common_init_arguments(
+            variant="C",
+            strict_mode=True,
+            common_init_values=values,
+        )
+        preflight_offline_run.validate_common_init_arguments(
             variant="M_PAIR_SHUFFLE",
             strict_mode=True,
             common_init_values=values,
@@ -910,6 +915,29 @@ class PreflightOfflineRunTest(unittest.TestCase):
                 targets=targets,
                 pair_shuffle_targets=shuffled_targets,
                 include_pair_shuffle_control=True,
+            )
+
+    def test_strict_pair_comparison_allows_only_pair_fields_to_differ(self) -> None:
+        paired, _, _, _ = pair_control_fixture()
+        control = json.loads(json.dumps(paired))
+        for row in control["samples"]:
+            row.pop("pair_id", None)
+            row.pop("pair_weight", None)
+        control = manifest(control["samples"])
+
+        report = preflight_offline_run.validate_pair_stripped_sample_equivalence(
+            control,
+            paired,
+        )
+        self.assertEqual(report["sample_count"], len(control["samples"]))
+        self.assertEqual(len(report["pair_stripped_sample_sha256"]), 64)
+
+        drifted = json.loads(json.dumps(paired))
+        drifted["samples"][1]["end_frame"] += 1
+        with self.assertRaisesRegex(ValueError, "identical sample rows"):
+            preflight_offline_run.validate_pair_stripped_sample_equivalence(
+                control,
+                drifted,
             )
 
     def test_resume_state_must_be_complete_directory(self) -> None:
@@ -1315,6 +1343,35 @@ class PreflightOfflineRunTest(unittest.TestCase):
                 **strict_kwargs,
             )
             self.assertEqual(strict_m_report["initialization_mode"], "common_init")
+
+            strict_c_payload = json.loads(json.dumps(strict_payload))
+            strict_c_payload["model"]["offline_steer"].update(
+                {
+                    "pair_loss_weight": 0.0,
+                    "pair_loss_warmup_steps": 0,
+                }
+            )
+            strict_c_payload["data"]["train"].update(
+                {
+                    "pair_targets_path": None,
+                    "expected_teacher_sha256": None,
+                }
+            )
+            strict_c_payload["experiment_provenance"].update(
+                {
+                    "variant": "C",
+                    "pair_targets_sha256": "none",
+                    "teacher_sha256": "none",
+                }
+            )
+            config.write_text(json.dumps(strict_c_payload), encoding="utf-8")
+            strict_c_kwargs = dict(strict_kwargs)
+            strict_c_kwargs["variant"] = "C"
+            strict_c_report = preflight_offline_run.validate_resolved_config(
+                config,
+                **strict_c_kwargs,
+            )
+            self.assertEqual(strict_c_report["initialization_mode"], "common_init")
 
             shuffle_payload = json.loads(json.dumps(strict_payload))
             shuffle_payload["experiment_provenance"]["variant"] = "M_PAIR_SHUFFLE"
