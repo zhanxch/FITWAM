@@ -19,6 +19,7 @@ import os
 import shlex
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,20 +168,43 @@ def wait_for_server(
 
 
 def locate_conda_sh() -> Path:
-    """Return the path to ``etc/profile.d/conda.sh`` for the active conda."""
-    result = subprocess.run(
-        ["conda", "info", "--base"], capture_output=True, text=True, check=False
-    )
-    base = result.stdout.strip()
-    if not base:
-        raise RuntimeError(
-            "Could not locate conda base via `conda info --base`. "
-            "Make sure conda is on PATH when running the orchestrator."
+    """Return ``conda.sh`` even when the orchestrator has a minimal PATH."""
+    candidates: list[Path] = []
+
+    conda_exe = os.environ.get("CONDA_EXE")
+    if conda_exe:
+        candidates.append(Path(conda_exe).expanduser().resolve().parent.parent)
+
+    for anchor in (os.environ.get("CONDA_PREFIX"), sys.executable):
+        if not anchor:
+            continue
+        path = Path(anchor).expanduser().resolve()
+        if path.is_file():
+            path = path.parent
+        candidates.extend((path, *path.parents))
+
+    try:
+        result = subprocess.run(
+            ["conda", "info", "--base"], capture_output=True, text=True, check=False
         )
-    conda_sh = Path(base) / "etc" / "profile.d" / "conda.sh"
-    if not conda_sh.exists():
-        raise RuntimeError(f"conda.sh not found at {conda_sh}")
-    return conda_sh
+    except FileNotFoundError:
+        result = None
+    if result is not None and result.stdout.strip():
+        candidates.append(Path(result.stdout.strip()).expanduser().resolve())
+
+    seen: set[Path] = set()
+    for base in candidates:
+        if base in seen:
+            continue
+        seen.add(base)
+        conda_sh = base / "etc" / "profile.d" / "conda.sh"
+        if conda_sh.is_file():
+            return conda_sh
+
+    raise RuntimeError(
+        "Could not locate conda.sh from CONDA_EXE, CONDA_PREFIX, the active "
+        "Python executable, or `conda info --base`."
+    )
 
 
 def build_conda_command(
