@@ -115,8 +115,8 @@ builder 不直接用于正式训练。
 - text context 中不出现 failure phrase；
 - state-line 的 normalization、smoothing、threshold、最短长度和 merge gap 只在 train/validation split 确定，并写入 EveRobot provenance；
 - inference smoke 跑 50 个 paired rollout，确认结果跑 200 个；
-- E0 已作为 development set；fresh E1 固定比较共同的 step 6000，不再使用与闭环表现不稳定对齐的 variant-specific `val_base_loss` 选择 checkpoint；
-- 额外 training seeds 同样固定比较 step 6000；validation 只用于训练健康诊断，不能看 closed-loop test seeds 选择 checkpoint；
+- E0 已作为 development set；后续比较在看闭环 rollout 前，由冻结的 validation manifest 和预注册 metric 为每个 variant 选择 validation-best checkpoint；
+- validation-best 是首要闭环评估 checkpoint；共同 fixed-step 和 final checkpoint 只作训练预算、收敛与 checkpoint sensitivity 诊断，不能看 closed-loop test seeds 后改选 checkpoint；
 - rollout collection seeds、开发评估 seeds 和最终确认 seeds 必须两两不重叠；
 - 最终 B1/M 使用预声明的 3 个 training seeds；B0 不在额外 seeds 上重复；
 - 报告精确成功数、相对 B1 的 paired improvement、置信区间和 failure-mode 变化。
@@ -126,8 +126,8 @@ builder 不直接用于正式训练。
 ## Gate
 
 1. **实现正确：** failure text 不进模型；failure sample 的直接 action loss 为零；Teacher 先冻结再训练 Student；Teacher/Student/residual branch 的梯度路径符合设计；推理接口没有 outcome。
-2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 B1 为 `+2.5pp`，95% CI 包含 0。Strict E2 上同一初始化的 M 为 `58.5%`，低于 B1 的 `82.0%`，该 gate 已明确失败。
-3. **Steer 因果性：** E1 learned steer 明显优于 bypass，但不优于 cross-episode shuffled steer。Strict E2 中 M 比同初始化 M-pair-shuffle 低 `15.0pp`，95% CI 为 `[-23.0pp, -7.0pp]`。当前 pair supervision 不能作为主方法继续扩展。
+2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 B1 为 `+2.5pp`，95% CI 包含 0。Strict E2 validation-best 下 M 为 `54.5%`，C 为 `85.0%`，该 gate 已明确失败。
+3. **Steer 因果性：** E1 learned steer 明显优于 bypass，但不优于 cross-episode shuffled steer。Strict E2 validation-best 下 M 比 C 低 `30.5pp`、M-pair-shuffle 比 C 低 `14.0pp`。当前 Teacher/pair supervision 不能作为主方法继续扩展。
 4. **数据冻结：** strict E2 或 multi-round 前完成 W-state/W-tail-state 审计。只有发现系统性无效尾段时才训练四臂并切换 extractor；否则 W-state 冻结到 multi-round 完成。
 5. **自改进：** R0->R1 的 new-data continuation 必须同时优于 no-update 和 old-data-extra-step；只有 R1->R2 再次提高才称为 multi-round。
 6. **加固：** Water Plant 完成 R1->R2 后复现 Hammer Nail，并分阶段增加 training seeds；
@@ -150,10 +150,11 @@ M 相对 B1 在 step 5000、6000、6500 和 validation-best 分别为 `+4.0pp`�
 为正，step 6500 基本持平。现有证据是“工程 pipeline 已闭环并出现 checkpoint-sensitive
 positive signal”；steer 因果性与稳定增益尚未证明。
 
-这里的 validation-best 由 `val_base_loss` 选择。该指标与闭环成功率并未稳定对齐：
-B1 validation-best 为 80.5%，而 B1 step 6500 为 87.0%。因此它不作为 E1 primary
-checkpoint rule；E1 固定使用两侧共同的 step 6000，并完整保留 E0 的其他 checkpoint
-结果作为开发证据。
+这里的 validation-best 由冻结 success-only validation manifest 上的 `val_base_loss`
+选择。该指标与闭环成功率并未稳定对齐：B1 validation-best 为 80.5%，而 B1 step 6500
+为 87.0%。这说明当前 validation objective 仍需改进，但不能改用闭环 test seeds 挑选
+checkpoint。后续首要评估 validation-best；共同 fixed-step 和 final checkpoint 作为次要
+诊断。E1 的 step-6000 比较保留为此前冻结协议下的历史确认结果。
 
 训练数据 collection seeds 为 `20260718..20260917`；当前 200 次评估使用
 `20261000..20261199`，两者没有重叠。因此现有结果不存在直接的 rollout-seed
@@ -180,27 +181,45 @@ zxc 的 soft-event failure-aware 候选在其私有目录报告了两个 200-epi
 `356/400 = 89.0%`。当前账号无法读取其 config、seed ledger、baseline、训练数据和
 round state，因此该数字只作为并行候选证据，不与 E1 合并，也不作为当前方法选择依据。
 
-Strict E2 使用 seeds `20262200..20262399`、共同的 step-6000 比较规则和
-200 个 paired rollout：
+Strict E2 首轮使用 seeds `20262200..20262399`、共同的 step-6000 比较规则和
+200 个 paired rollout；后续同一 E2 seeds 的 validation-best 评估用于补充
+checkpoint-selection 诊断，不作为新的 holdout：
+
+| Validation-best arm | Success |
+|---|---:|
+| C residual-only, step 5000 | `170/200 = 85.0%` |
+| M pair-shuffle, step 6500 | `142/200 = 71.0%` |
+| M strict, step 6500 | `109/200 = 54.5%` |
+
+C 相对 M strict 为 `+30.5pp`（95% CI `[+23.0pp, +38.0pp]`，McNemar
+`p=3.14e-13`），相对 M pair-shuffle 为 `+14.0pp`（95% CI
+`[+7.0pp, +21.0pp]`，`p=2.34e-4`）。M pair-shuffle 相对 M strict 为
+`+16.5pp`（95% CI `[+8.5pp, +24.5pp]`，`p=1.12e-4`）。因此
+validation-best 选择没有挽救当前 Teacher/pair objective。
+
+次要 fixed-step 诊断如下：
 
 | Arm | Success |
 |---|---:|
 | S0 | `154/200 = 77.0%` |
 | B1 | `164/200 = 82.0%` |
+| C residual-only | `164/200 = 82.0%` |
 | M strict | `117/200 = 58.5%` |
 | M pair-shuffle | `147/200 = 73.5%` |
 
 M strict 相对 B1 为 `-23.5pp`（95% CI `[-31.5pp, -15.5pp]`），相对
 M pair-shuffle 为 `-15.0pp`（95% CI `[-23.0pp, -7.0pp]`）。这不是新鲜 seed 上的
 不显著波动，而是当前 Teacher/pair objective 在严格对照中的负面结果。
-当前有效证据收缩为：B1 failure-aware continuation 值得保留；旧 M 的
-Teacher/pair 设计不能作为最终 steer 方案。
+C 与 B1 的 aggregate difference 为 `0.0pp`（95% CI `[-6.5pp, +6.5pp]`，
+McNemar `p=1.0`）；M 相对 C 为 `-23.5pp`（95% CI `[-31.0pp, -16.0pp]`）。
+当前有效证据收缩为：B1 failure-aware continuation 值得保留；residual scaffold
+本身没有观察到净降点或增益；旧 M 的 Teacher/pair 设计不能作为最终 steer 方案。
 
 ## 下一阶段
 
-1. **完成 C 诊断：** strict C 使用与 strict M 相同的 common init，但关闭 pair loss。
-   它只用来判断负面结果主要来自 Student/residual 架构，还是 Teacher/pair objective；
-   不按结果挑 checkpoint，固定评估 step 6000。
+1. **冻结 C 诊断：** strict C 已使用与 strict M 相同的 common init、关闭 Teacher/pair
+   loss 并固定评估 step 6000。结果支持优先重设 Teacher target、pair construction 和
+   pair objective，不把 C 作为已有增益的方法。
 2. **冻结旧 M：** 保留 E0/E1/E2 为完整消融，不再向旧 Teacher/pair 方案追加
    training seed、新任务或 multi-round。
 3. **独立复现 soft-event/value heads：** 从 `base-20260720` 按模块移植，不整分支合并。
@@ -239,4 +258,8 @@ Fresh-seed 复核约一到两天；新增一个 6500-step 四卡训练约 14-16 
 4xA100 lane，不在排期中假设训练并行。前两周先回答 causal steer 与第一轮
 self-improvement，跨任务和多 training-seed 证据随后补齐。
 
-正式 run 从 step 0 同时记录 W&B 和本地 JSONL/CSV，并保存 EveRobot manifest hash、commit/config、checkpoint、实际 success/failure 采样比例和 stop reason。
+正式 run 从 step 0 同时记录 W&B 和本地 JSONL/CSV，并保存所有显式随机种子、EveRobot
+manifest hash、commit/config、checkpoint、实际 success/failure 采样比例和 stop
+reason。任何后续结果依赖的不可再生成 learned artifact 也必须单独保存并记录 hash，
+包括 Trajectory Teacher、Observation Student、projector、pair targets、normalization
+statistics 和 sampled training indices；不能只保留最终 Fast-WAM 权重。
