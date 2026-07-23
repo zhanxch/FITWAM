@@ -24,6 +24,10 @@ Historical pilots are retained with their evidence status. Only rows with restor
 | water_plant | M contrastive steer, E1 step 6000 | 87.5% | 175 / 200 | -- | fresh-seed confirmation | `M - B1 = +2.5pp`, 95% paired CI `[-3.5pp, +8.5pp]`, McNemar `p=0.511`; the +4pp gate did not pass. |
 | water_plant | M residual bypass, E1 step 6000 | 10.0% | 20 / 200 | -- | inference causal control | `bypass - learned = -77.5pp`, 95% paired CI `[-83.5pp, -71.5pp]`. |
 | water_plant | M cross-episode shuffled steer, E1 step 6000 | 88.0% | 176 / 200 | -- | inference causal control | `shuffled - learned = +0.5pp`, 95% paired CI `[-5.0pp, +6.0pp]`; episode-specific steer content is not established. |
+| water_plant | S0 source policy, E2 step 6500 | 77.0% | 154 / 200 | -- | strict causal reference | Seeds `20262200..20262399`; frozen protocol. |
+| water_plant | B1 failure-video control, E2 step 6000 | 82.0% | 164 / 200 | -- | strict causal reference | `B1 - S0 = +5.0pp`, 95% paired CI `[-2.5pp, +12.5pp]`. |
+| water_plant | M strict common-init, E2 step 6000 | 58.5% | 117 / 200 | -- | failed causal gate | `M - B1 = -23.5pp`, 95% paired CI `[-31.5pp, -15.5pp]`. |
+| water_plant | M pair-shuffle common-init, E2 step 6000 | 73.5% | 147 / 200 | -- | strict causal control | Strict M was `-15.0pp` below pair-shuffle, 95% paired CI `[-23.0pp, -7.0pp]`; the current pair objective is rejected. |
 | hammer_nail | FastWAM success-only, step 6500 | 67.5% | 135 / 200 | -- | historical pilot | Protocol summary is not tracked in this checkout. |
 
 ## Items To Confirm Before Paper Use

@@ -126,8 +126,8 @@ builder 不直接用于正式训练。
 ## Gate
 
 1. **实现正确：** failure text 不进模型；failure sample 的直接 action loss 为零；Teacher 先冻结再训练 Student；Teacher/Student/residual branch 的梯度路径符合设计；推理接口没有 outcome。
-2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 B1 为 `+2.5pp`，95% CI 包含 0，因此该 gate 未通过；strict E2 继续使用同一 `+4pp` 与非负 CI 下界标准。
-3. **Steer 因果性：** E1 learned steer 明显优于 bypass，但不优于 cross-episode shuffled steer；E2 上 M 相对严格 M-pair-shuffle 仍需满足 `+4pp` 与非负 CI 下界标准。
+2. **Water Plant 复核：** E1 上 step-6000 的 M 相对 B1 为 `+2.5pp`，95% CI 包含 0。Strict E2 上同一初始化的 M 为 `58.5%`，低于 B1 的 `82.0%`，该 gate 已明确失败。
+3. **Steer 因果性：** E1 learned steer 明显优于 bypass，但不优于 cross-episode shuffled steer。Strict E2 中 M 比同初始化 M-pair-shuffle 低 `15.0pp`，95% CI 为 `[-23.0pp, -7.0pp]`。当前 pair supervision 不能作为主方法继续扩展。
 4. **数据冻结：** strict E2 或 multi-round 前完成 W-state/W-tail-state 审计。只有发现系统性无效尾段时才训练四臂并切换 extractor；否则 W-state 冻结到 multi-round 完成。
 5. **自改进：** R0->R1 的 new-data continuation 必须同时优于 no-update 和 old-data-extra-step；只有 R1->R2 再次提高才称为 multi-round。
 6. **加固：** Water Plant 完成 R1->R2 后复现 Hammer Nail，并分阶段增加 training seeds；
@@ -180,31 +180,46 @@ zxc 的 soft-event failure-aware 候选在其私有目录报告了两个 200-epi
 `356/400 = 89.0%`。当前账号无法读取其 config、seed ledger、baseline、训练数据和
 round state，因此该数字只作为并行候选证据，不与 E1 合并，也不作为当前方法选择依据。
 
+Strict E2 使用 seeds `20262200..20262399`、共同的 step-6000 比较规则和
+200 个 paired rollout：
+
+| Arm | Success |
+|---|---:|
+| S0 | `154/200 = 77.0%` |
+| B1 | `164/200 = 82.0%` |
+| M strict | `117/200 = 58.5%` |
+| M pair-shuffle | `147/200 = 73.5%` |
+
+M strict 相对 B1 为 `-23.5pp`（95% CI `[-31.5pp, -15.5pp]`），相对
+M pair-shuffle 为 `-15.0pp`（95% CI `[-23.0pp, -7.0pp]`）。这不是新鲜 seed 上的
+不显著波动，而是当前 Teacher/pair objective 在严格对照中的负面结果。
+当前有效证据收缩为：B1 failure-aware continuation 值得保留；旧 M 的
+Teacher/pair 设计不能作为最终 steer 方案。
+
 ## 下一阶段
 
-1. **Freeze + data audit：** 当前 M/B1/checkpoint/manifest hashes 已冻结；W-state/W-tail-state
-   差异审计与视频复核不占 GPU，并行进行，不阻塞 strict pair-shuffle。
-2. **E1 causal completion：** S0、learned、exact bypass 和 cross-episode shuffled steer
-   已完成。结果分别为 `75.0%`、`87.5%`、`10.0%` 和 `88.0%`。当前 steer 通路本身
-   是必要的，但 episode-specific token 内容没有显示额外作用；不重测 B0/C/T/5000/6500
-   或 validation-best。
-3. **Pair causality + efficacy confirmation：** 现有 M 的新增 Student/residual 在全局 seed 生效前初始化，不能与
-   新训练的 pair-shuffle 构成严格初始化对照。修复初始化顺序后，先序列化一份共同初始
-   weights，再由它分别训练 M 与 M-pair-shuffle；固定比较 step 6000，并在独立 E2 的
-   200 paired seeds 上同时评估 S0、B1、共同初始化 M 与 M-pair-shuffle。只打乱 success
-   identity 与对应 `z_plus`，其余样本、窗口、权重、failure identity 和 `z_minus` 全部
-   保持不变。E2 必须同时通过 `M-S0`、`M-B1` 和 `M-M-pair-shuffle` gate；只证明 pair
-   对齐有作用而没有优于 B1，不进入 multi-round。
-4. **R0->R1 core pilot：** E1 推理干预与 E2 efficacy/causality gate 通过后才收集新的 deployment experience，比较
+1. **完成 C 诊断：** strict C 使用与 strict M 相同的 common init，但关闭 pair loss。
+   它只用来判断负面结果主要来自 Student/residual 架构，还是 Teacher/pair objective；
+   不按结果挑 checkpoint，固定评估 step 6000。
+2. **冻结旧 M：** 保留 E0/E1/E2 为完整消融，不再向旧 Teacher/pair 方案追加
+   training seed、新任务或 multi-round。
+3. **独立复现 soft-event/value heads：** 从 `base-20260720` 按模块移植，不整分支合并。
+   先复现 soft-event head-only 和 value head-only，再测两者合并；每个 head 保留独立
+   loss、gradient scale 和 shuffled-label control。zxc 的 `356/400` 只用于确定这一优先级，
+   本分支仍按独立 seed ledger 复现。
+4. **重新设计 steer：** 不把两个 head 直接叠到已失败的 M 上。先比较输入端单次
+   residual 与 layer-wise zero-init residual；失败窗口继续禁用 action imitation。
+   Teacher 只有在能提供可验证的 corrective target 后才恢复为主方法，否则保留为失败消融。
+5. **R0->R1 core pilot：** 新 steer 在 fresh-seed efficacy 和 causal control 上通过后才收集新的 deployment experience，比较
    no-update、old-data-extra-step 和 new-data continuation。该 pilot 先于 Hammer Nail 和
    额外 training seeds；若通过，再补 B1 old/new 数据臂做归因。
-5. **R1->R2：** 使用 R1 policy 收集下一轮数据并重复同一控制。只有两次连续更新都提高，
+6. **R1->R2：** 使用 R1 policy 收集下一轮数据并重复同一控制。只有两次连续更新都提高，
    才使用 multi-round self-improving 表述。
-6. **Cross-task + seeds：** 随后先做 Hammer Nail B1/M，再训练 Water Plant seed 43/44。
+7. **Cross-task + seeds：** 随后先做 Hammer Nail B1/新 steer，再训练 Water Plant seed 43/44。
    两个额外 seed 都预注册，只重训 B1/M，不重复 B0；seed 43 若暴露实现问题可先诊断，
    但不能因结果不利而取消或替换 seed 44。seed 43 静态复现通过后，先复现一次 R0->R1，
    再执行 seed 44。
-7. **Conditional work：** T 和正式 tail 四臂只在因果结果含混或数据审计显示实质问题时
+8. **Conditional work：** T 和正式 tail 四臂只在因果结果含混或数据审计显示实质问题时
    执行。Offline RL/value objective 放在 supervised multi-round 饱和以后。
 
 ## 时间

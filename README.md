@@ -32,7 +32,7 @@ DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 |-----------|------------|----------|
 | **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | 200 个配对种子下，B1 在 step 5000/6000/6500 均高于 B0；仍需训练 seed 复现 |
 | **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 builder/loader 已实现；历史 round1 数据待重建和对齐 |
-| **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned residual steer | Teacher/Student/residual 已实现；E1 固定步数复核仅 `+2.5pp` 且不显著，因果性仍待验证 |
+| **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned residual steer | 旧 Teacher/Student/residual 已完成 E1/E2；strict E2 中 M 为 `58.5%`，低于 B1 的 `82.0%`，该 pair 目标已停止扩展 |
 | **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 单轮数据闭环和开发集筛选已跑通；进入多轮前仍需通过 fresh-seed efficacy 与 steer 因果 gate |
 | **M5 Online self-improvement** | 在线更新 steer，并用新观测校正 world expert | 待 offline steer 通过后开展 |
 | **M6 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
@@ -208,6 +208,8 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 | FastWAM S0 fresh reference | 75.0% | E1 source step 6500, `150/200`; same seeds and rollout protocol |
 | Offline M residual bypass | 10.0% | E1 step 6000, `20/200`; learned steer minus bypass `+77.5pp` |
 | Offline M shuffled steer | 88.0% | E1 step 6000, `176/200`; shuffled minus learned `+0.5pp`, 95% CI `[-5.0pp, +6.0pp]` |
+| Strict E2 S0 / B1 | 77.0% / 82.0% | seeds `20262200..20262399`, 200 paired episodes |
+| Strict E2 M / pair-shuffle | 58.5% / 73.5% | common init; M-B1 `-23.5pp`, M-pair-shuffle `-15.0pp` |
 | External pi0.5 | 88.7 +/- 3.1 | from DexJoCo rand-obj table, raw trials not tracked here |
 | External GR00T N1.5 | 72.7 +/- 1.2 | from DexJoCo rand-obj table, raw trials not tracked here |
 
@@ -274,8 +276,8 @@ papers/II/
 
 1. M1：保留 `water_plant` 历史 pilot；B0/B1 的 200-episode 配对筛选与 E1 fresh-seed 复核已完成。
 2. M2：用 v0.2 sidecar/manifest 重建并重跑 `water_plant`/`hammer_nail` round1，和旧 rollout continuation 分开报告。
-3. M3：首轮 offline contrastive steer 已实现；S0 与推理干预已完成，E1 fixed-step efficacy gate 未通过；下一步完成共同初始化 M/M-pair-shuffle 与独立 E2 对照。
-4. M4：M3 的 efficacy 与 causality gate 通过后，再用冻结协议完成多轮 rollout -> append -> retrain。
+3. M3：共同初始化 M/M-pair-shuffle 与独立 E2 已完成；旧 pair 目标显著伤害闭环成功率。先完成 strict C 诊断，再独立复现 soft-event/value head 并重新设计 steer。
+4. M4：新 M3 的 efficacy 与 causality gate 通过后，再用冻结协议完成多轮 rollout -> append -> retrain。
 5. M5：M3/M4 通过后，再参考 RL Token 更新 online steer，并参考 World Guidance / AdaJEPA 做 adaptive key-frame 或 tactile prediction 与 world-expert update。
 6. M6：真机实验和触觉模块。
 
