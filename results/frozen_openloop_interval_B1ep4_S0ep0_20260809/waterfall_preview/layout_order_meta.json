@@ -1,0 +1,39 @@
+{
+  "gap_unit": 1.0,
+  "box_aspect_b1": [
+    1.0,
+    5.2,
+    0.28
+  ],
+  "box_aspect_s0": [
+    1.0,
+    5.2,
+    0.42
+  ],
+  "fill": "thin floating sheet (not down to z=0)",
+  "proj": "ortho",
+  "b1_episodes_front_to_back": [
+    3,
+    65,
+    28,
+    0,
+    62,
+    66,
+    17,
+    15,
+    29,
+    4
+  ],
+  "s0_episodes_front_to_back": [
+    29,
+    77,
+    86,
+    66,
+    57,
+    90,
+    14,
+    0,
+    16,
+    10
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "rms": {
+    "L2": {
+      "layer": "L2",
+      "mode": "rms",
+      "rule": "||z-\u03bc_E|| \u2264 r_rms(E)",
+      "eps_r_stage1": 7.995418071746826,
+      "n_success_total": 4155,
+      "n_success_in_expert_pca2d_dropped": 2611,
+      "n_success_remain": 1544,
+      "frac_dropped": 0.6283995186522262,
+      "pc_var_stage1": [
+        0.5000951886177063,
+        0.13256606459617615
+      ],
+      "pc_var_stage2": [
+        0.50853031873703,
+        0.14571398496627808
+      ],
+      "shift_es_s2": 5.700527191162109,
+      "shift_ef_s2": 12.282271385192871,
+      "r_ratio_s_s2": 1.3945743345842263,
+      "r_ratio_f_s2": 1.6812765469472772
+    },
+    "L3": {
+      "layer": "L3",
+      "mode": "rms",
+      "rule": "||z-\u03bc_E|| \u2264 r_rms(E)",
+      "eps_r_stage1": 6.01692533493042,
+      "n_success_total": 2747,
+      "n_success_in_expert_pca2d_dropped": 1919,
+      "n_success_remain": 828,
+      "frac_dropped": 0.6985802693847833,
+      "pc_var_stage1": [
+        0.5443699955940247,
+        0.12197466939687729
+      ],
+      "pc_var_stage2": [
+        0.5383402705192566,
+        0.12743256986141205
+      ],
+      "shift_es_s2": 2.8994014263153076,
+      "shift_ef_s2": 4.978005886077881,
+      "r_ratio_s_s2": 1.2764447645188985,
+      "r_ratio_f_s2": 1.1142504102632778
+    }
+  },
+  "ellipse2": {
+    "L2": {
+      "layer": "L2",
+      "mode": "ellipse2",
+      "rule": "Mahalanobis\u00b2 \u2264 \u03c7\u00b2_2(0.95) Expert cov",
+      "eps_r_stage1": 2.4476519360399265,
+      "n_success_total": 4155,
+      "n_success_in_expert_pca2d_dropped": 3643,
+      "n_success_remain": 512,
+      "frac_dropped": 0.8767749699157641,
+      "pc_var_stage1": [
+        0.5000951886177063,
+        0.13256606459617615
+      ],
+      "pc_var_stage2": [
+        0.5090657472610474,
+        0.1429024040699005
+      ],
+      "shift_es_s2": 8.729175567626953,
+      "shift_ef_s2": 12.33102798461914,
+      "r_ratio_s_s2": 1.4465427803587425,
+      "r_ratio_f_s2": 1.7429006935371385
+    },
+    "L3": {
+      "layer": "L3",
+      "mode": "ellipse2",
+      "rule": "Mahalanobis\u00b2 \u2264 \u03c7\u00b2_2(0.95) Expert cov",
+      "eps_r_stage1": 2.4476519360399265,
+      "n_success_total": 2747,
+      "n_success_in_expert_pca2d_dropped": 2640,
+      "n_success_remain": 107,
+      "frac_dropped": 0.9610484164543138,
+      "pc_var_stage1": [
+        0.5443699955940247,
+        0.12197466939687729
+      ],
+      "pc_var_stage2": [
+        0.5365092754364014,
+        0.1246524453163147
+      ],
+      "shift_es_s2": 9.495011329650879,
+      "shift_ef_s2": 4.980713844299316,
+      "r_ratio_s_s2": 0.10249568378320968,
+      "r_ratio_f_s2": 1.1159594528311303
+    }
+  },
+  "figures": {
+    "rms_L2": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_rms_L2.png",
+    "rms_L3": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_rms_L3.png",
+    "rms_overview": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_rms_overview.png",
+    "ellipse_L2": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_ellipse_L2.png",
+    "ellipse_L3": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_ellipse_L3.png",
+    "ellipse_overview": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca2d_filter_refit_ellipse_overview.png"
+  }
+}

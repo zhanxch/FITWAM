@@ -1,0 +1,12 @@
+{
+  "cut": 0.32,
+  "frame_window": [
+    0.4,
+    0.6
+  ],
+  "n_thumbs": 6,
+  "figure": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/fig_recommended_split_ep4_ep0_interval_band.png",
+  "mp4_b1_ep4": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/ep4_B1_interval_with_frames.mp4",
+  "mp4_s0_ep0": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/ep0_S0_interval_with_frames.mp4",
+  "frozen_dir": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809"
+}

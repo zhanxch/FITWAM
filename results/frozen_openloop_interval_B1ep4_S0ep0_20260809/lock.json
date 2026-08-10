@@ -1,0 +1,47 @@
+{
+  "status": "frozen",
+  "frozen_at": "2026-08-09",
+  "story": {
+    "B1": {
+      "episode": 4,
+      "claim": "front-wide / mid-narrow interval"
+    },
+    "S0": {
+      "episode": 0,
+      "claim": "stable interval width"
+    }
+  },
+  "viz": {
+    "cut": 0.32,
+    "frame_window": [
+      0.4,
+      0.6
+    ],
+    "style": "smoothed centered interval band, no outline, separate panels",
+    "metric": "sigma_l2 of open-loop a0 samples"
+  },
+  "files": [
+    "FROZEN.md",
+    "ep000_widths.npz",
+    "ep004_widths.npz",
+    "ep0_S0_interval_with_frames.mp4",
+    "ep4_B1_interval_with_frames.mp4",
+    "fig_recommended_split_ep4_ep0_interval_band.pdf",
+    "fig_recommended_split_ep4_ep0_interval_band.png",
+    "interval_frames_meta.json",
+    "lock.json"
+  ],
+  "source_meta": {
+    "cut": 0.32,
+    "frame_window": [
+      0.4,
+      0.6
+    ],
+    "n_thumbs": 6,
+    "figure": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/fig_recommended_split_ep4_ep0_interval_band.png",
+    "mp4_b1_ep4": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/ep4_B1_interval_with_frames.mp4",
+    "mp4_s0_ep0": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809/ep0_S0_interval_with_frames.mp4",
+    "frozen_dir": "/data_all/xiangchengzhan/FastWAM/results/frozen_openloop_interval_B1ep4_S0ep0_20260809"
+  },
+  "arxiv_alts": "results/arxiv/openloop_interval_alts_20260809"
+}

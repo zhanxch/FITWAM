@@ -1,0 +1,22 @@
+{
+  "feature": "concat(s, z_VAE, a)",
+  "protocol": "frame-level all frames; global 1NN to Expert; no trim",
+  "n_frames": {
+    "expert": 2815,
+    "success": 4155,
+    "failure": 4867,
+    "dropped": 0
+  },
+  "dim": {
+    "s": 23,
+    "visual": 96,
+    "a": 22,
+    "concat": 141
+  },
+  "median_over_expert": {
+    "success": 1.8622267764525413,
+    "failure": 2.837384752223317
+  },
+  "figure": "results/frozen_l2_visual_l3_transition_20260809/L2_visual_frame_all.png",
+  "frozen": true
+}

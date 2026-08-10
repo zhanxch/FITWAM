@@ -1,0 +1,260 @@
+{
+  "L2": {
+    "feature": "concat(s, z_VAE, a) z-scored by Expert",
+    "dim": 141,
+    "joint": {
+      "explained_variance_ratio": [
+        0.5000951886177063,
+        0.13256606459617615
+      ],
+      "stats": {
+        "n": {
+          "expert": 2815,
+          "success": 4155,
+          "failure": 4867
+        },
+        "mean_pc": {
+          "expert": [
+            -4.980642318725586,
+            -1.803365707397461
+          ],
+          "success": [
+            -4.652007102966309,
+            0.2002437561750412
+          ],
+          "failure": [
+            6.852189540863037,
+            0.8720929026603699
+          ]
+        },
+        "std_pc": {
+          "expert": [
+            6.100988864898682,
+            5.167653560638428
+          ],
+          "success": [
+            6.385184288024902,
+            4.310512065887451
+          ],
+          "failure": [
+            11.752755165100098,
+            6.221874713897705
+          ]
+        },
+        "centroid_l2": {
+          "expert_vs_success": {
+            "distance": 2.030383586883545,
+            "sep_over_pooled_rms": 0.2586577357942133,
+            "rms_a": 7.995418071746826,
+            "rms_b": 7.70396614074707
+          },
+          "expert_vs_failure": {
+            "distance": 12.131531715393066,
+            "sep_over_pooled_rms": 1.1394586586659572,
+            "rms_a": 7.995418071746826,
+            "rms_b": 13.29808235168457
+          },
+          "success_vs_failure": {
+            "distance": 11.523796081542969,
+            "sep_over_pooled_rms": 1.0973973406161515,
+            "rms_a": 7.70396614074707,
+            "rms_b": 13.29808235168457
+          }
+        }
+      }
+    },
+    "expert_fit": {
+      "explained_variance_ratio": [
+        0.40324705839157104,
+        0.15319521725177765
+      ],
+      "stats": {
+        "n": {
+          "expert": 2815,
+          "success": 4155,
+          "failure": 4867
+        },
+        "mean_pc": {
+          "expert": [
+            1.40933750003569e-07,
+            -6.504635052806407e-08
+          ],
+          "success": [
+            -1.231401801109314,
+            -1.085992693901062
+          ],
+          "failure": [
+            6.486781120300293,
+            -4.088412761688232
+          ]
+        },
+        "std_pc": {
+          "expert": [
+            7.540412902832031,
+            4.647636413574219
+          ],
+          "success": [
+            7.288711071014404,
+            4.4330902099609375
+          ],
+          "failure": [
+            8.782812118530273,
+            5.625663757324219
+          ]
+        },
+        "centroid_l2": {
+          "expert_vs_success": {
+            "distance": 1.6418664455413818,
+            "sep_over_pooled_rms": 0.18884344340304837,
+            "rms_a": 8.857672691345215,
+            "rms_b": 8.53097915649414
+          },
+          "expert_vs_failure": {
+            "distance": 7.66768741607666,
+            "sep_over_pooled_rms": 0.7950849063320781,
+            "rms_a": 8.857672691345215,
+            "rms_b": 10.430047035217285
+          },
+          "success_vs_failure": {
+            "distance": 8.281596183776855,
+            "sep_over_pooled_rms": 0.8735388158893057,
+            "rms_a": 8.53097915649414,
+            "rms_b": 10.430047035217285
+          }
+        }
+      }
+    }
+  },
+  "L3": {
+    "feature": "[s_t, a_t, s_{t+5}] z-scored by Expert",
+    "dim": 68,
+    "joint": {
+      "explained_variance_ratio": [
+        0.5443699955940247,
+        0.12197466939687729
+      ],
+      "stats": {
+        "n": {
+          "expert": 5484,
+          "success": 2747,
+          "failure": 5991
+        },
+        "mean_pc": {
+          "expert": [
+            -1.7542214393615723,
+            -0.9853512048721313
+          ],
+          "success": [
+            -2.3400630950927734,
+            -0.6410554051399231
+          ],
+          "failure": [
+            2.6787359714508057,
+            1.195900321006775
+          ]
+        },
+        "std_pc": {
+          "expert": [
+            5.19346284866333,
+            3.038311243057251
+          ],
+          "success": [
+            5.140201568603516,
+            2.6195263862609863
+          ],
+          "failure": [
+            6.237212181091309,
+            2.379317045211792
+          ]
+        },
+        "centroid_l2": {
+          "expert_vs_success": {
+            "distance": 0.6795200109481812,
+            "sep_over_pooled_rms": 0.1153085319008781,
+            "rms_a": 6.01692533493042,
+            "rms_b": 5.769193172454834
+          },
+          "expert_vs_failure": {
+            "distance": 4.940541744232178,
+            "sep_over_pooled_rms": 0.7784947348256778,
+            "rms_a": 6.01692533493042,
+            "rms_b": 6.675624847412109
+          },
+          "success_vs_failure": {
+            "distance": 5.344409942626953,
+            "sep_over_pooled_rms": 0.8588972428676934,
+            "rms_a": 5.769193172454834,
+            "rms_b": 6.675624847412109
+          }
+        }
+      }
+    },
+    "expert_fit": {
+      "explained_variance_ratio": [
+        0.4563800096511841,
+        0.11177481710910797
+      ],
+      "stats": {
+        "n": {
+          "expert": 5484,
+          "success": 2747,
+          "failure": 5991
+        },
+        "mean_pc": {
+          "expert": [
+            7.234290677615718e-08,
+            -3.3389035536401934e-08
+          ],
+          "success": [
+            -0.6592437028884888,
+            -0.18267926573753357
+          ],
+          "failure": [
+            3.158085346221924,
+            0.6564170718193054
+          ]
+        },
+        "std_pc": {
+          "expert": [
+            5.570803642272949,
+            2.7569351196289062
+          ],
+          "success": [
+            5.328953266143799,
+            2.2816498279571533
+          ],
+          "failure": [
+            5.418005466461182,
+            1.4715890884399414
+          ]
+        },
+        "centroid_l2": {
+          "expert_vs_success": {
+            "distance": 0.684086263179779,
+            "sep_over_pooled_rms": 0.11389539401099884,
+            "rms_a": 6.21566915512085,
+            "rms_b": 5.7968668937683105
+          },
+          "expert_vs_failure": {
+            "distance": 3.2255823612213135,
+            "sep_over_pooled_rms": 0.5453239159826003,
+            "rms_a": 6.21566915512085,
+            "rms_b": 5.614299297332764
+          },
+          "success_vs_failure": {
+            "distance": 3.9084622859954834,
+            "sep_over_pooled_rms": 0.6850241632697407,
+            "rms_a": 5.7968668937683105,
+            "rms_b": 5.614299297332764
+          }
+        }
+      }
+    }
+  },
+  "figures": {
+    "joint_scatter": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca_joint_scatter_L2_L3.png",
+    "joint_density": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca_joint_density_L2_L3.png",
+    "expertfit_scatter": "/data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809/pca_probe/fig_pca_expertfit_scatter_L2_L3.png"
+  },
+  "interpretation_hint": "sep_over_pooled_rms \u226b 1 suggests well-separated centroids relative to within-class spread; values near \u22641 mean heavy overlap in PC1\u2013PC2."
+}

@@ -1,0 +1,4 @@
+L3 panel originally produced by experience_distribution_coverage.py
+(now archived under archive/l2l3_experience_coverage_20260809/scripts/).
+hist_plot() + Layer-3 transition gallery (stride=5, lag=5, seed=20260808).
+Frozen replot uses L3_distances.npz via render_frozen_l2_visual_l3_transition.py.

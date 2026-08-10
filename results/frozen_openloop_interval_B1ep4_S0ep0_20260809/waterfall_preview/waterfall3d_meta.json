@@ -1,0 +1,41 @@
+{
+  "type": "3d_waterfall",
+  "axes": {
+    "X": "episode progress",
+    "Y": "episode index (sorted by mean width)",
+    "Z": "||sigma(a0)||_2"
+  },
+  "cut": 0.32,
+  "b1_cohort": [
+    36,
+    4,
+    34,
+    82,
+    29,
+    28,
+    66,
+    0,
+    17,
+    62,
+    65,
+    15
+  ],
+  "s0_cohort": [
+    90,
+    29,
+    0,
+    66,
+    77,
+    86,
+    16,
+    10,
+    57,
+    14,
+    83,
+    50
+  ],
+  "files": [
+    "fig_waterfall3d_multi_episode.png",
+    "fig_waterfall3d_lines_multi_episode.png"
+  ]
+}

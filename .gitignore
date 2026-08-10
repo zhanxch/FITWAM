@@ -100,6 +100,19 @@ results/*
 !results/dexjoco_async_microwave/**
 !results/dexjoco_water_plant_offline_v1/
 !results/dexjoco_water_plant_offline_v1/**
+!results/frozen_l2_visual_l3_transition_20260809/
+!results/frozen_l2_visual_l3_transition_20260809/**
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/**
+# Override global *.mp4/*.npz/*.pdf/*.txt for frozen figure assets
+!results/frozen_l2_visual_l3_transition_20260809/**/*.mp4
+!results/frozen_l2_visual_l3_transition_20260809/**/*.npz
+!results/frozen_l2_visual_l3_transition_20260809/**/*.pdf
+!results/frozen_l2_visual_l3_transition_20260809/**/*.txt
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/**/*.mp4
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/**/*.npz
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/**/*.pdf
+!results/frozen_openloop_interval_B1ep4_S0ep0_20260809/**/*.txt
 sdist/
 var/
 wheels/

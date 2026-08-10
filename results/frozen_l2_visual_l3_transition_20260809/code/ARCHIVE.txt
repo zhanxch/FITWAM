@@ -1,0 +1,2 @@
+Historical L2/L3 iteration code+results: /data_all/xiangchengzhan/FastWAM/archive/l2l3_experience_coverage_20260809
+Active figure dir: /data_all/xiangchengzhan/FastWAM/results/frozen_l2_visual_l3_transition_20260809
