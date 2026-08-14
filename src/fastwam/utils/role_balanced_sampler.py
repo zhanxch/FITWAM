@@ -78,14 +78,20 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
         self._auxiliary_indices = tuple(
             index for index, role in enumerate(self.roles) if self._is_auxiliary(role)
         )
+        self._auxiliary_indices_by_role = self._partition_auxiliary_indices()
+        self._auxiliary_draws_by_role = self._draws_per_auxiliary_role()
         self._validate_role_partition()
 
         primary_global = self.primary_per_batch * self.num_replicas
-        auxiliary_global = self.auxiliary_per_batch * self.num_replicas
-        self.num_batches_per_epoch = max(
-            math.ceil(len(self._primary_indices) / primary_global),
-            math.ceil(len(self._auxiliary_indices) / auxiliary_global),
+        self.num_batches_per_epoch = math.ceil(
+            len(self._primary_indices) / primary_global
         )
+        for role, indices in self._auxiliary_indices_by_role.items():
+            draws = self._auxiliary_draws_by_role[role] * self.num_replicas
+            self.num_batches_per_epoch = max(
+                self.num_batches_per_epoch,
+                math.ceil(len(indices) / draws),
+            )
 
         self.epoch = 0
         self.resume_batch_offset = 0
@@ -128,6 +134,38 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             return role != self.primary_role
         return role in self.auxiliary_roles
 
+    def _partition_auxiliary_indices(self) -> dict[str, tuple[int, ...]]:
+        if self.auxiliary_roles is None or len(self.auxiliary_roles) <= 1:
+            key = (
+                self.auxiliary_roles[0]
+                if self.auxiliary_roles is not None
+                else "_aux"
+            )
+            return {key: self._auxiliary_indices}
+        return {
+            role: tuple(
+                index for index, value in enumerate(self.roles) if value == role
+            )
+            for role in self.auxiliary_roles
+        }
+
+    def _draws_per_auxiliary_role(self) -> dict[str, int]:
+        roles = tuple(self._auxiliary_indices_by_role)
+        if len(roles) <= 1:
+            return {roles[0]: self.auxiliary_per_batch}
+        if self.auxiliary_per_batch % len(roles) != 0:
+            raise ValueError(
+                "`auxiliary_per_batch` must be divisible by the number of "
+                f"auxiliary roles ({len(roles)}); got "
+                f"auxiliary_per_batch={self.auxiliary_per_batch}."
+            )
+        each = self.auxiliary_per_batch // len(roles)
+        if each < 1:
+            raise ValueError(
+                "Each auxiliary role must receive at least one slot per batch."
+            )
+        return {role: each for role in roles}
+
     def _validate_role_partition(self) -> None:
         if not self._primary_indices:
             raise ValueError(
@@ -148,6 +186,16 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
                 raise ValueError(
                     "Dataset roles are not covered by `primary_role` and "
                     f"`auxiliary_roles`: {unknown!r}."
+                )
+            missing = [
+                role
+                for role, indices in self._auxiliary_indices_by_role.items()
+                if not indices
+            ]
+            if missing:
+                raise ValueError(
+                    "No samples have auxiliary role(s) "
+                    f"{missing!r} required by `auxiliary_roles`."
                 )
 
     @property
@@ -257,19 +305,27 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
     def _local_batches(self) -> tuple[list[list[int]], list[list[int]]]:
         rng = random.Random(self.seed + self.epoch)
         primary_pool = self._rank_pool(self._primary_indices, rng)
-        auxiliary_pool = self._rank_pool(self._auxiliary_indices, rng)
         primary_batches = self._draw_global_batches(
             primary_pool,
             self.primary_per_batch,
             self.num_batches_per_epoch,
             rng,
         )
-        auxiliary_batches = self._draw_global_batches(
-            auxiliary_pool,
-            self.auxiliary_per_batch,
-            self.num_batches_per_epoch,
-            rng,
-        )
+        auxiliary_parts: list[list[list[int]]] = []
+        for role, indices in self._auxiliary_indices_by_role.items():
+            pool = self._rank_pool(indices, rng)
+            auxiliary_parts.append(
+                self._draw_global_batches(
+                    pool,
+                    self._auxiliary_draws_by_role[role],
+                    self.num_batches_per_epoch,
+                    rng,
+                )
+            )
+        auxiliary_batches = [
+            [index for part in auxiliary_parts for index in part[batch_index]]
+            for batch_index in range(self.num_batches_per_epoch)
+        ]
         return primary_batches, auxiliary_batches
 
     def __iter__(self) -> Iterator[list[int]]:

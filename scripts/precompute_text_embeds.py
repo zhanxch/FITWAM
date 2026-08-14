@@ -14,6 +14,7 @@ from omegaconf import DictConfig, ListConfig
 from tqdm import tqdm
 
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
+from fastwam.datasets.cfg_text import expand_prompts_with_outcome_suffixes
 from fastwam.models.wan22.helpers.loader import _load_registered_model, _resolve_configs
 from fastwam.models.wan22.wan_video_text_encoder import HuggingfaceTokenizer
 from fastwam.utils.config_resolvers import register_default_resolvers
@@ -71,6 +72,8 @@ def _collect_dataset_settings(data_cfg: DictConfig):
     dataset_dirs: list[str] = []
     cache_dirs: list[Path] = []
     context_lens = set()
+    success_suffixes: set[str] = set()
+    failure_suffixes: set[str] = set()
 
     for node_path, node in _iter_dataset_nodes(data_cfg, path="data"):
         raw_dirs = node.get("dataset_dirs")
@@ -97,9 +100,24 @@ def _collect_dataset_settings(data_cfg: DictConfig):
         if context_len is not None:
             context_lens.add(int(context_len))
 
+        success_suffix = node.get("outcome_text_success_suffix")
+        failure_suffix = node.get("outcome_text_failure_suffix")
+        if success_suffix is not None:
+            success_suffixes.add(str(success_suffix))
+        if failure_suffix is not None:
+            failure_suffixes.add(str(failure_suffix))
+
         logger.info("Discovered dataset node `%s` with %d dataset_dirs.", node_path, len(raw_dirs))
 
-    return dataset_dirs, cache_dirs, context_lens
+    if len(success_suffixes) > 1 or len(failure_suffixes) > 1:
+        raise ValueError(
+            "Inconsistent outcome text suffixes across data nodes: "
+            f"success={sorted(success_suffixes)} failure={sorted(failure_suffixes)}"
+        )
+    success_suffix = next(iter(success_suffixes)) if success_suffixes else None
+    failure_suffix = next(iter(failure_suffixes)) if failure_suffixes else None
+
+    return dataset_dirs, cache_dirs, context_lens, success_suffix, failure_suffix
 
 
 def _resolve_context_len(context_lens: set[int]) -> int:
@@ -198,7 +216,9 @@ def main(cfg: DictConfig):
             "or `task=robotwin_uncond_3cam_384_1e-4`."
         )
 
-    dataset_dirs, cache_dirs, context_lens = _collect_dataset_settings(data_cfg)
+    dataset_dirs, cache_dirs, context_lens, success_suffix, failure_suffix = (
+        _collect_dataset_settings(data_cfg)
+    )
     if not cache_dirs:
         raise ValueError("No `text_embedding_cache_dir` found under `cfg.data`.")
 
@@ -211,6 +231,21 @@ def main(cfg: DictConfig):
         if not dataset_dirs:
             raise ValueError("No `dataset_dirs` found under `cfg.data`.")
         prompts = _read_unique_prompts(dataset_dirs)
+        if success_suffix is not None or failure_suffix is not None:
+            before = len(prompts)
+            prompts = expand_prompts_with_outcome_suffixes(
+                prompts,
+                success_suffix=success_suffix,
+                failure_suffix=failure_suffix,
+            )
+            logger.info(
+                "Expanded outcome CFG prompts: %d base -> %d with suffixes "
+                "(success=%r failure=%r).",
+                before,
+                len(prompts),
+                success_suffix,
+                failure_suffix,
+            )
     if not prompts:
         logger.warning("No prompts found from tasks.jsonl; nothing to do.")
         return

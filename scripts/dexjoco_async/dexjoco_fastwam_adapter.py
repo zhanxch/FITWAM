@@ -20,6 +20,9 @@ KEY_PROPRIO = "proprio"
 KEY_PROMPT = "prompt"
 KEY_CONTEXT = "context"
 KEY_CONTEXT_MASK = "context_mask"
+KEY_NEGATIVE_PROMPT = "negative_prompt"
+KEY_NEGATIVE_CONTEXT = "negative_context"
+KEY_NEGATIVE_CONTEXT_MASK = "negative_context_mask"
 KEY_ACTION = "action"
 
 DEFAULT_PROMPT = (
@@ -486,6 +489,7 @@ def _safe_rgb_uint8(img: np.ndarray) -> np.ndarray:
 class DexJoCoTaskConfig:
     env_name: str
     prompt: str
+    cfg_base_prompt: str | None
     dual_arm: bool
     camera_key: str
     camera_mapping: dict[str, str]
@@ -500,6 +504,11 @@ class DexJoCoTaskConfig:
         return cls(
             env_name=str(cfg["env_name"]),
             prompt=str(cfg["prompt"]),
+            cfg_base_prompt=(
+                None
+                if cfg.get("cfg_base_prompt") is None
+                else str(cfg["cfg_base_prompt"])
+            ),
             dual_arm=str(cfg.get("robot_type", "single_arm")) == "dual_arm",
             camera_key=str(base_key),
             camera_mapping=camera_mapping,
@@ -593,6 +602,7 @@ class DexJoCoFastWAMAdapter:
         camera_key: str,
         camera_mapping: dict[str, str],
         task_prompt: str,
+        cfg_base_prompt: str | None = None,
     ) -> dict[str, Any]:
         policy_obs: dict[str, Any] = {
             KEY_INPUT_IMAGE: self._build_input_image(
@@ -603,8 +613,13 @@ class DexJoCoFastWAMAdapter:
             KEY_PROPRIO: self._extract_proprio(env_obs).astype(np.float32),
         }
         instruction = self.task_prompt(task_prompt)
+        base_instruction = (
+            None if cfg_base_prompt is None else self.task_prompt(cfg_base_prompt)
+        )
         if self.use_prompt or self.text_embedding_cache_dir is None:
             policy_obs[KEY_PROMPT] = instruction
+            if base_instruction is not None:
+                policy_obs[KEY_NEGATIVE_PROMPT] = base_instruction
         else:
             context, context_mask = load_text_context_arrays(
                 instruction,
@@ -613,6 +628,14 @@ class DexJoCoFastWAMAdapter:
             )
             policy_obs[KEY_CONTEXT] = context
             policy_obs[KEY_CONTEXT_MASK] = context_mask
+            if base_instruction is not None:
+                negative_context, negative_context_mask = load_text_context_arrays(
+                    base_instruction,
+                    text_embedding_cache_dir=self.text_embedding_cache_dir,
+                    context_len=self.context_len,
+                )
+                policy_obs[KEY_NEGATIVE_CONTEXT] = negative_context
+                policy_obs[KEY_NEGATIVE_CONTEXT_MASK] = negative_context_mask
         return policy_obs
 
     def _extract_proprio(self, env_obs: dict[str, Any]) -> np.ndarray:
@@ -758,6 +781,7 @@ class DexJoCoFastWAMEvalEnv:
             camera_key=self.task.camera_key,
             camera_mapping=self.task.camera_mapping,
             task_prompt=self.task.prompt,
+            cfg_base_prompt=self.task.cfg_base_prompt,
         )
 
     def _step_env(self, env_action: np.ndarray) -> None:

@@ -21,11 +21,11 @@ SKIPPED_PRETRAIN_SENTINEL = "SKIPPED_PRETRAIN"
 @dataclass
 class Wan22LoadedComponents:
     dit: WanVideoDiT
-    vae: WanVideoVAE38
+    vae: WanVideoVAE38 | None
     text_encoder: WanTextEncoder | None
     tokenizer: HuggingfaceTokenizer | None
     dit_path: str
-    vae_path: str
+    vae_path: str | None
     text_encoder_path: str | None
     tokenizer_path: str | None
 
@@ -148,6 +148,7 @@ def load_wan22_ti2v_5b_components(
     dit_config: dict[str, Any] | None = None,
     skip_dit_load_from_pretrain: bool = False,
     load_text_encoder: bool = True,
+    load_vae: bool = True,
 ):
     logger.info("Loading Wan2.2-TI2V-5B components...")
     start = time.time()
@@ -162,7 +163,8 @@ def load_wan22_ti2v_5b_components(
         redirect_common_files=redirect_common_files,
     )
 
-    vae_config.download_if_necessary()
+    if load_vae:
+        vae_config.download_if_necessary()
     if load_text_encoder:
         text_config.download_if_necessary()
         tokenizer_config.download_if_necessary()
@@ -207,7 +209,16 @@ def load_wan22_ti2v_5b_components(
             "Skipping pretrained text encoder/tokenizer load (`load_text_encoder=False`); "
             "training must provide cached `context/context_mask`."
         )
-    vae: WanVideoVAE38 = _load_registered_model(vae_config.path, "wan_video_vae", torch_dtype=torch_dtype, device=device)
+    vae: WanVideoVAE38 | None = None
+    vae_path: str | None = None
+    if load_vae:
+        vae = _load_registered_model(vae_config.path, "wan_video_vae", torch_dtype=torch_dtype, device=device)
+        vae_path = str(vae_config.path)
+    else:
+        logger.info(
+            "Skipping pretrained VAE load (`load_vae=False`); "
+            "training must provide precomputed `input_latents`."
+        )
     logger.info("Finished loading Wan2.2-TI2V-5B components in %.2f seconds.", time.time() - start)
     return Wan22LoadedComponents(
         dit=dit,
@@ -215,7 +226,7 @@ def load_wan22_ti2v_5b_components(
         text_encoder=text_encoder,
         tokenizer=tokenizer,
         dit_path=dit_path,
-        vae_path=str(vae_config.path),
+        vae_path=vae_path,
         text_encoder_path=text_encoder_path,
         tokenizer_path=tokenizer_path,
     )

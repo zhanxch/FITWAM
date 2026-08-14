@@ -52,6 +52,7 @@ DEFAULT_SOURCE_DATASET = DEFAULT_SOURCE_DATASET_ROOT / "water_plant"
 DEFAULT_SUCCESS_PROMPTS = {
     "water_plant": "Grasp the watering can and apply water to the plant.",
     "hammer_nail": "Pick up the hammer and hammer the nail into the board.",
+    "fold_glasses": "Fold the glasses and place them into the case.",
 }
 SHARD_LAUNCH_FRESH = "fresh"
 SHARD_LAUNCH_OVERWRITE = "overwrite"
@@ -110,6 +111,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     model.add_argument("--action-horizon", type=int, default=None)
     model.add_argument("--num-inference-steps", type=int, default=None)
+    model.add_argument(
+        "--text-cfg-scale",
+        type=float,
+        default=None,
+        help="Override action CFG scale; task YAML must provide cfg_base_prompt when scale != 1.",
+    )
     model.add_argument("--load-text-encoder", action=argparse.BooleanOptionalAction, default=True)
 
     collect = parser.add_argument_group("Collection")
@@ -246,6 +253,8 @@ def _build_server_argv(args: argparse.Namespace, server: ServerSpec) -> list[str
         argv += ["--action-horizon", str(args.action_horizon)]
     if args.num_inference_steps is not None:
         argv += ["--num-inference-steps", str(args.num_inference_steps)]
+    if getattr(args, "text_cfg_scale", None) is not None:
+        argv += ["--text-cfg-scale", str(args.text_cfg_scale)]
     argv += _bool_flag("load-text-encoder", args.load_text_encoder)
     return argv
 

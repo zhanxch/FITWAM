@@ -153,6 +153,8 @@ class EveSidecarBuilderTest(unittest.TestCase):
             failure_dataset_ids=None,
             success_sample_mode="episode_only",
             failure_sample_mode="event_only",
+            failure_window_selection="core_start_anchor",
+            failure_source_window_rules=None,
             event_types=None,
             collection_rounds=collection_rounds,
             splits=["train"],
@@ -162,6 +164,48 @@ class EveSidecarBuilderTest(unittest.TestCase):
             failure_sample_stride=1,
             failure_action_loss="disabled",
         )
+
+    def test_failure_sliding_selection_preserves_all_event_windows(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+
+        args = self.manifest_args("failure_sliding", collection_rounds=[0])
+        args.include_outcomes = ["failure"]
+        args.failure_window_selection = "sliding"
+        build_eve_sidecar.build_manifest(args)
+
+        manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "failure_sliding.json"
+        )
+        self.assertEqual(
+            manifest["selection"]["failure_window_selection"], "sliding"
+        )
+        self.assertEqual(manifest["num_samples"], 1)
+        self.assertNotIn("window_selection", manifest["samples"][0])
+
+    def test_failure_source_window_rule_excludes_full_episode_fallback(self) -> None:
+        build_eve_sidecar.init_base(self.init_args())
+        build_eve_sidecar.append_rollout(self.append_args())
+
+        event_path = self.eve_root / "event_meta.jsonl"
+        events = build_eve_sidecar.load_jsonl(event_path)
+        events[0]["source_window_rule"] = "full_failure_episode"
+        write_jsonl(event_path, events)
+
+        args = self.manifest_args("no_fallbacks")
+        args.failure_source_window_rules = ["trimmed_failure_window"]
+        build_eve_sidecar.build_manifest(args)
+
+        manifest = build_eve_sidecar.read_json(
+            self.eve_root / "manifests" / "no_fallbacks.json"
+        )
+        self.assertEqual(
+            manifest["selection"]["failure_source_window_rules"],
+            ["trimmed_failure_window"],
+        )
+        self.assertNotIn("failure", {
+            sample["episode_outcome"] for sample in manifest["samples"]
+        })
 
     def candidate_event_rows(self) -> list[dict[str, object]]:
         common = {

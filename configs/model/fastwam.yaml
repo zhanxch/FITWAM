@@ -3,20 +3,11 @@ model_id: Wan-AI/Wan2.2-TI2V-5B
 tokenizer_model_id: Wan-AI/Wan2.1-T2V-1.3B
 tokenizer_max_len: 128
 load_text_encoder: false
+load_vae: true
 proprio_dim: ${data.train.processor.proprio_output_dim}
 outcome_num_classes: 0
 redirect_common_files: true
 mot_checkpoint_mixed_attn: true
-offline_steer:
-  enabled: false
-  hidden_dim: 256
-  embedding_dim: 256
-  num_heads: 4
-  dropout: 0.0
-  detach_backbone_inputs: true
-  pair_loss_weight: 0.0
-  pair_loss_margin: 0.2
-  pair_loss_warmup_steps: 0
 action_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 state_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 skip_dit_load_from_pretrain: false

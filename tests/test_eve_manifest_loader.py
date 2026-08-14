@@ -5,7 +5,6 @@ import logging
 import sys
 import types
 import unittest
-from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -30,6 +29,17 @@ class _RobotVideoDataset:
             {"dataset_dirs": dataset_dirs, "kwargs": dict(kwargs)}
         )
         self.num_frames = int(kwargs.get("num_frames", 4))
+        self.vae_latent_cache_dir = kwargs.get("vae_latent_cache_dir")
+        self.require_vae_latent_cache = bool(
+            kwargs.get("require_vae_latent_cache", False)
+        )
+        self.drop_video_when_latents_cached = bool(
+            kwargs.get("drop_video_when_latents_cached", False)
+        )
+
+    def _maybe_attach_vae_latents(self, data, *, sample_id, window_start):
+        del sample_id, window_start
+        return data
 
 
 SCHEMA_CALLS: list[tuple[dict[str, object], bool, bool]] = []
@@ -60,13 +70,6 @@ def _load_module():
     schema_stub.resolve_manifest_dataset_root = _resolve_manifest_dataset_root
     logging_stub = types.ModuleType("fastwam.utils.logging_config")
     logging_stub.get_logger = logging.getLogger
-    pair_targets_stub = types.ModuleType("fastwam.datasets.eve.pair_targets")
-
-    class _PairTargetStore:
-        pass
-
-    pair_targets_stub.PairTargetStore = _PairTargetStore
-
     module_name = "_test_eve_manifest_dataset"
     spec = importlib.util.spec_from_file_location(module_name, MODULE_PATH)
     assert spec is not None and spec.loader is not None
@@ -76,7 +79,6 @@ def _load_module():
         {
             "torch": torch_stub,
             "fastwam.datasets.lerobot.robot_video_dataset": base_stub,
-            "fastwam.datasets.eve.pair_targets": pair_targets_stub,
             "fastwam.everobot_schema": schema_stub,
             "fastwam.utils.logging_config": logging_stub,
         },
@@ -234,69 +236,6 @@ class EveManifestLoaderTest(unittest.TestCase):
 
         self.assertEqual(SCHEMA_CALLS, [(manifest, True, False)])
 
-    def test_positive_pair_weight_requires_target_store(self) -> None:
-        dataset = EveManifestRobotVideoDataset.__new__(
-            EveManifestRobotVideoDataset
-        )
-        dataset.manifest = self._manifest("/old/root")
-        dataset.manifest["samples"][0].update(
-            {
-                "sample_type": "event",
-                "event_id": "failure-event",
-                "episode_outcome": "failure",
-                "pair_id": "pair-0",
-                "pair_weight": 0.8,
-                "split": "train",
-            }
-        )
-        dataset.manifest_splits = {"train"}
-        dataset.manifest_collection_iters = None
-        dataset.pair_targets_path = None
-        dataset.expected_teacher_sha256 = None
-        dataset._pair_target_store = None
-        dataset.pair_target_embedding_dim = None
-        dataset.pair_target_teacher_sha256 = None
-
-        with self.assertRaisesRegex(ValueError, "pair_targets_path"):
-            dataset._validate_pair_target_references()
-
-    def test_unpaired_units_receive_fixed_shape_zero_targets(self) -> None:
-        dataset = EveManifestRobotVideoDataset.__new__(
-            EveManifestRobotVideoDataset
-        )
-        dataset.pair_target_embedding_dim = 3
-        data: dict[str, object] = {}
-        dataset._add_pair_targets(data, {"pair_weight": 0.0})
-
-        self.assertEqual(data["steer_success_target"], [0.0, 0.0, 0.0])
-        self.assertEqual(data["steer_failure_target"], [0.0, 0.0, 0.0])
-
-    def test_paired_units_receive_teacher_targets(self) -> None:
-        @dataclass
-        class _Target:
-            z_plus: object
-            z_minus: object
-
-        class _Store:
-            def get(self, pair_id, *, backend, dtype):
-                self.request = (pair_id, backend, dtype)
-                return _Target(z_plus=[1.0, 0.0], z_minus=[0.0, 1.0])
-
-        dataset = EveManifestRobotVideoDataset.__new__(
-            EveManifestRobotVideoDataset
-        )
-        dataset.pair_target_embedding_dim = 2
-        store = _Store()
-        dataset._ensure_pair_target_store = lambda: store
-        data: dict[str, object] = {}
-        dataset._add_pair_targets(
-            data, {"pair_id": "pair-0", "pair_weight": 0.5}
-        )
-
-        self.assertEqual(store.request, ("pair-0", "torch", "float32"))
-        self.assertEqual(data["steer_success_target"], [1.0, 0.0])
-        self.assertEqual(data["steer_failure_target"], [0.0, 1.0])
-
     def test_source_stride_limits_windows_to_the_manifest_interval(self) -> None:
         with TemporaryDirectory() as tmp:
             root = str(Path(tmp) / "dataset")
@@ -441,10 +380,6 @@ class EveManifestLoaderTest(unittest.TestCase):
                 ),
                 mock.patch.object(
                     EveManifestRobotVideoDataset,
-                    "_validate_pair_target_references",
-                ),
-                mock.patch.object(
-                    EveManifestRobotVideoDataset,
                     "_build_episode_index",
                     return_value={(str(Path(root).resolve()), 3): (0, 8)},
                 ),
@@ -452,13 +387,12 @@ class EveManifestLoaderTest(unittest.TestCase):
                 dataset = EveManifestRobotVideoDataset(
                     manifest_path=str(Path(tmp) / "manifest.json"),
                     num_frames=4,
-                    paired_failure_anchor_only=False,
                 )
 
         self.assertEqual(len(dataset._samples), 1)
         self.assertEqual(dataset._samples[0]["window_start"], 4)
 
-    def test_legacy_paired_failure_without_marker_still_anchors(self) -> None:
+    def test_paired_failure_without_window_selection_keeps_sliding_windows(self) -> None:
         with TemporaryDirectory() as tmp:
             root = str(Path(tmp) / "dataset")
             manifest = self._manifest(root)
@@ -480,10 +414,6 @@ class EveManifestLoaderTest(unittest.TestCase):
                 ),
                 mock.patch.object(
                     EveManifestRobotVideoDataset,
-                    "_validate_pair_target_references",
-                ),
-                mock.patch.object(
-                    EveManifestRobotVideoDataset,
                     "_build_episode_index",
                     return_value={(str(Path(root).resolve()), 3): (0, 8)},
                 ),
@@ -493,8 +423,10 @@ class EveManifestLoaderTest(unittest.TestCase):
                     num_frames=4,
                 )
 
-        self.assertEqual(len(dataset._samples), 1)
-        self.assertEqual(dataset._samples[0]["window_start"], 4)
+        self.assertEqual(
+            [sample["window_start"] for sample in dataset._samples],
+            [0, 1, 2, 3, 4],
+        )
 
     def test_success_auxiliary_event_selects_one_33_frame_anchor_window(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -627,10 +559,6 @@ class EveManifestLoaderTest(unittest.TestCase):
                 mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
                 mock.patch.object(
                     manifest_dataset, "_load_eve_action_schema", return_value=None
-                ),
-                mock.patch.object(
-                    EveManifestRobotVideoDataset,
-                    "_validate_pair_target_references",
                 ),
                 mock.patch.object(
                     EveManifestRobotVideoDataset,
@@ -775,7 +703,9 @@ class EveManifestLoaderTest(unittest.TestCase):
                 "window_end": 6,
             }
         ]
-        dataset._get = lambda _: {}
+        dataset.vae_latent_cache_dir = None
+        dataset.drop_video_when_latents_cached = False
+        dataset._get = lambda *args, **kwargs: {}
 
         data = dataset._get_eve(0)
 
@@ -810,7 +740,9 @@ class EveManifestLoaderTest(unittest.TestCase):
                 "window_end": 6,
             }
         ]
-        dataset._get = lambda _: {}
+        dataset.vae_latent_cache_dir = None
+        dataset.drop_video_when_latents_cached = False
+        dataset._get = lambda *args, **kwargs: {}
 
         data = dataset._get_eve(0)
 

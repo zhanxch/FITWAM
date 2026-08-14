@@ -688,6 +688,7 @@ def evaluate_task(
     return {
         "env_name": task.env_name,
         "prompt": task.prompt,
+        "cfg_base_prompt": task.cfg_base_prompt,
         "dual_arm": task.dual_arm,
         "camera_key": task.camera_key,
         "episodes": int(args.episodes),

@@ -39,12 +39,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import signal
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -71,7 +69,6 @@ from multi_gpu_eval_utils import (  # noqa: E402
 DEFAULT_SERVER_SCRIPT = SCRIPTS_ROOT / "run_fastwam_server_async.py"
 DEFAULT_CLIENT_SCRIPT = THIS_DIR / "eval_dexjoco_fastwam_control.py"
 DEFAULT_DEXJOCO_PY_ROOT = PROJECT_ROOT / "third_party" / "dexjoco" / "dexjoco"
-STEER_PROTOCOL_SCHEMA_VERSION = 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -153,28 +150,10 @@ def parse_args() -> argparse.Namespace:
         help="Use the same diffusion inference seed on every policy server.",
     )
     model.add_argument(
-        "--steer-inference-mode",
-        choices=["learned", "bypass", "cached"],
-        default="learned",
-        help="Inference-only steer intervention forwarded to every policy server.",
-    )
-    model.add_argument(
-        "--steer-cache-path",
-        type=str,
+        "--text-cfg-scale",
+        type=float,
         default=None,
-        help="Cached-mode JSONL path template; supports {shard}, {gpu}, and {port}.",
-    )
-    model.add_argument(
-        "--steer-cache-sha256",
-        type=str,
-        default=None,
-        help="One SHA256 or comma-separated SHA256 values in shard order.",
-    )
-    model.add_argument(
-        "--steer-cache-record-path",
-        type=str,
-        default=None,
-        help="Learned-mode JSONL output template; supports {shard}, {gpu}, and {port}.",
+        help="Override action CFG scale; task YAML must provide cfg_base_prompt when scale != 1.",
     )
     model.add_argument(
         "--load-text-encoder",
@@ -219,55 +198,12 @@ def _bool_flag(name: str, value: bool | None) -> list[str]:
     return [f"--{name}" if value else f"--no-{name}"]
 
 
-def _format_steer_path_template(
-    value: str,
-    *,
-    server: ServerSpec,
-    shard_id: int,
-) -> str:
-    return str(value).format(
-        shard=int(shard_id),
-        gpu=int(server.gpu),
-        port=int(server.port),
-    )
-
-
-def _select_steer_cache_sha256(value: str, *, shard_id: int) -> str:
-    values = [item.strip().lower() for item in str(value).split(",") if item.strip()]
-    if len(values) == 1:
-        selected = values[0]
-    elif 0 <= shard_id < len(values):
-        selected = values[shard_id]
-    else:
-        raise ValueError(
-            "--steer-cache-sha256 must contain one value or one value per shard."
-        )
-    if len(selected) != 64 or any(
-        character not in "0123456789abcdef" for character in selected
-    ):
-        raise ValueError(
-            "Each steer cache SHA256 must be 64 hexadecimal characters."
-        )
-    return selected
-
-
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _json_sha256(payload: Any) -> str:
-    canonical = json.dumps(
-        payload,
-        allow_nan=False,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _resolve_run_dir(run_dir: Path) -> Path:
@@ -321,101 +257,14 @@ def _resolve_model_provenance(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _build_steer_protocol(
-    args: argparse.Namespace,
-    shard: ShardSpec,
-) -> dict[str, Any]:
-    tasks = list(args.tasks or [])
-    if len(tasks) != 1:
-        raise ValueError(
-            "Steer cache replay/recording currently requires exactly one task per run."
-        )
-    provenance = getattr(args, "_model_provenance", None)
-    if not isinstance(provenance, dict):
-        provenance = _resolve_model_provenance(args)
-    return {
-        "schema": "fastwam.steer_protocol",
-        "schema_version": STEER_PROTOCOL_SCHEMA_VERSION,
-        "task": str(tasks[0]),
-        "environment_seeds": {
-            "global_base": int(args.seed),
-            "global_end_exclusive": int(args.seed + args.episodes),
-            "shard_base": int(shard.base_seed),
-            "shard_end_exclusive": int(shard.base_seed + shard.num_episodes),
-        },
-        "episodes": {
-            "global_start": 0,
-            "global_end_exclusive": int(args.episodes),
-            "shard_id": int(shard.shard_id),
-            "shard_global_start": int(shard.global_episode_start),
-            "shard_global_end_exclusive": int(
-                shard.global_episode_start + shard.num_episodes
-            ),
-            "local_start": 0,
-            "local_end_exclusive": int(shard.num_episodes),
-        },
-        "inference": {
-            "seed": (
-                None
-                if getattr(args, "inference_seed", None) is None
-                else int(args.inference_seed)
-            ),
-            "replan_steps": int(args.replan_steps),
-            "max_env_steps": int(args.max_env_steps),
-            "max_requests_per_episode": int(
-                math.ceil(args.max_env_steps / args.replan_steps)
-            ),
-            "control_mode": str(args.control_mode),
-            "async_fallback": str(args.async_fallback),
-            "action_horizon_override": (
-                None if args.action_horizon is None else int(args.action_horizon)
-            ),
-            "num_inference_steps_override": (
-                None
-                if args.num_inference_steps is None
-                else int(args.num_inference_steps)
-            ),
-        },
-        "environment_options": {
-            "randomize": bool(args.randomize),
-            "randomize_dynamics": bool(args.randomize_dynamics),
-            "action_clip": bool(args.action_clip),
-            "clip_max_xyz_step": float(args.clip_max_xyz_step),
-            "clip_max_dz_down": float(args.clip_max_dz_down),
-            "task_config_dir": str(Path(args.task_config_dir).expanduser().resolve()),
-        },
-        "model": {
-            "checkpoint_path": str(provenance["checkpoint_path"]),
-            "checkpoint_sha256": str(provenance["checkpoint_sha256"]),
-            "config_path": str(provenance["config_path"]),
-            "config_sha256": str(provenance["config_sha256"]),
-        },
-    }
-
-
-def _build_server_argv(
-    args: argparse.Namespace,
-    server: ServerSpec,
-    shard_id: int = 0,
-    shard: ShardSpec | None = None,
-) -> list[str]:
-    steer_mode = str(getattr(args, "steer_inference_mode", "learned"))
-    steer_cache_path = getattr(args, "steer_cache_path", None)
-    steer_cache_record_path = getattr(args, "steer_cache_record_path", None)
-    stateful_steer_cache = steer_cache_path is not None or steer_cache_record_path is not None
-    if stateful_steer_cache and str(args.control_mode) != "blocking":
-        raise ValueError(
-            "Steer cache replay/recording currently requires --control-mode blocking "
-            "so full-horizon request coverage is deterministic."
-        )
-    server_num_workers = 1 if stateful_steer_cache else int(args.server_num_workers)
+def _build_server_argv(args: argparse.Namespace, server: ServerSpec) -> list[str]:
     argv: list[str] = [
         "python",
         str(Path(args.server_script).resolve()),
         "--device", server.device,
         "--host", server.bind_host,
         "--port", str(server.port),
-        "--num-workers", str(server_num_workers),
+        "--num-workers", str(args.server_num_workers),
     ]
     if args.mock:
         argv.append("--mock")
@@ -423,64 +272,6 @@ def _build_server_argv(
         if not args.run_dir or not args.checkpoint:
             raise ValueError("--run-dir and --checkpoint are required unless --mock is set.")
         argv += ["--run-dir", str(args.run_dir.resolve()), "--checkpoint", str(args.checkpoint)]
-        steer_cache_sha256 = getattr(args, "steer_cache_sha256", None)
-        argv += ["--steer-inference-mode", steer_mode]
-        if steer_mode == "cached":
-            if steer_cache_path is None or steer_cache_sha256 is None:
-                raise ValueError(
-                    "cached steer mode requires --steer-cache-path and "
-                    "--steer-cache-sha256."
-                )
-            if steer_cache_record_path is not None:
-                raise ValueError("cached steer mode cannot record learned embeddings.")
-            argv += [
-                "--steer-cache-path",
-                _format_steer_path_template(
-                    steer_cache_path,
-                    server=server,
-                    shard_id=shard_id,
-                ),
-                "--steer-cache-sha256",
-                _select_steer_cache_sha256(
-                    steer_cache_sha256,
-                    shard_id=shard_id,
-                ),
-            ]
-        else:
-            if steer_cache_path is not None or steer_cache_sha256 is not None:
-                raise ValueError(
-                    "--steer-cache-path/--steer-cache-sha256 require cached mode."
-                )
-            if steer_cache_record_path is not None:
-                if steer_mode != "learned":
-                    raise ValueError(
-                        "--steer-cache-record-path requires learned steer mode."
-                    )
-                argv += [
-                    "--steer-cache-record-path",
-                    _format_steer_path_template(
-                        steer_cache_record_path,
-                        server=server,
-                        shard_id=shard_id,
-                    ),
-                ]
-        if stateful_steer_cache:
-            if shard is None:
-                raise ValueError("Stateful steer cache server launch requires its ShardSpec.")
-            protocol = _build_steer_protocol(args, shard)
-            protocol_registry = getattr(args, "_steer_protocols", None)
-            if isinstance(protocol_registry, dict):
-                protocol_registry[int(shard.shard_id)] = protocol
-            argv += [
-                "--steer-protocol-json",
-                json.dumps(
-                    protocol,
-                    allow_nan=False,
-                    ensure_ascii=True,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-            ]
     dataset_stats_path = getattr(args, "dataset_stats_path", None)
     norm_stats_meta_dir = getattr(args, "norm_stats_meta_dir", None)
     if dataset_stats_path is not None and norm_stats_meta_dir is not None:
@@ -501,6 +292,9 @@ def _build_server_argv(
     inference_seed = getattr(args, "inference_seed", None)
     if inference_seed is not None:
         argv += ["--inference-seed", str(inference_seed)]
+    text_cfg_scale = getattr(args, "text_cfg_scale", None)
+    if text_cfg_scale is not None:
+        argv += ["--text-cfg-scale", str(text_cfg_scale)]
     argv += _bool_flag("load-text-encoder", args.load_text_encoder)
     return argv
 
@@ -619,56 +413,6 @@ def _combined_summary_metadata(
     model_provenance = getattr(args, "_model_provenance", None)
     if not isinstance(model_provenance, dict):
         model_provenance = _resolve_model_provenance(args)
-    steer_cache_sha256 = getattr(args, "steer_cache_sha256", None)
-    steer_mode = str(getattr(args, "steer_inference_mode", "learned"))
-    steer_cache_path = getattr(args, "steer_cache_path", None)
-    steer_record_path = getattr(args, "steer_cache_record_path", None)
-    resolved_steer_servers = []
-    protocol_registry = getattr(args, "_steer_protocols", {})
-    for shard_id, (gpu, port) in enumerate(zip(gpus, ports)):
-        server = SimpleNamespace(
-            gpu=gpu,
-            port=port,
-        )
-        resolved_steer_servers.append(
-            {
-                "shard": shard_id,
-                "gpu": int(gpu),
-                "port": int(port),
-                "cache_path": (
-                    None
-                    if steer_cache_path is None
-                    else _format_steer_path_template(
-                        steer_cache_path,
-                        server=server,
-                        shard_id=shard_id,
-                    )
-                ),
-                "cache_sha256": (
-                    None
-                    if steer_cache_sha256 is None
-                    else _select_steer_cache_sha256(
-                        steer_cache_sha256,
-                        shard_id=shard_id,
-                    )
-                ),
-                "record_path": (
-                    None
-                    if steer_record_path is None
-                    else _format_steer_path_template(
-                        steer_record_path,
-                        server=server,
-                        shard_id=shard_id,
-                    )
-                ),
-                "protocol": protocol_registry.get(shard_id),
-                "protocol_sha256": (
-                    None
-                    if protocol_registry.get(shard_id) is None
-                    else _json_sha256(protocol_registry[shard_id])
-                ),
-            }
-        )
     return {
         "policy_host": args.client_host,
         "seed": int(args.seed),
@@ -677,21 +421,11 @@ def _combined_summary_metadata(
             if args.inference_seed is None
             else int(args.inference_seed)
         ),
-        "steer_inference": {
-            "mode": steer_mode,
-            "cache_path_template": steer_cache_path,
-            "cache_sha256": (
-                None
-                if steer_cache_sha256 is None
-                else [
-                    item.strip().lower()
-                    for item in str(steer_cache_sha256).split(",")
-                    if item.strip()
-                ]
-            ),
-            "record_path_template": steer_record_path,
-            "servers": resolved_steer_servers,
-        },
+        "text_cfg_scale": (
+            None
+            if getattr(args, "text_cfg_scale", None) is None
+            else float(args.text_cfg_scale)
+        ),
         "model_provenance": model_provenance,
         "task": (
             str(args.tasks[0])
@@ -735,7 +469,7 @@ def main() -> int:
         raise ValueError(
             "--no-launch-servers is disabled for real-model evaluation because "
             "the orchestrator cannot prove that existing servers exactly match "
-            "the requested checkpoint, config, and steer intervention."
+            "the requested checkpoint and config."
         )
     gpus = _parse_int_list(args.gpus)
     if not gpus:
@@ -765,7 +499,6 @@ def main() -> int:
               f"skipping idle shards {idle}", flush=True)
 
     args._model_provenance = _resolve_model_provenance(args)
-    args._steer_protocols = {}
 
     out_dir = args.output_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -806,12 +539,7 @@ def main() -> int:
             for shard in shards:
                 shard_dir = out_dir / args.shard_dir_fmt.format(i=shard.shard_id)
                 log_path = shard_dir / "server.log"
-                argv = _build_server_argv(
-                    args,
-                    shard.server,
-                    shard_id=shard.shard_id,
-                    shard=shard,
-                )
+                argv = _build_server_argv(args, shard.server)
                 exports, raw_exports = _server_exports(args, shard.server)
                 cmd = build_conda_command(
                     conda_sh,

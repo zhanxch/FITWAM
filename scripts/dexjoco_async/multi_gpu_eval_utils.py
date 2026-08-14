@@ -231,7 +231,18 @@ def build_conda_command(
         parts.append(f"export {key}={shlex.quote(value)}")
     for key, value in (raw_exports or {}).items():
         parts.append(f"export {key}={value}")
-    parts.append("exec " + " ".join(shlex.quote(str(a)) for a in python_argv))
+    # Prefer $CONDA_PREFIX/bin/python after activate. A bare `python` can stay on the
+    # parent env's PATH (e.g. fastwam) when collectors are launched from a FITWAM shell.
+    if python_argv and Path(str(python_argv[0])).name == "python":
+        py_exe = '"${CONDA_PREFIX}/bin/python"'
+        py_args = " ".join(shlex.quote(str(a)) for a in python_argv[1:])
+        parts.append(
+            'printf "[conda] env=%s prefix=%s\\n" '
+            '"${CONDA_DEFAULT_ENV:-}" "${CONDA_PREFIX:-}" >&2'
+        )
+        parts.append(f"exec {py_exe} {py_args}".rstrip())
+    else:
+        parts.append("exec " + " ".join(shlex.quote(str(a)) for a in python_argv))
     return ["bash", "-c", " && ".join(parts)]
 
 

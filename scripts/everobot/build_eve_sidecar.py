@@ -914,8 +914,8 @@ def append_rollout(args: argparse.Namespace) -> None:
                 annotation_confidence = (
                     0.25 if window_rule != "full_failure_episode" else 0.1
                 )
-        event_rows.append(
-            {
+        trim_row = trim_report.get(int(ep_idx), {})
+        event_row: dict[str, Any] = {
                 "schema_version": SCHEMA_VERSION,
                 "event_id": event_id,
                 "episode_id": make_episode_id(dataset_id, ep_idx),
@@ -947,7 +947,22 @@ def append_rollout(args: argparse.Namespace) -> None:
                 },
                 "split": episode_split,
             }
-        )
+        for field in (
+            "core_start_frame",
+            "core_end_frame",
+            "event_center_frame",
+            "jump_ratio",
+            "width",
+            "baseline_median",
+            "detection",
+        ):
+            if field in trim_row and trim_row[field] is not None:
+                event_row[field] = trim_row[field]
+        if "core_start_frame" not in event_row and (end_frame - start_frame) > 0:
+            # Single-window events: core anchor = interval start.
+            event_row["core_start_frame"] = int(start_frame)
+            event_row["core_end_frame"] = int(end_frame)
+        event_rows.append(event_row)
 
     with sidecar_write_lock(eve_root):
         write_schema(eve_root)
@@ -1205,6 +1220,7 @@ def event_manifest_sample(
     failure_sample_stride: int,
     failure_action_loss: str,
     batch_role: str | None = None,
+    auxiliary_window_selection: str | None = "core_start_anchor",
 ) -> dict[str, Any]:
     dataset_id = str(row["dataset_id"])
     episode_index = int(row["episode_index"])
@@ -1280,12 +1296,13 @@ def event_manifest_sample(
     }
     if batch_role is not None:
         sample["batch_role"] = batch_role
-    if batch_role == "auxiliary":
-        sample["window_selection"] = "core_start_anchor"
+    if batch_role == "auxiliary" and auxiliary_window_selection is not None:
+        sample["window_selection"] = auxiliary_window_selection
     for field in (
         "absolute_confidence",
         "episode_sampling_weight",
         "event_weight",
+        "source_window_rule",
         "core_start_frame",
         "core_end_frame",
         "core_interval",
@@ -1341,6 +1358,17 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
         raise ValueError(
             f"Unsupported success_sample_mode: {success_sample_mode!r}"
         )
+    failure_window_selection = getattr(
+        args, "failure_window_selection", "core_start_anchor"
+    )
+    if failure_window_selection not in {"core_start_anchor", "sliding"}:
+        raise ValueError(
+            "Unsupported failure_window_selection: "
+            f"{failure_window_selection!r}"
+        )
+    failure_source_window_rules = parse_optional_set(
+        getattr(args, "failure_source_window_rules", None)
+    )
     include_sample_ids = parse_optional_set(args.include_sample_ids)
     exclude_sample_ids = parse_optional_set(args.exclude_sample_ids) or set()
     if include_sample_ids is not None:
@@ -1481,6 +1509,12 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
                     continue
                 if not selected_dataset(row, failure_dataset_ids):
                     continue
+                if (
+                    failure_source_window_rules is not None
+                    and str(row.get("source_window_rule", ""))
+                    not in failure_source_window_rules
+                ):
+                    continue
                 if not row_matches_manifest_selection(
                     row, collection_rounds=collection_rounds, splits=splits
                 ):
@@ -1503,6 +1537,11 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
                         failure_sample_stride=int(args.failure_sample_stride),
                         failure_action_loss=args.failure_action_loss,
                         batch_role="auxiliary",
+                        auxiliary_window_selection=(
+                            None
+                            if failure_window_selection == "sliding"
+                            else "core_start_anchor"
+                        ),
                     )
                 )
                 used_event_rows[str(row["event_id"])] = row
@@ -1637,6 +1676,12 @@ def _build_manifest_locked(args: argparse.Namespace, eve_root: Path) -> None:
                 else None
             ),
             "failure_sample_mode": args.failure_sample_mode,
+            "failure_window_selection": failure_window_selection,
+            "failure_source_window_rules": (
+                sorted(failure_source_window_rules)
+                if failure_source_window_rules is not None
+                else None
+            ),
             "event_types": sorted(event_types) if event_types is not None else None,
         },
         "dataset_roots": dataset_roots,
@@ -1756,6 +1801,24 @@ def parse_args() -> argparse.Namespace:
         default="episode_only",
     )
     manifest.add_argument("--failure-sample-mode", choices=["event_only", "full_episode", "both"], default="event_only")
+    manifest.add_argument(
+        "--failure-window-selection",
+        choices=["core_start_anchor", "sliding"],
+        default="core_start_anchor",
+        help=(
+            "Select one anchored window per failure event or expand every legal "
+            "training window inside the event interval."
+        ),
+    )
+    manifest.add_argument(
+        "--failure-source-window-rules",
+        nargs="+",
+        default=None,
+        help=(
+            "Include failure events only when source_window_rule is listed, "
+            "for example trimmed_failure_window to exclude full-episode fallbacks."
+        ),
+    )
     manifest.add_argument(
         "--event-types",
         nargs="+",

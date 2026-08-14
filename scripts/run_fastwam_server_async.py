@@ -18,7 +18,6 @@ for path in (PROJECT_ROOT, SRC_ROOT, SCRIPTS_ROOT):
 
 from fastwam_policy_server_async import DEFAULT_ASYNC_SERVER_PORT, PolicyServerAsync
 from run_fastwam_server import (
-    STEER_INFERENCE_MODES,
     FastWAMPolicy,
     MockFastWAMPolicy,
     _build_policy_from_run,
@@ -66,15 +65,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override EVALUATION.seed for deterministic diffusion sampling.",
     )
-    parser.add_argument(
-        "--steer-inference-mode",
-        choices=STEER_INFERENCE_MODES,
-        default="learned",
-    )
-    parser.add_argument("--steer-cache-path", type=str, default=None)
-    parser.add_argument("--steer-cache-sha256", type=str, default=None)
-    parser.add_argument("--steer-cache-record-path", type=str, default=None)
-    parser.add_argument("--steer-protocol-json", type=str, default=None)
+    parser.add_argument("--text-cfg-scale", type=float, default=None)
+    parser.add_argument("--negative-prompt", type=str, default=None)
     parser.add_argument(
         "--load-text-encoder",
         dest="load_text_encoder",
@@ -95,15 +87,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    stateful_steer_cache = (
-        getattr(args, "steer_cache_path", None) is not None
-        or getattr(args, "steer_cache_record_path", None) is not None
-    )
-    if stateful_steer_cache and int(args.num_workers) != 1:
-        raise ValueError(
-            "Steer cache replay/recording uses one-client episode/request indices; "
-            "the async server therefore requires --num-workers 1."
-        )
     print("Starting FastWAM async inference server...", flush=True)
     print(f"  Host: {args.host}", flush=True)
     print(f"  Port: {args.port}", flush=True)
@@ -126,11 +109,8 @@ def main() -> None:
             num_inference_steps=args.num_inference_steps,
             load_text_encoder=args.load_text_encoder,
             inference_seed=args.inference_seed,
-            steer_inference_mode=getattr(args, "steer_inference_mode", "learned"),
-            steer_cache_path=getattr(args, "steer_cache_path", None),
-            steer_cache_sha256=getattr(args, "steer_cache_sha256", None),
-            steer_cache_record_path=getattr(args, "steer_cache_record_path", None),
-            steer_protocol_json=getattr(args, "steer_protocol_json", None),
+            text_cfg_scale=getattr(args, "text_cfg_scale", None),
+            negative_prompt=getattr(args, "negative_prompt", None),
         )
         policy = FastWAMPolicyAsync(
             model=base_policy.model,
@@ -145,10 +125,6 @@ def main() -> None:
             seed=base_policy.seed,
             rand_device=base_policy.rand_device,
             tiled=base_policy.tiled,
-            steer_inference_mode=getattr(base_policy, "steer_inference_mode", "learned"),
-            steer_cache=getattr(base_policy, "steer_cache", None),
-            steer_cache_recorder=getattr(base_policy, "steer_cache_recorder", None),
-            steer_protocol=getattr(base_policy, "steer_protocol", None),
             model_provenance=getattr(base_policy, "model_provenance", None),
         )
         print(f"  Run dir: {_resolve_run_dir(run_dir)}", flush=True)
@@ -170,10 +146,6 @@ def main() -> None:
         server.run()
     except KeyboardInterrupt:
         print("\nShutting down async server...", flush=True)
-    finally:
-        close_policy = getattr(policy, "close", None)
-        if close_policy is not None:
-            close_policy()
 
 
 if __name__ == "__main__":

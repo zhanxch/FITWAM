@@ -80,6 +80,9 @@ def create_fastwam(
     video_dit_config,
     tokenizer_max_len: int = 512,
     load_text_encoder: bool = True,
+    load_vae: bool = True,
+    fill_vae_latent_cache: bool = False,
+    vae_latent_cache_dir=None,
     proprio_dim: int | None = None,
     outcome_num_classes: int = 0,
     action_dit_config=None,
@@ -92,7 +95,6 @@ def create_fastwam(
     state_scheduler=None,
     loss=None,
     video_lora=None,
-    offline_steer=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
     model_dtype: torch.dtype = torch.bfloat16,
@@ -100,6 +102,7 @@ def create_fastwam(
 ):
     from .models.wan22.fastwam import FastWAM
     from .models.wan22.video_lora import inject_video_lora, normalize_video_lora_config
+    from .datasets.vae_latent_cache import resolve_optional_path
 
     if isinstance(video_dit_config, DictConfig):
         video_dit_config = OmegaConf.to_container(video_dit_config, resolve=True)
@@ -157,13 +160,22 @@ def create_fastwam(
         video_lora = OmegaConf.to_container(video_lora, resolve=True)
     video_lora_cfg = normalize_video_lora_config(video_lora)
 
-    if isinstance(offline_steer, DictConfig):
-        offline_steer = OmegaConf.to_container(offline_steer, resolve=True)
-    if offline_steer is None:
-        offline_steer = {}
-    if not isinstance(offline_steer, dict):
+    fill_cache = bool(fill_vae_latent_cache)
+    env_fill = os.environ.get("FILL_VAE_LATENT_CACHE", "").strip().lower()
+    if env_fill in {"1", "true", "yes", "y"}:
+        fill_cache = True
+    elif env_fill in {"0", "false", "no", "n"}:
+        fill_cache = False
+    cache_dir = resolve_optional_path(vae_latent_cache_dir)
+    if cache_dir is None:
+        cache_dir = resolve_optional_path(os.environ.get("VAE_LATENT_CACHE_DIR", None))
+    if fill_cache and not load_vae:
         raise ValueError(
-            f"`offline_steer` must be dict-like, got {type(offline_steer)}"
+            "`fill_vae_latent_cache=true` requires `load_vae=true` so misses can be encoded."
+        )
+    if fill_cache and cache_dir is None:
+        raise ValueError(
+            "`fill_vae_latent_cache=true` requires `vae_latent_cache_dir` or env VAE_LATENT_CACHE_DIR."
         )
 
     model = FastWAM.from_wan22_pretrained(
@@ -173,6 +185,7 @@ def create_fastwam(
         tokenizer_model_id=tokenizer_model_id,
         tokenizer_max_len=int(tokenizer_max_len),
         load_text_encoder=bool(load_text_encoder),
+        load_vae=bool(load_vae),
         proprio_dim=(None if proprio_dim is None else int(proprio_dim)),
         outcome_num_classes=int(outcome_num_classes or 0),
         redirect_common_files=bool(redirect_common_files),
@@ -195,8 +208,9 @@ def create_fastwam(
         loss_lambda_video=float(loss.get("lambda_video", 1.0)),
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
         loss_lambda_state=float(loss.get("lambda_state", 1.0)),
-        offline_steer_config=offline_steer,
     )
+    model.fill_vae_latent_cache = bool(fill_cache)
+    model.vae_latent_cache_dir = None if cache_dir is None else str(cache_dir)
     model.video_lora_enabled = bool(video_lora_cfg.get("enabled", False))
     model.video_lora_config = video_lora_cfg
     if model.video_lora_enabled:

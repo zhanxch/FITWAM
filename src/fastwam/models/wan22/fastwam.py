@@ -1,3 +1,4 @@
+import math
 from typing import Any, Optional, Sequence, Union
 
 import torch
@@ -10,11 +11,6 @@ from fastwam.utils.logging_config import get_logger
 from .action_dit import ActionDiT
 from .helpers.loader import load_wan22_ti2v_5b_components
 from .mot import MoT
-from .offline_steer import (
-    ObservationSteerStudent,
-    ZeroInitSteerResidual,
-    weighted_pair_loss,
-)
 from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
 from .state_dit import StateDiT
 
@@ -50,7 +46,6 @@ class FastWAM(torch.nn.Module):
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
         loss_lambda_state: float = 1.0,
-        offline_steer_config: Optional[dict[str, Any]] = None,
     ):
         super().__init__()
         self.video_expert = video_expert
@@ -78,76 +73,6 @@ class FastWAM(torch.nn.Module):
             self.outcome_encoder = nn.Embedding(self.outcome_num_classes, self.text_dim).to(torch_dtype)
         else:
             self.outcome_encoder = None
-        offline_steer_config = dict(offline_steer_config or {})
-        supported_steer_keys = {
-            "enabled",
-            "hidden_dim",
-            "embedding_dim",
-            "num_heads",
-            "dropout",
-            "detach_backbone_inputs",
-            "pair_loss_weight",
-            "pair_loss_margin",
-            "pair_loss_warmup_steps",
-        }
-        unknown_steer_keys = set(offline_steer_config) - supported_steer_keys
-        if unknown_steer_keys:
-            raise ValueError(
-                f"Unsupported `offline_steer` keys: {sorted(unknown_steer_keys)}"
-            )
-        self.offline_steer_enabled = bool(offline_steer_config.get("enabled", False))
-        self.offline_steer_config = {
-            "enabled": self.offline_steer_enabled,
-            "hidden_dim": int(offline_steer_config.get("hidden_dim", 256)),
-            "embedding_dim": int(offline_steer_config.get("embedding_dim", 256)),
-            "num_heads": int(offline_steer_config.get("num_heads", 4)),
-            "dropout": float(offline_steer_config.get("dropout", 0.0)),
-            "detach_backbone_inputs": bool(
-                offline_steer_config.get("detach_backbone_inputs", True)
-            ),
-            "pair_loss_weight": float(
-                offline_steer_config.get("pair_loss_weight", 0.0)
-            ),
-            "pair_loss_margin": float(
-                offline_steer_config.get("pair_loss_margin", 0.2)
-            ),
-            "pair_loss_warmup_steps": int(
-                offline_steer_config.get("pair_loss_warmup_steps", 0)
-            ),
-        }
-        if self.offline_steer_config["pair_loss_weight"] < 0.0:
-            raise ValueError("`offline_steer.pair_loss_weight` must be non-negative.")
-        if self.offline_steer_config["pair_loss_margin"] < 0.0:
-            raise ValueError("`offline_steer.pair_loss_margin` must be non-negative.")
-        if self.offline_steer_config["pair_loss_warmup_steps"] < 0:
-            raise ValueError(
-                "`offline_steer.pair_loss_warmup_steps` must be non-negative."
-            )
-        if self.offline_steer_enabled:
-            if not hasattr(self.video_expert, "hidden_dim"):
-                raise ValueError(
-                    "Enabled `offline_steer` requires `video_expert.hidden_dim`."
-                )
-            if not hasattr(self.action_expert, "hidden_dim"):
-                raise ValueError(
-                    "Enabled `offline_steer` requires `action_expert.hidden_dim`."
-                )
-            self.offline_steer_student = ObservationSteerStudent(
-                video_dim=int(self.video_expert.hidden_dim),
-                context_dim=self.text_dim,
-                hidden_dim=self.offline_steer_config["hidden_dim"],
-                embedding_dim=self.offline_steer_config["embedding_dim"],
-                num_heads=self.offline_steer_config["num_heads"],
-                dropout=self.offline_steer_config["dropout"],
-            ).to(dtype=torch_dtype)
-            self.offline_steer_residual = ZeroInitSteerResidual(
-                embedding_dim=self.offline_steer_config["embedding_dim"],
-                action_hidden_dim=int(self.action_expert.hidden_dim),
-            ).to(dtype=torch_dtype)
-        else:
-            self.offline_steer_student = None
-            self.offline_steer_residual = None
-
         self.train_video_scheduler = WanContinuousFlowMatchScheduler(
             num_train_timesteps=video_num_train_timesteps,
             shift=video_train_shift,
@@ -185,6 +110,9 @@ class FastWAM(torch.nn.Module):
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
         self.loss_lambda_state = float(loss_lambda_state)
+        # Optional train-time VAE cache fill (miss → encode → atomic save).
+        self.fill_vae_latent_cache = False
+        self.vae_latent_cache_dir = None
 
         self.to(self.device)
 
@@ -197,6 +125,7 @@ class FastWAM(torch.nn.Module):
         tokenizer_model_id: str = "Wan-AI/Wan2.1-T2V-1.3B",
         tokenizer_max_len: int = 512,
         load_text_encoder: bool = True,
+        load_vae: bool = True,
         proprio_dim: Optional[int] = None,
         outcome_num_classes: int = 0,
         redirect_common_files: bool = True,
@@ -219,7 +148,6 @@ class FastWAM(torch.nn.Module):
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
         loss_lambda_state: float = 1.0,
-        offline_steer_config: Optional[dict[str, Any]] = None,
     ):
         if video_dit_config is None:
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
@@ -236,6 +164,7 @@ class FastWAM(torch.nn.Module):
             dit_config=video_dit_config,
             skip_dit_load_from_pretrain=skip_dit_load_from_pretrain,
             load_text_encoder=load_text_encoder,
+            load_vae=load_vae,
         )
 
         video_expert = components.dit
@@ -302,7 +231,6 @@ class FastWAM(torch.nn.Module):
             loss_lambda_video=loss_lambda_video,
             loss_lambda_action=loss_lambda_action,
             loss_lambda_state=loss_lambda_state,
-            offline_steer_config=offline_steer_config,
         )
         model.model_paths = {
             "video_dit": components.dit_path,
@@ -324,7 +252,8 @@ class FastWAM(torch.nn.Module):
         self.mot.to(*args, **kwargs)
         if self.text_encoder is not None:
             self.text_encoder.to(*args, **kwargs)
-        self.vae.to(*args, **kwargs)
+        if self.vae is not None:
+            self.vae.to(*args, **kwargs)
         return self
 
     @staticmethod
@@ -406,163 +335,6 @@ class FastWAM(torch.nn.Module):
             torch.cat([context_mask, proprio_mask], dim=1),
         )
 
-    def _compute_offline_steer_embedding(
-        self,
-        *,
-        video_tokens: torch.Tensor,
-        video_tokens_per_frame: int,
-        context: torch.Tensor,
-        context_mask: torch.Tensor,
-    ) -> Optional[torch.Tensor]:
-        if not self.offline_steer_enabled:
-            return None
-        if self.offline_steer_student is None:
-            raise RuntimeError("`offline_steer` is enabled but the Student is missing.")
-        if video_tokens_per_frame <= 0 or video_tokens.shape[1] < video_tokens_per_frame:
-            raise ValueError(
-                "`video_tokens_per_frame` must select a non-empty current observation, "
-                f"got {video_tokens_per_frame} for {video_tokens.shape[1]} video tokens."
-            )
-        current_video_tokens = video_tokens[:, :video_tokens_per_frame]
-        if self.offline_steer_config["detach_backbone_inputs"]:
-            current_video_tokens = current_video_tokens.detach()
-            context = context.detach()
-        current_video_mask = torch.ones(
-            current_video_tokens.shape[:2],
-            dtype=torch.bool,
-            device=current_video_tokens.device,
-        )
-        return self.offline_steer_student(
-            current_video_tokens,
-            context,
-            video_mask=current_video_mask,
-            context_mask=context_mask,
-        )
-
-    def _validate_explicit_steer_embedding(
-        self,
-        steer_embedding: torch.Tensor,
-        *,
-        batch_size: int,
-    ) -> torch.Tensor:
-        if not self.offline_steer_enabled:
-            raise ValueError(
-                "`steer_embedding` was provided while `offline_steer.enabled=false`."
-            )
-        expected_dim = self.offline_steer_config["embedding_dim"]
-        if steer_embedding.ndim != 2 or tuple(steer_embedding.shape) != (
-            batch_size,
-            expected_dim,
-        ):
-            raise ValueError(
-                "`steer_embedding` must have shape "
-                f"[{batch_size}, {expected_dim}], got {tuple(steer_embedding.shape)}."
-            )
-        if not torch.isfinite(steer_embedding).all():
-            raise ValueError("`steer_embedding` must contain only finite values.")
-        return steer_embedding.to(device=self.device, dtype=self.torch_dtype)
-
-    @staticmethod
-    def _resolve_steer_inference_mode(
-        steer_inference_mode: Optional[str],
-        *,
-        steer_embedding: Optional[torch.Tensor],
-    ) -> str:
-        """Resolve inference-only steer control without changing legacy callers."""
-        if steer_inference_mode is None:
-            return "explicit" if steer_embedding is not None else "learned"
-        mode = str(steer_inference_mode).strip().lower()
-        if mode not in {"learned", "bypass", "explicit"}:
-            raise ValueError(
-                "`steer_inference_mode` must be one of "
-                "['learned', 'bypass', 'explicit'], "
-                f"got {steer_inference_mode!r}."
-            )
-        if mode == "bypass" and steer_embedding is not None:
-            raise ValueError("`bypass` mode does not accept `steer_embedding`.")
-        if mode == "explicit" and steer_embedding is None:
-            raise ValueError("`explicit` mode requires `steer_embedding`.")
-        if mode == "learned" and steer_embedding is not None:
-            raise ValueError(
-                "`learned` mode computes its own embedding; use `explicit` for a "
-                "provided embedding."
-            )
-        return mode
-
-    def _inject_offline_steer(
-        self,
-        action_pre: dict[str, Any],
-        *,
-        steer_embedding: Optional[torch.Tensor],
-        steer_inference_mode: str = "learned",
-    ) -> None:
-        if steer_inference_mode == "bypass":
-            if steer_embedding is not None:
-                raise ValueError("`bypass` mode does not accept `steer_embedding`.")
-            return
-        if steer_inference_mode not in {"learned", "explicit"}:
-            raise ValueError(
-                "Internal steer mode must be learned, bypass, or explicit; "
-                f"got {steer_inference_mode!r}."
-            )
-        if not self.offline_steer_enabled:
-            if steer_embedding is not None:
-                raise ValueError(
-                    "`steer_embedding` was provided while `offline_steer.enabled=false`."
-                )
-            return
-        if self.offline_steer_residual is None or steer_embedding is None:
-            raise RuntimeError(
-                "Enabled `offline_steer` requires both a residual module and steer embedding."
-            )
-        action_pre["tokens"] = self.offline_steer_residual.add_to_action_tokens(
-            action_pre["tokens"],
-            steer_embedding,
-        )
-
-    def _compute_inference_steer_embedding(
-        self,
-        *,
-        first_frame_latents: torch.Tensor,
-        context: torch.Tensor,
-        context_mask: torch.Tensor,
-        fuse_vae_embedding_in_latents: bool,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: Optional[str] = None,
-    ) -> Optional[torch.Tensor]:
-        mode = self._resolve_steer_inference_mode(
-            steer_inference_mode,
-            steer_embedding=steer_embedding,
-        )
-        if mode == "bypass":
-            return None
-        if mode == "explicit":
-            return self._validate_explicit_steer_embedding(
-                steer_embedding,
-                batch_size=first_frame_latents.shape[0],
-            )
-        if not self.offline_steer_enabled:
-            return None
-        timestep_video = torch.zeros(
-            (first_frame_latents.shape[0],),
-            dtype=first_frame_latents.dtype,
-            device=self.device,
-        )
-        video_pre = self.video_expert.pre_dit(
-            x=first_frame_latents,
-            timestep=timestep_video,
-            context=context,
-            context_mask=context_mask,
-            action=None,
-            fuse_vae_embedding_in_latents=fuse_vae_embedding_in_latents,
-        )
-        return self._compute_offline_steer_embedding(
-            video_tokens=video_pre["tokens"],
-            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-            context=context,
-            context_mask=context_mask,
-        )
-
     def _prepare_state_condition(self, proprio: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         if self.state_expert is None or proprio is None:
             return None
@@ -601,6 +373,11 @@ class FastWAM(torch.nn.Module):
 
     @torch.no_grad()
     def _encode_video_latents(self, video_tensor, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)):
+        if self.vae is None:
+            raise ValueError(
+                "VAE is not loaded (`load_vae=False`). Provide precomputed `sample['input_latents']` "
+                "or set `model.load_vae=true`."
+            )
         z = self.vae.encode(
             video_tensor,
             device=self.device,
@@ -609,6 +386,233 @@ class FastWAM(torch.nn.Module):
             tile_stride=tile_stride,
         )
         return z
+
+    @staticmethod
+    def _is_placeholder_video(video: torch.Tensor) -> bool:
+        # Dataset drops real pixels on cache hit to a 16x16 stub.
+        return int(video.shape[-1]) < 64 or int(video.shape[-2]) < 64
+
+    def _normalize_precomputed_latent_list(self, precomputed_latents, *, batch_size: int | None):
+        if precomputed_latents is None:
+            return None
+        if torch.is_tensor(precomputed_latents):
+            if precomputed_latents.ndim == 4:
+                items = [precomputed_latents]
+            elif precomputed_latents.ndim == 5:
+                items = [precomputed_latents[i] for i in range(int(precomputed_latents.shape[0]))]
+            else:
+                raise ValueError(
+                    f"`sample['input_latents']` must be [B,C,T,H,W] or [C,T,H,W], "
+                    f"got {tuple(precomputed_latents.shape)}"
+                )
+        elif isinstance(precomputed_latents, (list, tuple)):
+            items = list(precomputed_latents)
+        else:
+            raise TypeError(
+                f"`sample['input_latents']` must be a tensor or list, got {type(precomputed_latents)}"
+            )
+        if batch_size is not None and len(items) != int(batch_size):
+            raise ValueError(
+                f"`input_latents` batch mismatch: got {len(items)} entries, expected {batch_size}"
+            )
+        for i, z in enumerate(items):
+            if z is None:
+                continue
+            if not torch.is_tensor(z):
+                raise TypeError(f"`input_latents[{i}]` must be a tensor, got {type(z)}")
+            if z.ndim != 4:
+                raise ValueError(f"`input_latents[{i}]` must be [C,T,H,W], got {tuple(z.shape)}")
+        return items
+
+    def _maybe_save_filled_vae_latent(
+        self,
+        *,
+        sample,
+        batch_index: int,
+        latents_chw: torch.Tensor,
+        video_chw: torch.Tensor | None,
+    ) -> None:
+        if not bool(getattr(self, "fill_vae_latent_cache", False)):
+            return
+        cache_dir = getattr(self, "vae_latent_cache_dir", None)
+        if cache_dir is None:
+            return
+        sample_ids = sample.get("eve_sample_id", None)
+        window_starts = sample.get("eve_window_start", None)
+        if sample_ids is None or window_starts is None:
+            return
+        if isinstance(sample_ids, str):
+            sample_id = sample_ids
+        else:
+            sample_id = str(sample_ids[batch_index])
+        if torch.is_tensor(window_starts):
+            window_start = int(window_starts[batch_index].item())
+        elif isinstance(window_starts, (list, tuple)):
+            window_start = int(window_starts[batch_index])
+        else:
+            window_start = int(window_starts)
+        from fastwam.datasets.vae_latent_cache import save_vae_latent_cache
+
+        save_vae_latent_cache(
+            cache_dir,
+            sample_id=sample_id,
+            window_start=window_start,
+            latents=latents_chw,
+            video_shape=None if video_chw is None else list(video_chw.shape),
+        )
+
+    def _resolve_training_input_latents(self, sample, tiled: bool = False):
+        """Resolve [B,C,T,H,W] latents from cache hits and/or online VAE encode."""
+        video = sample.get("video", None)
+        batch_size_hint = None
+        if torch.is_tensor(video) and video.ndim == 5:
+            batch_size_hint = int(video.shape[0])
+        elif isinstance(video, (list, tuple)):
+            batch_size_hint = len(video)
+        elif torch.is_tensor(sample.get("action", None)) and sample["action"].ndim == 3:
+            batch_size_hint = int(sample["action"].shape[0])
+
+        latent_list = self._normalize_precomputed_latent_list(
+            sample.get("input_latents", None),
+            batch_size=batch_size_hint,
+        )
+
+        if latent_list is not None and all(z is not None for z in latent_list):
+            input_latents = torch.stack(
+                [
+                    z.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+                    for z in latent_list
+                ],
+                dim=0,
+            )
+            latent_t = int(input_latents.shape[2])
+            num_frames = 1 + (latent_t - 1) * 4
+            return input_latents, int(input_latents.shape[0]), num_frames
+
+        if video is None:
+            raise ValueError(
+                "`sample['video']` is required when cached `input_latents` are incomplete."
+            )
+
+        video_list: list[torch.Tensor] | None = None
+        if isinstance(video, (list, tuple)):
+            video_list = list(video)
+            batch_size = len(video_list)
+            if batch_size < 1:
+                raise ValueError("`sample['video']` list is empty.")
+            for i, video_i in enumerate(video_list):
+                if not torch.is_tensor(video_i) or video_i.ndim != 4 or int(video_i.shape[0]) != 3:
+                    raise ValueError(
+                        f"`sample['video'][{i}]` must be [3,T,H,W], got "
+                        f"{None if video_i is None else tuple(getattr(video_i, 'shape', ()))}"
+                    )
+            num_frames = int(video_list[0].shape[1])
+            height = int(video_list[0].shape[-2])
+            width = int(video_list[0].shape[-1])
+        elif torch.is_tensor(video) and video.ndim == 5:
+            if video.shape[1] != 3:
+                raise ValueError(
+                    f"`sample['video']` channel dimension must be 3, got shape {tuple(video.shape)}"
+                )
+            batch_size, _, num_frames, height, width = video.shape
+        else:
+            raise ValueError(
+                f"`sample['video']` must be 5D [B,3,T,H,W] or list of [3,T,H,W], got "
+                f"{None if video is None else type(video)}"
+            )
+
+        if latent_list is None:
+            latent_list = [None] * batch_size
+        if len(latent_list) != batch_size:
+            raise ValueError(
+                f"`input_latents` length {len(latent_list)} != video batch {batch_size}"
+            )
+
+        if num_frames % 4 != 1:
+            raise ValueError(f"Video T must satisfy T % 4 == 1, got T={num_frames}")
+        if num_frames <= 1:
+            raise ValueError(f"Video T must be > 1 for action-conditioned training, got T={num_frames}")
+
+        def _video_at(index: int) -> torch.Tensor:
+            if video_list is not None:
+                return video_list[index]
+            return video[index]
+
+        if all(z is None for z in latent_list):
+            if video_list is not None:
+                # Heterogeneous list should not appear for all-miss (all full-res).
+                stacked = torch.stack(video_list, dim=0)
+            else:
+                stacked = video
+            if self._is_placeholder_video(stacked[0]):
+                raise ValueError(
+                    "Cannot encode placeholder video; missing VAE latent cache and no real pixels."
+                )
+            if int(stacked.shape[-2]) % 16 != 0 or int(stacked.shape[-1]) % 16 != 0:
+                raise ValueError(
+                    f"Video spatial dims must be multiples of 16, got "
+                    f"H={int(stacked.shape[-2])}, W={int(stacked.shape[-1])}"
+                )
+            if self.vae is None:
+                raise ValueError(
+                    "VAE is not loaded and `sample['input_latents']` is missing. "
+                    "Precompute VAE latents or set `model.load_vae=true`."
+                )
+            input_video = stacked.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+            input_latents = self._encode_video_latents(input_video, tiled=tiled)
+            if isinstance(input_latents, list):
+                input_latents = torch.stack(input_latents, dim=0)
+            for i in range(batch_size):
+                self._maybe_save_filled_vae_latent(
+                    sample=sample,
+                    batch_index=i,
+                    latents_chw=input_latents[i],
+                    video_chw=stacked[i],
+                )
+            return input_latents, batch_size, num_frames
+
+        if self.vae is None:
+            raise ValueError(
+                "VAE is not loaded but this batch has VAE latent cache misses. "
+                "Set `model.load_vae=true` (fill mode) or finish precompute."
+            )
+        resolved: list[torch.Tensor] = []
+        for i, z in enumerate(latent_list):
+            if z is not None:
+                resolved.append(z.to(device=self.device, dtype=self.torch_dtype, non_blocking=True))
+                continue
+            video_i = _video_at(i)
+            if self._is_placeholder_video(video_i):
+                raise ValueError(
+                    f"Batch index {i} is a VAE cache miss but video is a placeholder stub; "
+                    "dataset must decode real pixels on miss."
+                )
+            h_i, w_i = int(video_i.shape[-2]), int(video_i.shape[-1])
+            if h_i % 16 != 0 or w_i % 16 != 0:
+                raise ValueError(
+                    f"Video spatial dims must be multiples of 16, got H={h_i}, W={w_i}"
+                )
+            enc = self._encode_video_latents(
+                video_i.unsqueeze(0).to(device=self.device, dtype=self.torch_dtype, non_blocking=True),
+                tiled=tiled,
+            )
+            if isinstance(enc, list):
+                enc = enc[0]
+            if enc.ndim == 5 and enc.shape[0] == 1:
+                enc = enc[0]
+            if enc.ndim != 4:
+                raise ValueError(f"VAE encode expected [C,T,H,W], got {tuple(enc.shape)}")
+            resolved.append(enc)
+            self._maybe_save_filled_vae_latent(
+                sample=sample,
+                batch_index=i,
+                latents_chw=enc,
+                video_chw=video_i,
+            )
+        input_latents = torch.stack(resolved, dim=0)
+        latent_t = int(input_latents.shape[2])
+        num_frames = 1 + (latent_t - 1) * 4
+        return input_latents, batch_size, num_frames
 
     @torch.no_grad()
     def _encode_input_image_latents_tensor(self, input_image: torch.Tensor, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)):
@@ -635,27 +639,21 @@ class FastWAM(torch.nn.Module):
         return frames
 
     def build_inputs(self, sample, tiled: bool = False):
-        video = sample["video"]
         if "context" not in sample or "context_mask" not in sample:
             raise ValueError(
                 "FastWAM training requires `sample['context']` and `sample['context_mask']`."
             )
         context = sample["context"]
         context_mask = sample["context_mask"]
+        action_context = sample.get("action_context", context)
+        action_context_mask = sample.get("action_context_mask", context_mask)
         proprio = sample.get("proprio", None)
         state_is_pad = sample.get("proprio_is_pad", None)
-        if video.ndim != 5:
-            raise ValueError(f"`sample['video']` must be 5D [B, 3, T, H, W], got shape {tuple(video.shape)}")
-        if video.shape[1] != 3:
-            raise ValueError(f"`sample['video']` channel dimension must be 3, got shape {tuple(video.shape)}")
 
-        batch_size, _, num_frames, height, width = video.shape
-        if height % 16 != 0 or width % 16 != 0:
-            raise ValueError(
-                f"Video spatial dims must be multiples of 16, got H={height}, W={width}"
-            )
-        if num_frames % 4 != 1:
-            raise ValueError(f"Video T must satisfy T % 4 == 1, got T={num_frames}")
+        input_latents, batch_size, num_frames = self._resolve_training_input_latents(
+            sample, tiled=tiled
+        )
+
         if num_frames <= 1:
             raise ValueError(f"Video T must be > 1 for action-conditioned training, got T={num_frames}")
 
@@ -694,9 +692,6 @@ class FastWAM(torch.nn.Module):
                     "`sample['image_is_pad']` shape mismatch: "
                     f"got {tuple(image_is_pad.shape)} vs expected ({batch_size}, {num_frames})"
                 )
-        
-        input_video = video.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
-        input_latents = self._encode_video_latents(input_video, tiled=tiled)
 
         first_frame_latents = None
         fuse_flag = False
@@ -708,13 +703,32 @@ class FastWAM(torch.nn.Module):
             raise ValueError(
                 f"`context/context_mask` must be [B,L,D]/[B,L], got {tuple(context.shape)} and {tuple(context_mask.shape)}"
             )
+        if action_context.ndim != 3 or action_context_mask.ndim != 2:
+            raise ValueError(
+                "`action_context/action_context_mask` must be [B,L,D]/[B,L], "
+                f"got {tuple(action_context.shape)} and {tuple(action_context_mask.shape)}"
+            )
+        if action_context.shape[0] != batch_size or action_context_mask.shape[0] != batch_size:
+            raise ValueError(
+                "Action text context batch size must match the training batch, "
+                f"got {action_context.shape[0]}/{action_context_mask.shape[0]} vs {batch_size}."
+            )
         context = context.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
         context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
-        steer_context = context if self.offline_steer_enabled else None
-        steer_context_mask = context_mask if self.offline_steer_enabled else None
+        action_context = action_context.to(
+            device=self.device, dtype=self.torch_dtype, non_blocking=True
+        )
+        action_context_mask = action_context_mask.to(
+            device=self.device, dtype=torch.bool, non_blocking=True
+        )
         context, context_mask = self._append_outcome_to_context(
             context=context,
             context_mask=context_mask,
+            outcome_flag=sample.get("outcome_flag", None),
+        )
+        action_context, action_context_mask = self._append_outcome_to_context(
+            context=action_context,
+            context_mask=action_context_mask,
             outcome_flag=sample.get("outcome_flag", None),
         )
         proprio_seq = proprio
@@ -733,15 +747,14 @@ class FastWAM(torch.nn.Module):
                 context_mask=context_mask,
                 proprio=proprio_token_source.to(device=self.device, dtype=self.torch_dtype),
             )
-            if steer_context is not None and steer_context_mask is not None:
-                steer_context, steer_context_mask = self._append_proprio_to_context(
-                    context=steer_context,
-                    context_mask=steer_context_mask,
-                    proprio=proprio_token_source.to(
-                        device=self.device,
-                        dtype=self.torch_dtype,
-                    ),
-                )
+            action_context, action_context_mask = self._append_proprio_to_context(
+                context=action_context,
+                context_mask=action_context_mask,
+                proprio=proprio_token_source.to(
+                    device=self.device,
+                    dtype=self.torch_dtype,
+                ),
+            )
         if self.state_expert is not None:
             if proprio_seq is None:
                 raise ValueError("`sample['proprio']` is required when `state_expert` is enabled.")
@@ -776,8 +789,8 @@ class FastWAM(torch.nn.Module):
         return {
             "context": context,
             "context_mask": context_mask,
-            "steer_context": steer_context,
-            "steer_context_mask": steer_context_mask,
+            "action_context": action_context,
+            "action_context_mask": action_context_mask,
             "input_latents": input_latents,
             "first_frame_latents": first_frame_latents,
             "fuse_vae_embedding_in_latents": fuse_flag,
@@ -856,7 +869,10 @@ class FastWAM(torch.nn.Module):
         if image_is_pad is None:
             return video_loss_token.mean(dim=1)
 
-        temporal_factor = int(self.vae.temporal_downsample_factor)
+        temporal_factor = int(
+            getattr(self.vae, "temporal_downsample_factor", None)
+            or getattr(self, "vae_temporal_downsample_factor", 4)
+        )
         if temporal_factor <= 0:
             raise ValueError(f"`vae.temporal_downsample_factor` must be positive, got {temporal_factor}.")
         if image_is_pad.shape[1] < 1:
@@ -884,107 +900,18 @@ class FastWAM(torch.nn.Module):
         valid_sum = valid.sum(dim=1).clamp(min=1.0)
         return (video_loss_token * valid).sum(dim=1) / valid_sum
 
-    def _compute_offline_pair_loss(
-        self,
-        *,
-        steer_embedding: Optional[torch.Tensor],
-        sample: dict[str, Any],
-        require_pair_fields: bool = True,
-    ) -> tuple[Optional[torch.Tensor], float, float]:
-        pair_loss_weight = self.offline_steer_config["pair_loss_weight"]
-        if not self.offline_steer_enabled or pair_loss_weight <= 0.0:
-            return None, 0.0, 0.0
-        if steer_embedding is None:
-            raise RuntimeError("Offline pair loss requires a Student steer embedding.")
-
-        sample_weight = sample.get("pair_weight")
-        success_target = sample.get("steer_success_target")
-        failure_target = sample.get("steer_failure_target")
-        if sample_weight is None:
-            if not require_pair_fields:
-                return None, 0.0, 0.0
-            raise ValueError(
-                "Enabled offline pair loss requires `sample['pair_weight']`."
-            )
-        sample_weight = sample_weight.to(
-            device=steer_embedding.device,
-            dtype=steer_embedding.dtype,
-            non_blocking=True,
-        ).view(-1)
-        if sample_weight.shape[0] != steer_embedding.shape[0]:
-            raise ValueError(
-                "`sample['pair_weight']` must have one value per batch element."
-            )
-        positive = sample_weight > 0
-        if not positive.any():
-            zero = steer_embedding.float().sum() * 0.0
-            return zero, 0.0, 0.0
-        if success_target is None or failure_target is None:
-            raise ValueError(
-                "Positive pair weights require `steer_success_target` and "
-                "`steer_failure_target`."
-            )
-
-        success_target = success_target.to(
-            device=steer_embedding.device,
-            dtype=steer_embedding.dtype,
-            non_blocking=True,
-        )
-        failure_target = failure_target.to(
-            device=steer_embedding.device,
-            dtype=steer_embedding.dtype,
-            non_blocking=True,
-        )
-        if success_target.shape != steer_embedding.shape:
-            raise ValueError(
-                "`steer_success_target` must match the Student embedding shape, "
-                f"got {tuple(success_target.shape)} and "
-                f"{tuple(steer_embedding.shape)}."
-            )
-        if failure_target.shape != steer_embedding.shape:
-            raise ValueError(
-                "`steer_failure_target` must match the Student embedding shape, "
-                f"got {tuple(failure_target.shape)} and "
-                f"{tuple(steer_embedding.shape)}."
-            )
-
-        loss = weighted_pair_loss(
-            steer_embedding[positive],
-            success_target[positive],
-            failure_target[positive],
-            sample_weight[positive],
-            margin=self.offline_steer_config["pair_loss_margin"],
-        )
-        return (
-            loss,
-            float(sample_weight[positive].detach().sum().item()),
-            float(positive.float().detach().mean().item()),
-        )
-
     def training_loss(
         self,
         sample,
         tiled: bool = False,
-        *,
-        pair_loss_scale: float = 1.0,
-        pair_loss_ddp_scale: float = 1.0,
     ):
-        if not 0.0 <= float(pair_loss_scale) <= 1.0:
-            raise ValueError(
-                f"`pair_loss_scale` must be in [0, 1], got {pair_loss_scale}."
-            )
-        if float(pair_loss_ddp_scale) < 0.0:
-            raise ValueError(
-                "`pair_loss_ddp_scale` must be non-negative, got "
-                f"{pair_loss_ddp_scale}."
-            )
         inputs = self.build_inputs(sample, tiled=tiled)
         input_latents = inputs["input_latents"]
         batch_size = input_latents.shape[0]
         context = inputs["context"]
         context_mask = inputs["context_mask"]
-        steer_context = inputs["steer_context"]
-        steer_context_mask = inputs["steer_context_mask"]
+        action_context = inputs["action_context"]
+        action_context_mask = inputs["action_context_mask"]
         action = inputs["action"]
         state = inputs["state"]
         action_is_pad = inputs["action_is_pad"]
@@ -1042,27 +969,13 @@ class FastWAM(torch.nn.Module):
         action_pre = self.action_expert.pre_dit(
             action_tokens=noisy_action,
             timestep=timestep_action,
-            context=context,
-            context_mask=context_mask,
-        )
-        steer_embedding = None
-        if self.offline_steer_enabled:
-            if steer_context is None or steer_context_mask is None:
-                raise RuntimeError("Enabled `offline_steer` requires clean context.")
-            steer_embedding = self._compute_offline_steer_embedding(
-                video_tokens=video_pre["tokens"],
-                video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-                context=steer_context,
-                context_mask=steer_context_mask,
-            )
-        self._inject_offline_steer(
-            action_pre,
-            steer_embedding=steer_embedding,
+            context=action_context,
+            context_mask=action_context_mask,
         )
         state_pre = self._state_condition_pre_dit(
             state=noisy_state,
-            context=context,
-            context_mask=context_mask,
+            context=action_context,
+            context_mask=action_context_mask,
         )
 
         video_tokens = video_pre["tokens"]
@@ -1180,50 +1093,13 @@ class FastWAM(torch.nn.Module):
             )
             loss_state = (state_loss_per_sample * state_weight).mean()
 
-        loss_pair, pair_weight_sum, pair_enabled_frac = (
-            self._compute_offline_pair_loss(
-                steer_embedding=steer_embedding,
-                sample=sample,
-                require_pair_fields=float(pair_loss_scale) > 0.0,
-            )
-        )
-
         loss_total = self.loss_lambda_video * loss_video + self.loss_lambda_action * loss_action
         if loss_state is not None:
             loss_total = loss_total + self.loss_lambda_state * loss_state
-        scaled_pair_weight = (
-            self.offline_steer_config["pair_loss_weight"]
-            * float(pair_loss_scale)
-            * float(pair_loss_ddp_scale)
-        )
-        if loss_pair is not None and scaled_pair_weight > 0.0:
-            loss_total = loss_total + scaled_pair_weight * loss_pair
         loss_dict = {
             "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
             "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
         }
-        if loss_pair is not None:
-            loss_dict["loss_pair_raw"] = float(loss_pair.detach().item())
-            loss_dict["loss_pair"] = scaled_pair_weight * float(
-                loss_pair.detach().item()
-            )
-            loss_dict["pair_loss_scale"] = float(pair_loss_scale)
-            loss_dict["pair_loss_ddp_scale"] = float(pair_loss_ddp_scale)
-            loss_dict["pair_weight_sum"] = pair_weight_sum
-            loss_dict["pair_enabled_frac"] = pair_enabled_frac
-        if steer_embedding is not None:
-            loss_dict["steer_embedding_norm"] = float(
-                steer_embedding.detach().float().norm(dim=-1).mean().item()
-            )
-            if self.offline_steer_residual is not None:
-                loss_dict["steer_residual_norm"] = float(
-                    self.offline_steer_residual(steer_embedding)
-                    .detach()
-                    .float()
-                    .norm(dim=-1)
-                    .mean()
-                    .item()
-                )
         if action_loss_enabled_frac is not None:
             loss_dict["action_loss_enabled_frac"] = float(action_loss_enabled_frac.item())
         outcome_flag = sample.get("outcome_flag", None)
@@ -1247,8 +1123,6 @@ class FastWAM(torch.nn.Module):
         fuse_vae_embedding_in_latents: bool,
         gt_action: Optional[torch.Tensor] = None,
         state: Optional[torch.Tensor] = None,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: str = "learned",
     ) -> tuple[torch.Tensor, torch.Tensor]:
         video_pre = self.video_expert.pre_dit(
             x=latents_video,
@@ -1263,22 +1137,6 @@ class FastWAM(torch.nn.Module):
             timestep=timestep_action,
             context=context,
             context_mask=context_mask,
-        )
-        if (
-            steer_inference_mode == "learned"
-            and self.offline_steer_enabled
-            and steer_embedding is None
-        ):
-            steer_embedding = self._compute_offline_steer_embedding(
-                video_tokens=video_pre["tokens"],
-                video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-                context=context,
-                context_mask=context_mask,
-            )
-        self._inject_offline_steer(
-            action_pre,
-            steer_embedding=steer_embedding,
-            steer_inference_mode=steer_inference_mode,
         )
         state_pre = self._state_condition_pre_dit(
             state=state,
@@ -1346,8 +1204,6 @@ class FastWAM(torch.nn.Module):
         context_mask: torch.Tensor,
         fuse_vae_embedding_in_latents: bool,
         state: Optional[torch.Tensor] = None,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: str = "learned",
     ) -> torch.Tensor:
         timestep_video = torch.zeros_like(timestep_action, dtype=first_frame_latents.dtype, device=self.device)
         video_pre = self.video_expert.pre_dit(
@@ -1363,22 +1219,6 @@ class FastWAM(torch.nn.Module):
             timestep=timestep_action,
             context=context,
             context_mask=context_mask,
-        )
-        if (
-            steer_inference_mode == "learned"
-            and self.offline_steer_enabled
-            and steer_embedding is None
-        ):
-            steer_embedding = self._compute_offline_steer_embedding(
-                video_tokens=video_pre["tokens"],
-                video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-                context=context,
-                context_mask=context_mask,
-            )
-        self._inject_offline_steer(
-            action_pre,
-            steer_embedding=steer_embedding,
-            steer_inference_mode=steer_inference_mode,
         )
         state_pre = self._state_condition_pre_dit(
             state=state,
@@ -1443,19 +1283,12 @@ class FastWAM(torch.nn.Module):
         video_kv_cache: list[dict[str, torch.Tensor]],
         attention_mask: torch.Tensor,
         video_seq_len: int,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: str = "learned",
     ) -> torch.Tensor:
         action_pre = self.action_expert.pre_dit(
             action_tokens=latents_action,
             timestep=timestep_action,
             context=context,
             context_mask=context_mask,
-        )
-        self._inject_offline_steer(
-            action_pre,
-            steer_embedding=steer_embedding,
-            steer_inference_mode=steer_inference_mode,
         )
         action_tokens = self.mot.forward_action_with_video_cache(
             action_tokens=action_pre["tokens"],
@@ -1483,9 +1316,6 @@ class FastWAM(torch.nn.Module):
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: Optional[str] = None,
-        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
@@ -1496,10 +1326,6 @@ class FastWAM(torch.nn.Module):
         test_action_with_infer_action: bool = True,
     ) -> dict[str, Any]:
         self.eval()
-        resolved_steer_mode = self._resolve_steer_inference_mode(
-            steer_inference_mode,
-            steer_embedding=steer_embedding,
-        )
         if test_action_with_infer_action:
             if seed is None:
                 raise ValueError("`test_action_with_infer_action=True` requires non-null `seed`.")
@@ -1516,12 +1342,6 @@ class FastWAM(torch.nn.Module):
                 rand_device=rand_device,
                 tiled=tiled,
                 proprio=proprio.clone() if proprio is not None else None,
-                steer_embedding=(
-                    steer_embedding.clone()
-                    if isinstance(steer_embedding, torch.Tensor)
-                    else steer_embedding
-                ),
-                steer_inference_mode=resolved_steer_mode,
             )["action"]
         
         if input_image.ndim == 3:
@@ -1608,8 +1428,6 @@ class FastWAM(torch.nn.Module):
                 )
             context = context.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
             context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
-        steer_context = context
-        steer_context_mask = context_mask
         context, context_mask = self._append_outcome_to_context(
             context=context,
             context_mask=context_mask,
@@ -1621,20 +1439,6 @@ class FastWAM(torch.nn.Module):
                 context_mask=context_mask,
                 proprio=proprio_context,
             )
-            steer_context, steer_context_mask = self._append_proprio_to_context(
-                context=steer_context,
-                context_mask=steer_context_mask,
-                proprio=proprio_context,
-            )
-
-        steer_embedding = self._compute_inference_steer_embedding(
-            first_frame_latents=first_frame_latents,
-            context=steer_context,
-            context_mask=steer_context_mask,
-            fuse_vae_embedding_in_latents=fuse_flag,
-            steer_embedding=steer_embedding,
-            steer_inference_mode=resolved_steer_mode,
-        )
 
         infer_timesteps_video, infer_deltas_video = self.infer_video_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
@@ -1667,8 +1471,6 @@ class FastWAM(torch.nn.Module):
                 fuse_vae_embedding_in_latents=fuse_flag,
                 gt_action=action,
                 state=state_cond,
-                steer_embedding=steer_embedding,
-                steer_inference_mode=resolved_steer_mode,
             )
             pred_video = pred_video_posi
             pred_action = pred_action_posi
@@ -1689,12 +1491,6 @@ class FastWAM(torch.nn.Module):
             "video": self._decode_latents(latents_video, tiled=tiled),
             "action": action_out,
         }
-        if return_steer_embedding:
-            result["steer_embedding"] = (
-                None
-                if steer_embedding is None
-                else steer_embedding.detach().to(device="cpu", dtype=torch.float32)
-            )
         return result
 
     @torch.no_grad()
@@ -1707,10 +1503,9 @@ class FastWAM(torch.nn.Module):
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: Optional[str] = None,
-        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
+        negative_context: Optional[torch.Tensor] = None,
+        negative_context_mask: Optional[torch.Tensor] = None,
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
@@ -1719,10 +1514,10 @@ class FastWAM(torch.nn.Module):
         tiled: bool = False,
     ) -> dict[str, Any]:
         self.eval()
-        resolved_steer_mode = self._resolve_steer_inference_mode(
-            steer_inference_mode,
-            steer_embedding=steer_embedding,
-        )
+        text_cfg_scale = float(text_cfg_scale)
+        if not math.isfinite(text_cfg_scale):
+            raise ValueError(f"`text_cfg_scale` must be finite, got {text_cfg_scale}.")
+        use_text_cfg = text_cfg_scale != 1.0
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
             raise ValueError(
                 "`infer_action` requires `video_attention_mask_mode='first_frame_causal'`."
@@ -1771,39 +1566,94 @@ class FastWAM(torch.nn.Module):
         if not use_prompt and not use_context:
             raise ValueError("Either `prompt` or both `context/context_mask` must be provided.")
 
+        use_negative_context = negative_context is not None or negative_context_mask is not None
+        if use_negative_context and negative_prompt is not None:
+            raise ValueError(
+                "`negative_prompt` and `negative_context/negative_context_mask` are mutually exclusive."
+            )
+        if use_negative_context and (
+            negative_context is None or negative_context_mask is None
+        ):
+            raise ValueError(
+                "`negative_context` and `negative_context_mask` must be both provided together."
+            )
+        if use_text_cfg:
+            if use_prompt and negative_prompt is None:
+                raise ValueError(
+                    "`text_cfg_scale != 1` with prompt input requires an explicit `negative_prompt`."
+                )
+            if use_context and not use_negative_context:
+                raise ValueError(
+                    "`text_cfg_scale != 1` with cached context requires both "
+                    "`negative_context` and `negative_context_mask`."
+                )
+
+        def prepare_cached_context(
+            value: torch.Tensor,
+            mask: torch.Tensor,
+            *,
+            label: str,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            if value.ndim == 2:
+                value = value.unsqueeze(0)
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0)
+            if value.ndim != 3 or mask.ndim != 2:
+                raise ValueError(
+                    f"`{label}/{label}_mask` must be [B,L,D]/[B,L], "
+                    f"got {tuple(value.shape)} and {tuple(mask.shape)}"
+                )
+            if value.shape[:2] != mask.shape or value.shape[0] != 1:
+                raise ValueError(
+                    f"`{label}/{label}_mask` shape mismatch or batch size is not 1: "
+                    f"got {tuple(value.shape)} and {tuple(mask.shape)}"
+                )
+            return (
+                value.to(device=self.device, dtype=self.torch_dtype, non_blocking=True),
+                mask.to(device=self.device, dtype=torch.bool, non_blocking=True),
+            )
+
         if use_prompt:
             context, context_mask = self.encode_prompt(prompt)
+            if use_text_cfg:
+                negative_context, negative_context_mask = self.encode_prompt(negative_prompt)
         else:
             if context is None or context_mask is None:
                 raise ValueError("`context` and `context_mask` must be both provided together.")
-            if context.ndim == 2:
-                context = context.unsqueeze(0)
-            if context_mask.ndim == 1:
-                context_mask = context_mask.unsqueeze(0)
-            if context.ndim != 3 or context_mask.ndim != 2:
-                raise ValueError(
-                    f"`context/context_mask` must be [B,L,D]/[B,L], got {tuple(context.shape)} and {tuple(context_mask.shape)}"
+            context, context_mask = prepare_cached_context(
+                context,
+                context_mask,
+                label="context",
+            )
+            if use_text_cfg:
+                negative_context, negative_context_mask = prepare_cached_context(
+                    negative_context,
+                    negative_context_mask,
+                    label="negative_context",
                 )
-            context = context.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
-            context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
-        steer_context = context
-        steer_context_mask = context_mask
         context, context_mask = self._append_outcome_to_context(
             context=context,
             context_mask=context_mask,
             outcome_flag=outcome_flag,
         )
+        if use_text_cfg:
+            negative_context, negative_context_mask = self._append_outcome_to_context(
+                context=negative_context,
+                context_mask=negative_context_mask,
+                outcome_flag=outcome_flag,
+            )
         if proprio_context is not None:
             context, context_mask = self._append_proprio_to_context(
                 context=context,
                 context_mask=context_mask,
                 proprio=proprio_context,
             )
-            steer_context, steer_context_mask = self._append_proprio_to_context(
-                context=steer_context,
-                context_mask=steer_context_mask,
-                proprio=proprio_context,
-            )
+            if use_text_cfg:
+                negative_context, negative_context_mask = self._append_proprio_to_context(
+                    context=negative_context,
+                    context_mask=negative_context_mask,
+                    proprio=proprio_context,
+                )
 
         timestep_video = torch.zeros(
             (first_frame_latents.shape[0],),
@@ -1818,20 +1668,6 @@ class FastWAM(torch.nn.Module):
             action=None,
             fuse_vae_embedding_in_latents=fuse_flag,
         )
-        if resolved_steer_mode == "explicit":
-            steer_embedding = self._validate_explicit_steer_embedding(
-                steer_embedding,
-                batch_size=first_frame_latents.shape[0],
-            )
-        elif resolved_steer_mode == "learned" and self.offline_steer_enabled:
-            steer_embedding = self._compute_offline_steer_embedding(
-                video_tokens=video_pre["tokens"],
-                video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-                context=steer_context,
-                context_mask=steer_context_mask,
-            )
-        else:
-            steer_embedding = None
         video_seq_len = int(video_pre["tokens"].shape[1])
         if state_cond is None:
             attention_mask = self._build_mot_attention_mask(
@@ -1850,9 +1686,34 @@ class FastWAM(torch.nn.Module):
                 },
                 video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
             )
+            negative_video_kv_cache = None
+            if use_text_cfg:
+                negative_video_pre = self.video_expert.pre_dit(
+                    x=first_frame_latents,
+                    timestep=timestep_video,
+                    context=negative_context,
+                    context_mask=negative_context_mask,
+                    action=None,
+                    fuse_vae_embedding_in_latents=fuse_flag,
+                )
+                if int(negative_video_pre["tokens"].shape[1]) != video_seq_len:
+                    raise ValueError(
+                        "Positive and base CFG branches produced different video sequence lengths."
+                    )
+                negative_video_kv_cache = self.mot.prefill_video_cache(
+                    video_tokens=negative_video_pre["tokens"],
+                    video_freqs=negative_video_pre["freqs"],
+                    video_t_mod=negative_video_pre["t_mod"],
+                    video_context_payload={
+                        "context": negative_video_pre["context"],
+                        "mask": negative_video_pre["context_mask"],
+                    },
+                    video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
+                )
         else:
             attention_mask = None
             video_kv_cache = None
+            negative_video_kv_cache = None
 
         infer_timesteps_action, infer_deltas_action = self.infer_action_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
@@ -1872,8 +1733,6 @@ class FastWAM(torch.nn.Module):
                     video_kv_cache=video_kv_cache,
                     attention_mask=attention_mask,
                     video_seq_len=video_seq_len,
-                    steer_embedding=steer_embedding,
-                    steer_inference_mode=resolved_steer_mode,
                 )
             else:
                 pred_action_posi = self._predict_action_noise(
@@ -1884,22 +1743,39 @@ class FastWAM(torch.nn.Module):
                     context_mask=context_mask,
                     fuse_vae_embedding_in_latents=fuse_flag,
                     state=state_cond,
-                    steer_embedding=steer_embedding,
-                    steer_inference_mode=resolved_steer_mode,
                 )
-            pred_action = pred_action_posi
+            if use_text_cfg:
+                if state_cond is None:
+                    pred_action_base = self._predict_action_noise_with_cache(
+                        latents_action=latents_action,
+                        timestep_action=timestep_action,
+                        context=negative_context,
+                        context_mask=negative_context_mask,
+                        video_kv_cache=negative_video_kv_cache,
+                        attention_mask=attention_mask,
+                        video_seq_len=video_seq_len,
+                    )
+                else:
+                    pred_action_base = self._predict_action_noise(
+                        first_frame_latents=first_frame_latents,
+                        latents_action=latents_action,
+                        timestep_action=timestep_action,
+                        context=negative_context,
+                        context_mask=negative_context_mask,
+                        fuse_vae_embedding_in_latents=fuse_flag,
+                        state=state_cond,
+                    )
+                pred_action = pred_action_base + text_cfg_scale * (
+                    pred_action_posi - pred_action_base
+                )
+            else:
+                pred_action = pred_action_posi
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 
         result = {
             "action": latents_action[0].detach().to(device="cpu", dtype=torch.float32),
         }
-        if return_steer_embedding:
-            result["steer_embedding"] = (
-                None
-                if steer_embedding is None
-                else steer_embedding.detach().to(device="cpu", dtype=torch.float32)
-            )
         return result
 
     @torch.no_grad()
@@ -1914,9 +1790,6 @@ class FastWAM(torch.nn.Module):
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
         outcome_flag: Optional[torch.Tensor] = None,
-        steer_embedding: Optional[torch.Tensor] = None,
-        steer_inference_mode: Optional[str] = None,
-        return_steer_embedding: bool = False,
         negative_prompt: Optional[str] = None,
         text_cfg_scale: float = 5.0,
         action_cfg_scale: float = 1.0,
@@ -1936,9 +1809,6 @@ class FastWAM(torch.nn.Module):
             context=context,
             context_mask=context_mask,
             outcome_flag=outcome_flag,
-            steer_embedding=steer_embedding,
-            steer_inference_mode=steer_inference_mode,
-            return_steer_embedding=return_steer_embedding,
             negative_prompt=negative_prompt,
             text_cfg_scale=text_cfg_scale,
             num_inference_steps=num_inference_steps,
@@ -1958,19 +1828,6 @@ class FastWAM(torch.nn.Module):
             payload["proprio_encoder"] = self.proprio_encoder.state_dict()
         if self.outcome_encoder is not None:
             payload["outcome_encoder"] = self.outcome_encoder.state_dict()
-        if self.offline_steer_enabled:
-            if (
-                self.offline_steer_student is None
-                or self.offline_steer_residual is None
-            ):
-                raise RuntimeError("Enabled `offline_steer` modules are missing.")
-            payload["offline_steer_student"] = (
-                self.offline_steer_student.state_dict()
-            )
-            payload["offline_steer_residual"] = (
-                self.offline_steer_residual.state_dict()
-            )
-            payload["offline_steer_config"] = dict(self.offline_steer_config)
         if optimizer is not None:
             payload["optimizer"] = optimizer.state_dict()
         torch.save(payload, path)
@@ -2014,27 +1871,6 @@ class FastWAM(torch.nn.Module):
         experts: Optional[Sequence[str]] = None,
     ):
         payload = torch.load(path, map_location="cpu")
-        steer_keys = {
-            "offline_steer_student",
-            "offline_steer_residual",
-        }
-        present_steer_keys = steer_keys.intersection(payload)
-        if present_steer_keys and not self.offline_steer_enabled:
-            raise ValueError(
-                "Checkpoint contains `offline_steer` weights but current model has "
-                "`offline_steer.enabled=false`. Enable the module before loading "
-                "this checkpoint."
-            )
-        if (
-            self.offline_steer_enabled
-            and present_steer_keys
-            and present_steer_keys != steer_keys
-        ):
-            raise ValueError(
-                "Checkpoint has incomplete `offline_steer` state: "
-                f"present={sorted(present_steer_keys)}."
-            )
-
         if "mot" in payload:
             mot_state = self._select_mot_state_dict(payload["mot"], experts=experts)
             filtered, skipped_shape = self._filter_state_dict_by_shape(self.mot, mot_state)
@@ -2075,27 +1911,6 @@ class FastWAM(torch.nn.Module):
                 logger.warning("Checkpoint has no `outcome_encoder` weights; keeping current `outcome_encoder` params.")
         elif "outcome_encoder" in payload:
             logger.warning("Checkpoint contains `outcome_encoder` weights but current model has `outcome_num_classes=0`; ignoring.")
-        if self.offline_steer_enabled:
-            if present_steer_keys == steer_keys:
-                if (
-                    self.offline_steer_student is None
-                    or self.offline_steer_residual is None
-                ):
-                    raise RuntimeError("Enabled `offline_steer` modules are missing.")
-                self.offline_steer_student.load_state_dict(
-                    payload["offline_steer_student"],
-                    strict=True,
-                )
-                self.offline_steer_residual.load_state_dict(
-                    payload["offline_steer_residual"],
-                    strict=True,
-                )
-            else:
-                logger.warning(
-                    "Checkpoint has no `offline_steer` weights; keeping the current "
-                    "Student and zero-initialized residual parameters."
-                )
-
         if optimizer is not None and "optimizer" in payload:
             optimizer.load_state_dict(payload["optimizer"])
         return payload

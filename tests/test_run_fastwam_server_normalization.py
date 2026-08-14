@@ -42,6 +42,9 @@ def _load_server_module():
         "KEY_CONTEXT": "context",
         "KEY_CONTEXT_MASK": "context_mask",
         "KEY_INPUT_IMAGE": "input_image",
+        "KEY_NEGATIVE_CONTEXT": "negative_context",
+        "KEY_NEGATIVE_CONTEXT_MASK": "negative_context_mask",
+        "KEY_NEGATIVE_PROMPT": "negative_prompt",
         "KEY_PROMPT": "prompt",
         "KEY_PROPRIO": "proprio",
     }.items():

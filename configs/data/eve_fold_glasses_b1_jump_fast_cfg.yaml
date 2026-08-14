@@ -1,0 +1,40 @@
+# Success samples: outcome / FAST / base. Failure samples: FAST / base.
+defaults:
+  - eve_fold_glasses_b1_jump_fast
+  - _self_
+
+train:
+  outcome_text_success_suffix: " Successful execution."
+  outcome_text_failure_suffix: null
+  outcome_text_dropout_prob: 0.0
+  cfg_channel_probs:
+    outcome: 0.4
+    fast: 0.2
+    base: 0.4
+  failure_cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.5
+    base: 0.5
+  fast_tokenizer_model_id: physical-intelligence/fast
+  fast_max_tokens: 32
+  # Formal recipe must not silently replace missing/broken FAST samples with outcome.
+  fast_fail_closed: true
+  text_embedding_cache_dir: ${oc.env:TEXT_EMBEDDING_CACHE_DIR,data/text_embeds_cache/fold_glasses_dewo_v2_opensource}
+
+val:
+  outcome_text_success_suffix: ${data.train.outcome_text_success_suffix}
+  outcome_text_failure_suffix: null
+  outcome_text_dropout_prob: 0.0
+  # Checkpoint selection is explicitly task-only, so val_base_loss is literal.
+  cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
+  failure_cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
+  fast_tokenizer_model_id: ${data.train.fast_tokenizer_model_id}
+  fast_max_tokens: ${data.train.fast_max_tokens}
+  fast_fail_closed: ${data.train.fast_fail_closed}
+  text_embedding_cache_dir: ${data.train.text_embedding_cache_dir}

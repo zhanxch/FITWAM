@@ -113,13 +113,32 @@
               "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
               "dtype": "bool",
               "shape": "[L] or [1, L]"
+            },
+            "negative_prompt": {
+              "required": "required with prompt when text_cfg_scale != 1",
+              "type": "string",
+              "notes": "Explicit base/task-only CFG branch. Do not infer it by stripping arbitrary suffix text."
+            },
+            "negative_context": {
+              "required": "required with negative_context_mask for cached-context CFG when text_cfg_scale != 1",
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "float32",
+              "shape": "[L, C] or [1, L, C]",
+              "notes": "Cached embedding of the base/task-only training channel."
+            },
+            "negative_context_mask": {
+              "required": "required with negative_context",
+              "type": "numpy.ndarray or torch.Tensor serialized by msgpack",
+              "dtype": "bool",
+              "shape": "[L] or [1, L]"
             }
           },
           "options": "object or null; currently ignored by FastWAMPolicy.get_action"
         }
       },
       "mutual_exclusion": [
-        "Send either prompt or context/context_mask, not both."
+        "Send either prompt or context/context_mask, not both.",
+        "Send either negative_prompt or negative_context/negative_context_mask, matching the positive input mode."
       ],
       "forbidden_observation_keys": [
         "rgb",

@@ -1,0 +1,81 @@
+# @package _global_
+# Fold-glasses DEWO v2 continue-train from official S0 weights.
+# Init: checkpoints/dexjoco/fold_glasses_fastwam/step_010000.pt
+# Stack: FastWAM-infer-in-DexJoco (224×224, z-score, OPEN stats), no Video LoRA.
+# Optimizer: official uncond recipe — lr=1e-4, cosine, wd=1e-2, full DiT.
+# Data/conditions: recoverability-pair mix + outcome/FAST/base CFG.
+
+defaults:
+  - override /data: eve_fold_glasses_b1_jump_fast_cfg
+  - override /model: fastwam
+  - _self_
+
+output_dir: ./runs/dexjoco_fold_glasses_dewo_v2/${oc.env:RUN_ID}
+
+# Per-GPU micro-batch. Role mix scales 2+2 → 8 primary + 4 aux_success + 4 aux_failure.
+batch_size: 16
+num_workers: 4
+role_balanced_sampling:
+  enabled: true
+  primary_per_batch: 8
+  seed: ${seed}
+
+model:
+  load_vae: false
+  fill_vae_latent_cache: false
+  proprio_dim: ${data.train.processor.proprio_output_dim}
+  state_dit_config: null
+  # Match official infer yaml / S0 ckpt; do not inject LoRA or mixed-attn train path.
+  mot_checkpoint_mixed_attn: false
+  skip_dit_load_from_pretrain: true
+  action_dit_pretrained_path: null
+  video_dit_config:
+    use_gradient_checkpointing: true
+  action_dit_config:
+    use_gradient_checkpointing: true
+
+lr_scheduler_type: cosine
+learning_rate: 1.0e-4
+num_epochs: 100
+max_steps: 15000
+log_every: 10
+save_every: 2500
+save_weights_every: 0
+save_weight_steps: [2500, 5000, 7500, 10000, 12500, 15000]
+save_state_every: 2500
+state_keep_last: 1
+eval_every: 0
+eval_num_inference_steps: 10
+eval_num_samples: 8
+eval_seed: 20260812
+best_metric: val_base_loss
+best_metric_mode: min
+
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+seed: 42
+max_grad_norm: 1.0
+weight_decay: 0.01
+resume: ${oc.env:FASTWAM_RESUME}
+resume_experts: null
+
+experiment_provenance:
+  protocol: fold_glasses_dewo_v2_jump_fast_full_1e-4_continue
+  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-full-1e-4}
+  stack: opensource_224_zscore
+  source_checkpoint_sha256: ${oc.env:FASTWAM_RESUME_SHA256}
+  source_config_sha256: ${oc.env:FASTWAM_SOURCE_CONFIG_SHA256}
+  manifest_sha256: ${oc.env:EVE_MANIFEST_SHA256}
+  selection_manifest_sha256: ${oc.env:EVE_VAL_MANIFEST_SHA256}
+  code_snapshot_sha256: ${oc.env:FITWAM_CODE_SNAPSHOT_SHA256}
+  normalization_kind: ${oc.env:NORM_STATS_SOURCE}
+  normalization_bundle_sha256: ${oc.env:NORM_STATS_BUNDLE_SHA256}
+  text_embedding_cache_sha256: ${oc.env:TEXT_EMBEDDING_CACHE_SHA256}
+
+wandb:
+  enabled: true
+  workspace: ${oc.env:WANDB_ENTITY,null}
+  project: ${oc.env:WANDB_PROJECT,fitwam}
+  name: ${oc.env:WANDB_RUN_NAME}
+  group: fold_glasses_dewo_v2_opensource
+  mode: online

@@ -4,10 +4,10 @@ import logging
 import csv
 import hashlib
 import json
-import inspect
 import os
 import re
 import shutil
+from collections.abc import Sequence
 from math import ceil
 from pathlib import Path
 import time
@@ -21,6 +21,7 @@ from PIL import Image
 from torch.optim.lr_scheduler import ConstantLR, CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
+from .datasets.vae_latent_cache import collate_robot_video_batch
 from .utils.fs import ensure_dir
 from .utils.logging_config import get_logger, setup_logging
 from .utils.pytorch_utils import set_global_seed
@@ -203,24 +204,26 @@ def _send_batch_to_device(value, device):
     return value
 
 
-def _validate_pair_loss_accumulation_protocol(
-    model,
-    gradient_accumulation_steps: int,
-) -> None:
-    if gradient_accumulation_steps < 1:
-        raise ValueError("`gradient_accumulation_steps` must be >= 1.")
-    if not getattr(model, "offline_steer_enabled", False):
-        return
-    steer_config = getattr(model, "offline_steer_config", {})
-    if (
-        float(steer_config.get("pair_loss_weight", 0.0)) > 0.0
-        and gradient_accumulation_steps != 1
-    ):
+def _infer_auxiliary_roles(
+    roles: Sequence[str],
+    *,
+    primary_role: str = "primary",
+) -> tuple[str, ...]:
+    """Prefer pair-shaped aux roles, then keep any remaining non-primary roles."""
+
+    present = {role for role in roles if role and role != primary_role}
+    if not present:
         raise ValueError(
-            "Weighted offline pair loss currently requires "
-            "`gradient_accumulation_steps=1`; variable pair denominators cannot "
-            "be averaged independently across accumulated microbatches."
+            "Role-balanced sampling requires at least one auxiliary role in "
+            "`dataset.sampling_roles`."
         )
+    ordered: list[str] = []
+    for role in ("auxiliary_success", "auxiliary"):
+        if role in present:
+            ordered.append(role)
+            present.remove(role)
+    ordered.extend(sorted(present))
+    return tuple(ordered)
 
 
 class Wan22Trainer:
@@ -270,10 +273,8 @@ class Wan22Trainer:
                 f"`best_metric_mode` must be 'min' or 'max', got {self.best_metric_mode}."
             )
         self.gradient_accumulation_steps = int(cfg.gradient_accumulation_steps)
-        _validate_pair_loss_accumulation_protocol(
-            self.model,
-            self.gradient_accumulation_steps,
-        )
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("`gradient_accumulation_steps` must be >= 1.")
         self.max_grad_norm = float(cfg.max_grad_norm)
         self.seed = int(cfg.seed)
         self.eval_seed = int(cfg.get("eval_seed", self.seed))
@@ -295,15 +296,20 @@ class Wan22Trainer:
             if configured_role_seed is None
             else int(configured_role_seed)
         )
-        if self.role_balanced_sampling_enabled and (
-            self.batch_size != 4
-            or self.role_balanced_primary_per_batch != 2
-        ):
-            raise ValueError(
-                "The enabled FITWAM role-balanced protocol requires per-rank "
-                "`batch_size=4` and `primary_per_batch=2` (2 primary + "
-                "2 auxiliary samples per microbatch)."
-            )
+        if self.role_balanced_sampling_enabled:
+            if self.batch_size < 2 or self.batch_size % 2 != 0:
+                raise ValueError(
+                    "Role-balanced sampling requires an even per-rank "
+                    f"`batch_size>=2`, got {self.batch_size}."
+                )
+            expected_primary = self.batch_size // 2
+            if self.role_balanced_primary_per_batch != expected_primary:
+                raise ValueError(
+                    "Role-balanced sampling requires "
+                    f"`primary_per_batch={expected_primary}` for "
+                    f"`batch_size={self.batch_size}` "
+                    f"(got {self.role_balanced_primary_per_batch})."
+                )
         
         self.resume = cfg.resume
         resume_experts = cfg.get("resume_experts", None)
@@ -356,8 +362,6 @@ class Wan22Trainer:
             weight_decay=self.weight_decay,
             betas=(0.9, 0.95),
         )
-        self._assert_offline_steer_optimizer_coverage()
-        
         self.train_loader = self._build_loader(self.train_dataset, worker_init_fn=worker_init_fn)
         total_train_steps = self._estimate_total_train_steps()
         self.max_steps = total_train_steps
@@ -690,7 +694,7 @@ class Wan22Trainer:
                 rank=self.accelerator.process_index,
                 seed=self.role_balanced_seed,
                 primary_role="primary",
-                auxiliary_roles=("auxiliary",),
+                auxiliary_roles=_infer_auxiliary_roles(roles, primary_role="primary"),
             )
             return DataLoader(
                 dataset,
@@ -698,6 +702,7 @@ class Wan22Trainer:
                 num_workers=self.num_workers,
                 pin_memory=torch.cuda.is_available(),
                 worker_init_fn=worker_init_fn,
+                collate_fn=collate_robot_video_batch,
             )
 
         self.train_sampler = ResumableEpochSampler(
@@ -714,6 +719,7 @@ class Wan22Trainer:
             num_workers=self.num_workers,
             pin_memory=torch.cuda.is_available(),
             worker_init_fn=worker_init_fn,
+            collate_fn=collate_robot_video_batch,
         )
 
     def _prepare_training_components(self) -> None:
@@ -774,48 +780,6 @@ class Wan22Trainer:
         if not getattr(self, "role_balanced_sampling_enabled", False):
             return sample
         return _send_batch_to_device(sample, self.accelerator.device)
-
-    def _offline_pair_loss_scale(self) -> float:
-        model = self.accelerator.unwrap_model(self.model)
-        if not getattr(model, "offline_steer_enabled", False):
-            return 0.0
-        steer_config = getattr(model, "offline_steer_config", {})
-        if float(steer_config.get("pair_loss_weight", 0.0)) <= 0.0:
-            return 0.0
-        warmup_steps = int(steer_config.get("pair_loss_warmup_steps", 0))
-        if warmup_steps <= 0:
-            return 1.0
-        return min(float(self.global_step + 1) / float(warmup_steps), 1.0)
-
-    def _offline_pair_loss_ddp_scale(self, sample) -> float:
-        model = self.accelerator.unwrap_model(self.model)
-        if not getattr(model, "offline_steer_enabled", False):
-            return 1.0
-        steer_config = getattr(model, "offline_steer_config", {})
-        if float(steer_config.get("pair_loss_weight", 0.0)) <= 0.0:
-            return 1.0
-        pair_weight = sample.get("pair_weight")
-        if pair_weight is None:
-            return 1.0
-        local_weight = (
-            pair_weight.detach()
-            .to(device=self.accelerator.device, dtype=torch.float32)
-            .clamp(min=0.0)
-            .sum()
-        )
-        global_weight = self.accelerator.reduce(
-            local_weight,
-            reduction="sum",
-        )
-        if float(global_weight.item()) <= 0.0:
-            return 0.0
-        return float(
-            (
-                local_weight
-                * float(self.accelerator.num_processes)
-                / global_weight
-            ).item()
-        )
 
     def _assert_dataset_length_consistent(self, dataset, dataset_name: str):
         if not hasattr(dataset, "__len__"):
@@ -938,7 +902,6 @@ class Wan22Trainer:
             from fastwam.models.wan22.video_lora import apply_video_lora_training_mode
 
             apply_video_lora_training_mode(model)
-            Wan22Trainer._enable_offline_steer_train_mode(model)
             return
 
         model.eval()
@@ -953,77 +916,59 @@ class Wan22Trainer:
         if outcome_encoder is not None:
             outcome_encoder.train()
             outcome_encoder.requires_grad_(True)
-        Wan22Trainer._enable_offline_steer_train_mode(model)
-
-    @staticmethod
-    def _enable_offline_steer_train_mode(model) -> None:
-        if not getattr(model, "offline_steer_enabled", False):
-            return
-        for module_name in (
-            "offline_steer_student",
-            "offline_steer_residual",
-        ):
-            module = getattr(model, module_name, None)
-            if module is None:
-                raise RuntimeError(
-                    f"`offline_steer` is enabled but `{module_name}` is missing."
-                )
-            module.train()
-            module.requires_grad_(True)
-
-    def _assert_offline_steer_optimizer_coverage(self) -> None:
-        model = self.accelerator.unwrap_model(self.model)
-        if not getattr(model, "offline_steer_enabled", False):
-            return
-
-        optimizer_parameter_ids = {
-            id(parameter)
-            for group in self.optimizer.param_groups
-            for parameter in group["params"]
-        }
-        for module_name in (
-            "offline_steer_student",
-            "offline_steer_residual",
-        ):
-            module = getattr(model, module_name, None)
-            if module is None:
-                raise RuntimeError(
-                    f"`offline_steer` is enabled but `{module_name}` is missing."
-                )
-            missing_parameters = [
-                name
-                for name, parameter in module.named_parameters()
-                if parameter.requires_grad
-                and id(parameter) not in optimizer_parameter_ids
-            ]
-            if missing_parameters:
-                raise RuntimeError(
-                    f"`{module_name}` has trainable parameters absent from the "
-                    f"optimizer: {missing_parameters}"
-                )
 
     @staticmethod
     def _to_batched_eval_sample(sample):
-        video = sample["video"]
+        video = sample.get("video", None)
         prompt = sample["prompt"]
         action = sample.get("action", None)
         proprio = sample.get("proprio", None)
         context = sample.get("context", None)
         context_mask = sample.get("context_mask", None)
         outcome_flag = sample.get("outcome_flag", None)
+        input_latents = sample.get("input_latents", None)
 
-        if not isinstance(video, torch.Tensor):
-            raise TypeError(
-                f"Expected tensor video for evaluation, got {type(video)}. "
-                "Evaluation now expects `video` with shape [3,T,H,W] or [B,3,T,H,W]."
-            )
-        if video.ndim == 4:
-            video = video.unsqueeze(0)
-        if video.ndim != 5:
-            raise ValueError(f"Expected video shape [3,T,H,W] or [B,3,T,H,W], got {tuple(video.shape)}")
-        num_video_frames = video.shape[2]
+        if input_latents is not None:
+            if not isinstance(input_latents, torch.Tensor):
+                raise TypeError(
+                    f"Expected tensor input_latents for evaluation, got {type(input_latents)}"
+                )
+            if input_latents.ndim == 4:
+                input_latents = input_latents.unsqueeze(0)
+            if input_latents.ndim != 5:
+                raise ValueError(
+                    f"Expected input_latents shape [C,T,H,W] or [B,C,T,H,W], got {tuple(input_latents.shape)}"
+                )
+            latent_t = int(input_latents.shape[2])
+            num_video_frames = 1 + (latent_t - 1) * 4
+            batch_size = int(input_latents.shape[0])
+        else:
+            if not isinstance(video, torch.Tensor):
+                raise TypeError(
+                    f"Expected tensor video for evaluation, got {type(video)}. "
+                    "Evaluation now expects `video` with shape [3,T,H,W] or [B,3,T,H,W]."
+                )
+            if video.ndim == 4:
+                video = video.unsqueeze(0)
+            if video.ndim != 5:
+                raise ValueError(f"Expected video shape [3,T,H,W] or [B,3,T,H,W], got {tuple(video.shape)}")
+            num_video_frames = video.shape[2]
+            batch_size = int(video.shape[0])
+
+        if video is not None:
+            if not isinstance(video, torch.Tensor):
+                raise TypeError(
+                    f"Expected tensor video for evaluation, got {type(video)}."
+                )
+            if video.ndim == 4:
+                video = video.unsqueeze(0)
+            if video.ndim != 5:
+                raise ValueError(f"Expected video shape [3,T,H,W] or [B,3,T,H,W], got {tuple(video.shape)}")
+
         if num_video_frames <= 1:
-            raise ValueError(f"`sample['video']` must have at least 2 frames for action evaluation, got {num_video_frames}")
+            raise ValueError(
+                f"Eval sample must have at least 2 video frames, got T={num_video_frames}"
+            )
 
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -1031,8 +976,8 @@ class Wan22Trainer:
             prompt = list(prompt)
         elif not isinstance(prompt, list):
             raise TypeError(f"Expected prompt type str/list[str], got {type(prompt)}")
-        if len(prompt) != video.shape[0]:
-            raise ValueError(f"Prompt batch mismatch: len(prompt)={len(prompt)} vs video batch={video.shape[0]}")
+        if len(prompt) != batch_size:
+            raise ValueError(f"Prompt batch mismatch: len(prompt)={len(prompt)} vs batch={batch_size}")
         
         action_horizon = None
         action = None
@@ -1081,10 +1026,10 @@ class Wan22Trainer:
                 outcome_flag = outcome_flag.view(-1)
             elif outcome_flag.ndim != 1:
                 raise ValueError(f"`sample['outcome_flag']` must be scalar, [B], or [B,1], got {tuple(outcome_flag.shape)}")
-            if outcome_flag.shape[0] != video.shape[0]:
-                raise ValueError(f"Outcome batch mismatch: {outcome_flag.shape[0]} vs video batch={video.shape[0]}")
+            if outcome_flag.shape[0] != batch_size:
+                raise ValueError(f"Outcome batch mismatch: {outcome_flag.shape[0]} vs batch={batch_size}")
 
-        return {
+        out = {
             "video": video,
             "prompt": prompt,
             "action": action,
@@ -1094,6 +1039,9 @@ class Wan22Trainer:
             "outcome_flag": outcome_flag,
             "action_horizon": action_horizon,
         }
+        if input_latents is not None:
+            out["input_latents"] = input_latents
+        return out
 
     @torch.no_grad()
     def _evaluate_one(self, model, *, eval_index: int, sample_number: int):
@@ -1122,25 +1070,47 @@ class Wan22Trainer:
                 )
             )
             sample = self._to_batched_eval_sample(raw_sample)
-            loss_kwargs = {}
-            if "pair_loss_scale" in inspect.signature(model.training_loss).parameters:
-                # Checkpoint selection uses the objective shared by every variant.
-                # Pair supervision is reported separately and never changes val_base_loss.
-                loss_kwargs["pair_loss_scale"] = 0.0
             with self.accelerator.autocast():
-                val_loss, val_loss_dict = model.training_loss(
-                    sample,
-                    **loss_kwargs,
-                )
+                val_loss, val_loss_dict = model.training_loss(sample)
                 val_loss = val_loss.float().item()
-        val_pair_loss_raw = float(
-            val_loss_dict.get("loss_pair_raw", float("nan"))
-        )
 
         prompt = sample["prompt"][0]
-        video0 = sample["video"][0]
+        video0 = sample.get("video")
+        if video0 is not None:
+            video0 = video0[0]
+        has_real_video = (
+            video0 is not None
+            and torch.is_tensor(video0)
+            and video0.ndim == 4
+            and int(video0.shape[-1]) >= 64
+            and int(video0.shape[-2]) >= 64
+        )
         action = sample["action"][0] if "action" in sample and sample["action"] is not None else None
         proprio = sample["proprio"][0, 0] if "proprio" in sample and sample["proprio"] is not None else None
+
+        # Latent-only / no-VAE mode: keep selection metric (val_base_loss) but skip
+        # pixel-space rollout / VAE recon visualization.
+        if (not has_real_video) or getattr(model, "vae", None) is None:
+            return {
+                "metrics": [
+                    float(val_loss),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                    float("nan"),
+                ],
+                "video_path": None,
+                "selection": {
+                    "eval_index": int(eval_index),
+                    "sample_id": sample_id,
+                    "noise_seed": int(sample_seed),
+                },
+            }
+
         input_image = video0[:, 0].unsqueeze(0)
         _, num_frames, _, _ = video0.shape
 
@@ -1282,7 +1252,6 @@ class Wan22Trainer:
                 float(ssim_decode_vs_gt),
                 float(action_l2) if action_l2 is not None else float("nan"),
                 float(action_l1) if action_l1 is not None else float("nan"),
-                val_pair_loss_raw,
             ],
             "video_path": video_path,
             "selection": {
@@ -1353,10 +1322,8 @@ class Wan22Trainer:
 
             action_l2_values = gathered_metrics[:, 7]
             action_l1_values = gathered_metrics[:, 8]
-            pair_loss_values = gathered_metrics[:, 9]
             action_l2_valid = action_l2_values[torch.isfinite(action_l2_values)]
             action_l1_valid = action_l1_values[torch.isfinite(action_l1_values)]
-            pair_loss_valid = pair_loss_values[torch.isfinite(pair_loss_values)]
 
             result = {
                 "val_loss": float(mean_metrics[0].item()),
@@ -1376,8 +1343,6 @@ class Wan22Trainer:
                 result["action_l2"] = float(action_l2_valid.mean().item())
             if action_l1_valid.numel() > 0:
                 result["action_l1"] = float(action_l1_valid.mean().item())
-            if pair_loss_valid.numel() > 0:
-                result["pair_loss_raw"] = float(pair_loss_valid.mean().item())
             return result
         finally:
             if was_dit_training:
@@ -1653,13 +1618,7 @@ class Wan22Trainer:
                 train_model = self.model if hasattr(self.model, "training_loss") else self.accelerator.unwrap_model(self.model)
 
                 with self.accelerator.autocast():
-                    loss, loss_dict = train_model.training_loss(
-                        sample,
-                        pair_loss_scale=self._offline_pair_loss_scale(),
-                        pair_loss_ddp_scale=self._offline_pair_loss_ddp_scale(
-                            sample
-                        ),
-                    )
+                    loss, loss_dict = train_model.training_loss(sample)
                 self._raise_if_non_finite(
                     loss,
                     value_name="loss",
@@ -1744,8 +1703,6 @@ class Wan22Trainer:
                                 description += " action_l2=%.4f" % eval_metrics["action_l2"]
                             if "action_l1" in eval_metrics:
                                 description += " action_l1=%.4f" % eval_metrics["action_l1"]
-                            if "pair_loss_raw" in eval_metrics:
-                                description += " pair_loss_raw=%.4f" % eval_metrics["pair_loss_raw"]
                             logger.info(description)
                             eval_payload = {
                                 "eval/val_loss": float(eval_metrics["val_loss"]),
@@ -1766,10 +1723,6 @@ class Wan22Trainer:
                                 eval_payload["eval/action_l2"] = float(eval_metrics["action_l2"])
                             if "action_l1" in eval_metrics:
                                 eval_payload["eval/action_l1"] = float(eval_metrics["action_l1"])
-                            if "pair_loss_raw" in eval_metrics:
-                                eval_payload["eval/pair_loss_raw"] = float(
-                                    eval_metrics["pair_loss_raw"]
-                                )
                             self._local_metrics_log(eval_payload)
                             self._wandb_log(eval_payload)
 

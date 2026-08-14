@@ -233,5 +233,30 @@ class RoleBalancedBatchSamplerTest(unittest.TestCase):
             sampler.set_resume_batch_offset(sampler.num_batches_per_epoch + 1)
 
 
+    def test_stratified_auxiliary_roles_split_evenly(self) -> None:
+        roles = (
+            ["primary"] * 8
+            + ["auxiliary_success"] * 6
+            + ["auxiliary"] * 6
+        )
+        sampler = RoleBalancedBatchSampler(
+            roles,
+            batch_size=4,
+            primary_per_batch=2,
+            seed=5,
+            primary_role="primary",
+            auxiliary_roles=("auxiliary_success", "auxiliary"),
+        )
+
+        batches = list(sampler)
+        self.assertTrue(batches)
+        for batch in batches:
+            batch_roles = [roles[index] for index in batch]
+            self.assertEqual(len(batch), 4)
+            self.assertEqual(batch_roles.count("primary"), 2)
+            self.assertEqual(batch_roles.count("auxiliary_success"), 1)
+            self.assertEqual(batch_roles.count("auxiliary"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

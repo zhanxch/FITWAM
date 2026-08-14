@@ -224,8 +224,12 @@ class BaseLerobotDataset(torch.utils.data.Dataset):
         for meta in self.action_meta:
             sample["action"][meta["key"]] = self._get_action(meta, lerobot_sample)
 
-        for meta in self.image_meta:
-            sample["images"][meta["key"]] = self._get_image(meta, lerobot_sample)
+        if getattr(self, "return_images", True):
+            for meta in self.image_meta:
+                sample["images"][meta["key"]] = self._get_image(meta, lerobot_sample)
+        else:
+            # Skip MP4 decode; callers that need vision must supply precomputed latents.
+            sample["images"] = {}
 
         sample["action_is_pad"] = lerobot_sample[f"{self.action_meta[0]['lerobot_key']}_is_pad"]
         sample["state_is_pad"] = lerobot_sample[f"{self.state_meta[0]['lerobot_key']}_is_pad"]

@@ -1,0 +1,9 @@
+# Frozen DEWO v2 inference prompts. The positive branch is the success channel
+# seen during training; cfg_base_prompt is the task-only dropout channel.
+env_name: fold_glasses
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Fold the glasses and place them into the case. Successful execution."
+cfg_base_prompt: "Fold the glasses and place them into the case."
+robot_type: single_arm

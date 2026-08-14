@@ -1,0 +1,18 @@
+# Fold-glasses DEWO first-pass recipe: binary outcome/base CFG, no FAST channel.
+defaults:
+  - eve_fold_glasses_b1_jump_fast
+  - _self_
+
+train:
+  outcome_text_success_suffix: " Successful execution."
+  outcome_text_failure_suffix: " Failed execution."
+  outcome_text_dropout_prob: 0.5
+  cfg_channel_probs: null
+  text_embedding_cache_dir: ${oc.env:TEXT_EMBEDDING_CACHE_DIR,data/text_embeds_cache/fold_glasses_dewo_v2_opensource}
+
+val:
+  outcome_text_success_suffix: ${data.train.outcome_text_success_suffix}
+  outcome_text_failure_suffix: ${data.train.outcome_text_failure_suffix}
+  outcome_text_dropout_prob: 0.0
+  cfg_channel_probs: null
+  text_embedding_cache_dir: ${data.train.text_embedding_cache_dir}

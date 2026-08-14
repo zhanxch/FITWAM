@@ -164,6 +164,10 @@ def _load_trainer_module():
 
     fastwam_stub = types.ModuleType("fastwam")
     fastwam_stub.__path__ = []
+    datasets_stub = types.ModuleType("fastwam.datasets")
+    datasets_stub.__path__ = []
+    vae_stub = types.ModuleType("fastwam.datasets.vae_latent_cache")
+    vae_stub.collate_robot_video_batch = lambda batch: batch
     utils_stub = types.ModuleType("fastwam.utils")
     utils_stub.__path__ = []
     fs_stub = types.ModuleType("fastwam.utils.fs")
@@ -193,6 +197,8 @@ def _load_trainer_module():
         "omegaconf": omegaconf_stub,
         "PIL": pil_stub,
         "fastwam": fastwam_stub,
+        "fastwam.datasets": datasets_stub,
+        "fastwam.datasets.vae_latent_cache": vae_stub,
         "fastwam.utils": utils_stub,
         "fastwam.utils.fs": fs_stub,
         "fastwam.utils.logging_config": logging_stub,
@@ -356,7 +362,7 @@ class TrainerRoleBalancedLoaderTest(unittest.TestCase):
         )
         self.assertEqual(
             role({"episode_outcome": "success", "action_loss": "disabled"}),
-            "auxiliary",
+            "auxiliary_success",
         )
         self.assertEqual(
             role(
@@ -366,7 +372,7 @@ class TrainerRoleBalancedLoaderTest(unittest.TestCase):
                     "batch_role": "auxiliary",
                 }
             ),
-            "auxiliary",
+            "auxiliary_success",
         )
         self.assertEqual(
             role({"episode_outcome": "failure", "action_loss": "disabled"}),
@@ -491,82 +497,6 @@ class TrainerRoleBalancedLoaderTest(unittest.TestCase):
                 "Inconsistent `output_dir` across ranks",
             ):
                 trainer._assert_output_dir_consistent()
-
-    def test_offline_steer_modules_are_unfrozen_and_covered_by_optimizer(self):
-        trainer_module = _load_trainer_module()
-
-        class Parameter:
-            def __init__(self):
-                self.requires_grad = False
-
-        class Module:
-            def __init__(self, name):
-                self.name = name
-                self.parameter = Parameter()
-                self.training = False
-
-            def train(self):
-                self.training = True
-
-            def requires_grad_(self, enabled):
-                self.parameter.requires_grad = enabled
-
-            def named_parameters(self):
-                return [(f"{self.name}.weight", self.parameter)]
-
-        class Model:
-            def __init__(self):
-                self.video_lora_enabled = False
-                self.offline_steer_enabled = True
-                self.dit = Module("dit")
-                self.proprio_encoder = None
-                self.outcome_encoder = None
-                self.offline_steer_student = Module("student")
-                self.offline_steer_residual = Module("residual")
-
-            def eval(self):
-                pass
-
-            def requires_grad_(self, enabled):
-                for module in (
-                    self.dit,
-                    self.offline_steer_student,
-                    self.offline_steer_residual,
-                ):
-                    module.requires_grad_(enabled)
-
-        model = Model()
-        trainer_module.Wan22Trainer._apply_dit_only_train_mode(model)
-        self.assertTrue(model.offline_steer_student.training)
-        self.assertTrue(model.offline_steer_residual.training)
-        self.assertTrue(model.offline_steer_student.parameter.requires_grad)
-        self.assertTrue(model.offline_steer_residual.parameter.requires_grad)
-
-        trainer = object.__new__(trainer_module.Wan22Trainer)
-        trainer.model = model
-        trainer.accelerator = types.SimpleNamespace(unwrap_model=lambda value: value)
-        trainer.optimizer = types.SimpleNamespace(
-            param_groups=[
-                {
-                    "params": [
-                        model.dit.parameter,
-                        model.offline_steer_student.parameter,
-                        model.offline_steer_residual.parameter,
-                    ]
-                }
-            ]
-        )
-        trainer._assert_offline_steer_optimizer_coverage()
-
-        trainer.optimizer.param_groups[0]["params"].remove(
-            model.offline_steer_residual.parameter
-        )
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "offline_steer_residual.*absent from the optimizer",
-        ):
-            trainer._assert_offline_steer_optimizer_coverage()
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
 
 [![上游 FastWAM](https://img.shields.io/badge/上游-FastWAM-111111.svg)](./docs/FASTWAM_UPSTREAM.md)
 
-**相关文档：** [`docs/OFFLINE_SELF_IMPROVING_PLAN.md`](./docs/OFFLINE_SELF_IMPROVING_PLAN.md) · [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
+**相关文档：** [`docs/DEWOV2.md`](./docs/DEWOV2.md) · [`DEWO.md`](./DEWO.md) · [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) · [`docs/RELATED_WORK.md`](./docs/RELATED_WORK.md) · [`docs/AWS_RUNBOOK.md`](./docs/AWS_RUNBOOK.md) · [`docs/FASTWAM_UPSTREAM.md`](./docs/FASTWAM_UPSTREAM.md) · [`scripts/README.md`](./scripts/README.md) · [`scripts/water_plant/README.md`](./scripts/water_plant/README.md)
 
 本仓库是在 FastWAM 上做的 failure / self-evolution / tactile 方向 fork。当前主线不是重新做一个通用 WAM，而是围绕失败和交互事件回答一个问题：
 
@@ -22,30 +22,27 @@ DexJoCo `water_plant` 的历史 pilot 提供了前期可行性信号：
 | **success-only 历史参考** | step 6500 为 `70/100`；另一次 source-policy rollout 为 `151/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **rollout continuation pilot** | rollout text-failure LoRA continuation 为 `163/200` | [`papers/II/experiment_results.md`](./papers/II/experiment_results.md) |
 | **EveRobot sidecar v0.2 已实现** | 不可变 round ledger、可复核 manifest hash、round/sample 子集和路径重映射已覆盖测试；历史 round1 数据仍是 v0.1 | [`docs/EVEROBOT_FORMAT.md`](./docs/EVEROBOT_FORMAT.md) |
-| **offline steer 开发集筛选** | validation-best 为首要 checkpoint 规则；Strict E2 中 C、pair-shuffle、M 分别为 `85.0%`、`71.0%`、`54.5%`，当前 Teacher/pair 目标未通过 | [`results/dexjoco_water_plant_offline_v1/README.md`](./results/dexjoco_water_plant_offline_v1/README.md) |
 
 注意：前三项是 mixed-protocol 历史 pilot，当前 checkout 没有保存全部 raw summary。`151/200` 和 `163/200` 属于 source-policy rollout 与 LoRA continuation 计数，不能据此单独归因于 EveRobot 或 M4，也不与后面的受控筛选结果混成最终主表。
 
-## 六个 Milestone
+## 当前 Milestone
 
 | Milestone | 要证明什么 | 当前状态 |
 |-----------|------------|----------|
 | **M1 Failure video** | failure 轨迹在直接 action loss 为零时仍可通过 video/shared MoT 影响策略 | 200 个配对种子下，B1 在 step 5000/6000/6500 均高于 B0；仍需训练 seed 复现 |
 | **M2 EveRobot** | failure rollout 需要结构化记录 outcome、event window、manifest 和 provenance | v0.2 builder/loader 已实现；历史 round1 数据待重建和对齐 |
-| **M3 Steer token** | 从局部成功/失败动作学习 observation-conditioned residual steer | validation-best 下 strict C 为 `85.0%`，pair-shuffle 为 `71.0%`，strict M 为 `54.5%`；旧 Teacher/pair 目标已停止扩展 |
-| **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 单轮数据闭环和开发集筛选已跑通；进入多轮前仍需通过 fresh-seed efficacy 与 steer 因果 gate |
-| **M5 Online self-improvement** | 在线更新 steer，并用新观测校正 world expert | 待 offline steer 通过后开展 |
-| **M6 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
+| **M3 DEWO conditioning** | failure event 的 VideoDiT 使用 `base + FAST(action)`，ActionDiT 只使用 base task | fold_glasses 方案与代码已接入，待正式实验 |
+| **M4 Offline self-evolution** | Train -> Test -> append rollout -> retrain 多轮后继续涨点 | 单轮数据闭环已跑通；当前先验证 fold_glasses DEWO |
+| **M5 Real tactile** | 真机接触期用触觉区分成功/失败，补 RGB 不可见的接触信息 | 待开展真机实验和触觉模块 |
 
 整体顺序：
 
 ```text
 M1 证明 failure video 有用
   -> M2 用 EveRobot 把 rollout / event / manifest 管起来
-  -> M3 用局部失败动作训练 contrastive steer
+  -> M3 用 FAST(action) 强化 VideoDiT 的 action-video 对齐
   -> M4 多轮 rollout 回灌，验证 offline self-evolution
-  -> M5 在线更新 steer / world expert
-  -> M6 真机触觉，把 contact-rich failure 接进同一套 event 叙事
+  -> M5 真机触觉，把 contact-rich failure 接进同一套 event 叙事
 ```
 
 ## 已实现内容

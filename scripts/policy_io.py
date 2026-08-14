@@ -12,6 +12,9 @@ KEY_PROPRIO = "proprio"
 KEY_PROMPT = "prompt"
 KEY_CONTEXT = "context"
 KEY_CONTEXT_MASK = "context_mask"
+KEY_NEGATIVE_PROMPT = "negative_prompt"
+KEY_NEGATIVE_CONTEXT = "negative_context"
+KEY_NEGATIVE_CONTEXT_MASK = "negative_context_mask"
 
 # Returned by get_action after denormalization.
 KEY_ACTION = "action"
@@ -48,6 +51,28 @@ def validate_policy_observation(observation: dict[str, Any]) -> None:
     if has_text and has_prompt:
         raise ValueError(f"Provide either '{KEY_PROMPT}' or cached text tensors, not both.")
 
+    has_negative_context = (
+        KEY_NEGATIVE_CONTEXT in observation
+        or KEY_NEGATIVE_CONTEXT_MASK in observation
+    )
+    has_negative_prompt = KEY_NEGATIVE_PROMPT in observation
+    if has_negative_context and not (
+        KEY_NEGATIVE_CONTEXT in observation
+        and KEY_NEGATIVE_CONTEXT_MASK in observation
+    ):
+        raise ValueError(
+            f"Provide both '{KEY_NEGATIVE_CONTEXT}' and "
+            f"'{KEY_NEGATIVE_CONTEXT_MASK}' together."
+        )
+    if has_negative_context and has_negative_prompt:
+        raise ValueError(
+            f"Provide either '{KEY_NEGATIVE_PROMPT}' or cached negative text tensors, not both."
+        )
+    if has_prompt and has_negative_context:
+        raise ValueError("Prompt input requires a negative prompt, not cached negative context.")
+    if has_text and has_negative_prompt:
+        raise ValueError("Cached context input requires cached negative context, not a negative prompt.")
+
 
 def to_inference_tensors(observation: dict[str, Any], *, device: torch.device, dtype: torch.dtype) -> dict[str, Any]:
     """Convert msgpack/numpy payloads to torch tensors for model.infer_action."""
@@ -83,7 +108,18 @@ def to_inference_tensors(observation: dict[str, Any], *, device: torch.device, d
         if not isinstance(mask, torch.Tensor):
             mask = torch.as_tensor(mask, dtype=torch.bool)
         out[KEY_CONTEXT_MASK] = mask
+        if KEY_NEGATIVE_CONTEXT in observation:
+            negative_context = observation[KEY_NEGATIVE_CONTEXT]
+            if not isinstance(negative_context, torch.Tensor):
+                negative_context = torch.as_tensor(negative_context, dtype=torch.float32)
+            out[KEY_NEGATIVE_CONTEXT] = negative_context
+            negative_mask = observation[KEY_NEGATIVE_CONTEXT_MASK]
+            if not isinstance(negative_mask, torch.Tensor):
+                negative_mask = torch.as_tensor(negative_mask, dtype=torch.bool)
+            out[KEY_NEGATIVE_CONTEXT_MASK] = negative_mask
     else:
         out[KEY_PROMPT] = str(observation[KEY_PROMPT])
+        if KEY_NEGATIVE_PROMPT in observation:
+            out[KEY_NEGATIVE_PROMPT] = str(observation[KEY_NEGATIVE_PROMPT])
 
     return out

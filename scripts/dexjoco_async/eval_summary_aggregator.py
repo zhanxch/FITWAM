@@ -78,6 +78,7 @@ def _recompute_task(task: dict[str, Any], merged_episodes: list[dict[str, Any]])
     return {
         "env_name": task.get("env_name"),
         "prompt": task.get("prompt"),
+        "cfg_base_prompt": task.get("cfg_base_prompt"),
         "dual_arm": task.get("dual_arm"),
         "camera_key": task.get("camera_key"),
         "episodes": total,
