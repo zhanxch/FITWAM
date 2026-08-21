@@ -142,12 +142,19 @@ def image_metrics(replayed: np.ndarray, recorded: np.ndarray) -> dict[str, float
 
 
 def progress_metrics(env: Any) -> dict[str, Any]:
+    """Task progress snapshot. Fold-glasses sensors when present; else succeed counters."""
     raw = env.unwrapped
-    glass = np.asarray(raw._data.sensor("glass_pos").data, dtype=np.float64)
-    box = np.asarray(raw._model.body("open_box").pos, dtype=np.float64)
-    delta = glass - box
-    hinge0 = float(raw._data.sensor("glass_joint_0_pos").data[0])
-    hinge1 = float(raw._data.sensor("glass_joint_1_pos").data[0])
+    base = {
+        "success_trigger_count": int(getattr(raw, "_success_trigger_count", 0)),
+    }
+    try:
+        glass = np.asarray(raw._data.sensor("glass_pos").data, dtype=np.float64)
+        box = np.asarray(raw._model.body("open_box").pos, dtype=np.float64)
+        delta = glass - box
+        hinge0 = float(raw._data.sensor("glass_joint_0_pos").data[0])
+        hinge1 = float(raw._data.sensor("glass_joint_1_pos").data[0])
+    except Exception:
+        return base
     margins = {
         "inside_x": float(0.145 - abs(delta[0])),
         "inside_y": float(0.145 - abs(delta[1])),
@@ -155,6 +162,7 @@ def progress_metrics(env: Any) -> dict[str, Any]:
         "inside_z_high": float(0.0275 - delta[2]),
     }
     return {
+        **base,
         "hinge_0": hinge0,
         "hinge_1": hinge1,
         "hinge_min": min(hinge0, hinge1),
@@ -165,15 +173,16 @@ def progress_metrics(env: Any) -> dict[str, Any]:
             and hinge1 > 1.1
             and all(value >= 0.0 for value in margins.values())
         ),
-        "success_trigger_count": int(raw._success_trigger_count),
     }
 
 
-def create_environment(seed: int) -> tuple[Any, Any]:
+def create_environment(
+    seed: int, *, task_name: str = "fold_glasses"
+) -> tuple[Any, Any]:
     setup_paths()
     from dexjoco.tasks import CONFIG_MAPPING
 
-    config = CONFIG_MAPPING["fold_glasses"]()
+    config = CONFIG_MAPPING[task_name]()
     env = config.get_environment(
         policy_mode=True,
         render_mode="rgb_array",

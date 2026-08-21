@@ -87,13 +87,27 @@ hammer_nail 一键 collect + trim + train：`bash scripts/hammer_nail/collect_ro
 
 详见 [`dexjoco_async/README.md`](dexjoco_async/README.md)。
 
-## Video LoRA
+## DexJoCo 开源栈 4×50 与 DEWO v2
+
+`checkpoints/dexjoco/*` 与 DEWO v2 **只改环境变量，不要新开一份 .sh**。`GPUS` / `RUN_DIR` / `CKPT` 必填（或显式传入），不要写进文件名。
 
 ```bash
-bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
+# 开源 baseline / 单任务 4×50
+TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dexjoco/eval_opensource_4x50.sh
+
+# DEWO v2 CFG 4×50
+TASK=hammer_nail RUN_DIR=... CKPT=... TEXT_EMBEDDING_CACHE_DIR=... GPUS=4,5,6,7 \
+  bash scripts/dewo_v2/eval_cfg_official_4x50.sh
+
+# Collect
+TASK=water_plant GPUS=4,5,6,7 bash scripts/dewo_v2/collect_opensource_4x50.sh
 ```
 
-详见根目录 [`README.md`](../README.md#video-lora独立可选路径)。
+任务表：`scripts/dewo_v2/tasks.py`。兼容包装在 `scripts/fold_glasses/`、`scripts/hammer_nail/`、`scripts/water_plant/`，只设置 `TASK=`。
+
+## Video LoRA
+
+DEWO v2 用 Hydra `dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5`（224 / z-score），不要再走已删除的 384 `train_2cam` 任务。
 
 ## 其他
 

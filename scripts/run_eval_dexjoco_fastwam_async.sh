@@ -3,8 +3,9 @@
 #
 # Prerequisite: start the ASYNC policy server (`fitwam` env), e.g.
 #   CUDA_VISIBLE_DEVICES=7 python scripts/run_fastwam_server_async.py \
-#     --run-dir runs/dexjoco_ego_uncond_1cam_384_1e-4/2026-06-05_17-18-31 \
+#     --run-dir runs/dexjoco_fold_glasses_dewo_v2/<timestamp> \
 #     --checkpoint checkpoints/weights/step_002500.pt \
+#     --dataset-stats-path /path/to/OPEN/artifacts/fold_glasses/dataset_stats.json \
 #     --device cuda:0 --host 0.0.0.0 --port 5561
 #
 # Example: bimanual_assembly 50 episodes, 10 parallel workers + batch infer:
@@ -17,7 +18,7 @@ set -euo pipefail
 FASTWAM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$FASTWAM_ROOT"
 
-RUN_DIR="${RUN_DIR:-runs/dexjoco_ego_uncond_1cam_384_1e-4/2026-06-05_17-18-31}"
+RUN_DIR="${RUN_DIR:?Set RUN_DIR to the FastWAM training run}"
 POLICY_HOST="${POLICY_HOST:-127.0.0.1}"
 POLICY_PORT="${POLICY_PORT:-5561}"
 EPISODES="${EPISODES:-50}"

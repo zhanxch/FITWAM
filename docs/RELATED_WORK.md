@@ -18,7 +18,7 @@ WAMs expose a complementary post-deployment objective because observed transitio
 
 Behavior cloning treats its action targets as desirable, so autonomous failures require selective supervision. SSDF scores trajectory segments and reuses high-quality portions of imperfect demonstrations, while $\pi_{0.7}$ represents task performance through metadata-conditioned robot data \citep{wu2025ssdf,intelligence2026pi07}. DALI-R learns latent dynamics from suboptimal and failed trajectories and reranks imagined action chunks; AFIL models successful and failed action distributions and guides sampling away from failure at deployment \citep{luo2026dalir,zheng2026afil}.
 
-FITWAM's offline route converts state-line transition scores into confidence-weighted candidate intervals, rather than assuming exact semantic subtask boundaries. Candidate intervals from failed rollouts retain world-model supervision but contribute no direct action-imitation target. Paired success/failure candidates train a compact steer representation and a residual action module through contrastive supervision; deployment requires neither an outcome label nor a separate failure generator.
+DEWO converts observed transition changes into localized failure-event intervals rather than assuming exact semantic subtask boundaries. Failed rollout windows retain video/world-model supervision while contributing no direct action-imitation target. FAST action suffixes are used only as a training-time VideoDiT condition; ActionDiT receives the base task prompt, and deployment uses success-versus-base CFG without requiring an outcome label from the environment.
 
 ## Tactile Learning for Contact-Rich Manipulation
 

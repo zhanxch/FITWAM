@@ -17,6 +17,7 @@ from fastwam.datasets.cfg_text import (
     apply_ternary_cfg_suffix,
     normalize_cfg_channel_probs,
     sample_cfg_channel,
+    select_cfg_schedule_probs,
 )
 
 
@@ -202,6 +203,73 @@ class CfgTextTests(unittest.TestCase):
             )
         self.assertEqual(channel, "outcome")
         self.assertTrue(text.endswith(" Successful execution."))
+
+    def test_primary_uses_outcome_and_base_without_fast(self) -> None:
+        primary = {"outcome": 0.5, "fast": 0.0, "base": 0.5}
+        aux = {"outcome": 0.4, "fast": 0.2, "base": 0.4}
+        fail = {"outcome": 0.0, "fast": 0.2, "base": 0.4}
+        probs = select_cfg_schedule_probs(
+            cfg_schedule="primary",
+            outcome_flag=0,
+            channel_probs=aux,
+            failure_channel_probs=fail,
+            primary_channel_probs=primary,
+        )
+        assert probs is not None
+        self.assertAlmostEqual(probs["outcome"], 0.5)
+        self.assertAlmostEqual(probs["fast"], 0.0)
+        self.assertAlmostEqual(probs["base"], 0.5)
+
+        with mock.patch(
+            "fastwam.datasets.cfg_text.sample_cfg_channel", return_value="outcome"
+        ):
+            text, channel = apply_ternary_cfg_suffix(
+                "Hammer the nail.",
+                outcome_flag=0,
+                success_suffix=" Successful execution.",
+                failure_suffix=None,
+                channel_probs=aux,
+                failure_channel_probs=fail,
+                primary_channel_probs=primary,
+                cfg_schedule="primary",
+                actions=np.zeros((8, 22), dtype=np.float32),
+                is_training=True,
+                fast_fail_closed=True,
+            )
+        self.assertEqual(channel, "outcome")
+        self.assertTrue(text.endswith(" Successful execution."))
+
+    def test_primary_rejects_fast_probability(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot include FAST"):
+            select_cfg_schedule_probs(
+                cfg_schedule="primary",
+                outcome_flag=0,
+                channel_probs={"outcome": 0.4, "fast": 0.2, "base": 0.4},
+                primary_channel_probs={"outcome": 0.4, "fast": 0.2, "base": 0.4},
+            )
+
+    def test_aux_schedules_keep_fast(self) -> None:
+        aux = {"outcome": 0.4, "fast": 0.2, "base": 0.4}
+        fail = {"outcome": 0.0, "fast": 0.2, "base": 0.4}
+        success_probs = select_cfg_schedule_probs(
+            cfg_schedule="aux_success",
+            outcome_flag=0,
+            channel_probs=aux,
+            failure_channel_probs=fail,
+            primary_channel_probs={"outcome": 0.5, "fast": 0.0, "base": 0.5},
+        )
+        fail_probs = select_cfg_schedule_probs(
+            cfg_schedule="aux_failure",
+            outcome_flag=1,
+            channel_probs=aux,
+            failure_channel_probs=fail,
+            primary_channel_probs={"outcome": 0.5, "fast": 0.0, "base": 0.5},
+        )
+        assert success_probs is not None and fail_probs is not None
+        self.assertAlmostEqual(success_probs["fast"], 0.2)
+        self.assertAlmostEqual(fail_probs["fast"], 0.2 / 0.6)
+        self.assertAlmostEqual(fail_probs["base"], 0.4 / 0.6)
+        self.assertAlmostEqual(fail_probs["outcome"], 0.0)
 
 
 if __name__ == "__main__":

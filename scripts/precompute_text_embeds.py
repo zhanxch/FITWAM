@@ -205,15 +205,13 @@ def main(cfg: DictConfig):
     if model_cfg is None:
         raise ValueError(
             "`model` config is missing. Run with a task that sets data and model, for example: "
-            "`python scripts/precompute_text_embeds.py task=libero_uncond_2cam224_1e-4` "
-            "or `task=robotwin_uncond_3cam_384_1e-4`."
+            "`python scripts/precompute_text_embeds.py task=dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5`."
         )
     data_cfg = cfg.get("data")
     if data_cfg is None:
         raise ValueError(
             "`data` config is missing. Run with a task that sets data and model, for example: "
-            "`python scripts/precompute_text_embeds.py task=libero_uncond_2cam224_1e-4` "
-            "or `task=robotwin_uncond_3cam_384_1e-4`."
+            "`python scripts/precompute_text_embeds.py task=dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5`."
         )
 
     dataset_dirs, cache_dirs, context_lens, success_suffix, failure_suffix = (

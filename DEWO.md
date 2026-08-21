@@ -248,19 +248,13 @@ Run: `2026-08-06_22-08-51_B1-remap-cfg`。Val-best：`step=5000`（`val_base_los
 | Other | `step_000500` | 4.0% ± 2.5% | 8/200 | 官方 4×50 完成 |
 
 
-### 正确流程（baseline rollout → DEWO）
+当前 DexJoCo / DEWO v2 入口是开源 224 / z-score：
 
 ```bash
-cd FastWAM
-conda activate fastwam
+TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dewo_v2/collect_opensource_4x50.sh
+```
 
-# 1) 训 baseline（进行中）
-bash scripts/dewo/run_task_dewo.sh hammer_nail baseline
-
-# 2) 指定 baseline ckpt，采集 → prepare → 训 full DEWO
-export RUN_DIR=./runs/hammer_nail_uncond_2cam_384_1e-4/<timestamp>
-export CHECKPOINT=${RUN_DIR}/checkpoints/weights/step_007000.pt
-bash scripts/dewo/run_full_dewo.sh hammer_nail
+详见 `docs/DEWOV2.md`。下面 `scripts/dewo/` 流程已过时，不要再指定已删除的 `*_uncond_2cam_384_1e-4` 任务。
 
 # 或分步：
 # bash scripts/dewo/collect_baseline_rollouts.sh hammer_nail   # 默认 200 eps, max_env_steps=1500
@@ -287,9 +281,8 @@ bash scripts/dewo/run_all_hammer_nail_ablations.sh
 
 ```bash
 cd FastWAM
-export RUN_DIR=./runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39
-export CHECKPOINT=./checkpoints/water_plant_baseline_step_006500.pt
-bash scripts/dewo/run_full_dewo.sh water_plant
+TASK=water_plant GPUS=4,5,6,7 bash scripts/dewo_v2/collect_opensource_4x50.sh
+```
 
 # hammer 同理（baseline 训完后）
 # export RUN_DIR=... CHECKPOINT=...
@@ -468,4 +461,4 @@ FAST 在当前实现中是 **training-only privileged action-conditioning auxili
 2. success prompt，`scale=1`
 3. success-vs-base CFG，预注册一个固定的 `scale>1`
 
-入口为 `scripts/fold_glasses/eval_dewo_v2_cfg_ablation.sh`；base 与 success/base 成对任务配置分别位于 `configs/eval/dexjoco/fold_glasses_dewo_v2_base/` 和 `configs/eval/dexjoco/fold_glasses_dewo_v2_cfg/`。CFG scale 可以在 validation seeds 上预选一次，最终结果必须在未参与选参的新 test seeds 上报告。
+入口为 `scripts/dewo_v2/eval_cfg_ablation.sh`（`TASK=fold_glasses`）；base 与 success/base 成对任务配置分别位于 `configs/eval/dexjoco/fold_glasses_dewo_v2_base/` 和 `configs/eval/dexjoco/fold_glasses_dewo_v2_cfg/`。CFG scale 可以在 validation seeds 上预选一次，最终结果必须在未参与选参的新 test seeds 上报告。

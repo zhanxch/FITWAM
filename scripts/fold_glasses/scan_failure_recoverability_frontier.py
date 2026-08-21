@@ -3,18 +3,21 @@
 
 For each seed, select one failed rollout if any exist. Starting at frame 48
 and stepping by the 24-frame replan grid, replay the factual GT prefix to M,
-then run S0 closed-loop continuations to the original horizon. Replicates at
-a prefix are sequential: the first success marks the checkpoint recoverable
-and the remaining Pass@4 trials are skipped. All four trials are required
-only to declare 0/4. The first 0/4 prefix is the unrecoverable failure frame
-M. The pair is:
+then run S0 closed-loop continuations to the original horizon. Every prefix
+records a full Pass@4 (all M trials). The first 0/4 prefix is the
+unrecoverable failure frame M. The pair is:
 
 * failure event: the factual GT window ``[M-33, M)``
-* success event: one previously successful continuation from M-24, same window
+* success event: crop of that same window from a **saved closed-loop success
+  rollout** started at ``t = M-24``
 
-Later recovery islands are ignored. Original S0 success rollouts are not used
-as training data; only this counterfactual success event is paired with the
-factual failure event.
+Pass@4 therefore captures RGB for every continuation frame and writes the
+full success rollout before any event is materialized. The event is sliced
+from that saved rollout. It is not a same-noise policy rerun, and it is not
+an open-loop replay of recorded actions.
+
+Later recovery islands are ignored. Original S0 success rollouts are not
+used as pair training data.
 """
 
 from __future__ import annotations
@@ -42,13 +45,38 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.fold_glasses.collect_opensource_4x50 import (
-    DEFAULT_CFG,
-    DEFAULT_CKPT,
-    DEFAULT_STATS,
-    DEFAULT_TEXT,
-    assert_pin,
+OPEN = Path(
+    os.environ.get(
+        "FASTWAM_OPEN_REPO",
+        str(ROOT.parent / "FastWAM-infer-in-DexJoco"),
+    )
 )
+FASTWAM_PIN = Path(
+    os.environ.get("FASTWAM_PIN", str(ROOT / "third_party/FastWAM_pin_45d8e14"))
+)
+EXPECTED_PIN = "45d8e1458921d83f8ad6cf9ce993d371208dabd0"
+DEFAULT_CFG = OPEN / "configs/fastwam_dexjoco.yaml"
+DEFAULT_CKPT = (
+    ROOT / "checkpoints/dexjoco/fold_glasses_fastwam/weights/step_010000.pt"
+)
+DEFAULT_STATS = OPEN / "artifacts/fold_glasses/dataset_stats.json"
+DEFAULT_TEXT = (
+    OPEN
+    / "artifacts/fold_glasses"
+    / "0c3367ce1d74848cc46b93c6d2eee5e2097dca410a2c95f3da48bd8c8673fa20.t5_len128.wan22ti2v5b.pt"
+)
+
+
+def assert_pin() -> None:
+    import subprocess
+
+    head = subprocess.check_output(
+        ["git", "-C", str(FASTWAM_PIN), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if head != EXPECTED_PIN:
+        raise RuntimeError(f"FastWAM pin mismatch: {head}")
+
+
 from scripts.fold_glasses.run_seedpair_block_interventions import (
     restore_integration_state,
     snapshot_integration_state,
@@ -69,6 +97,7 @@ from scripts.fold_glasses.validate_factual_replay import (
 
 FORMAT_VERSION = "2.0"
 DEFAULT_HARD_TRANSFER_SEEDS: tuple[int, ...] = ()
+SUCCESS_EVENT_SOURCE = "cropped_from_saved_success_rollout"
 NOISE_SCHEME = (
     "blake2b64(fastwam-recoverability-v2-common-prefix fields), masked to int63"
 )
@@ -217,6 +246,24 @@ def select_one_failure_per_seed(
             }
         )
     return selected, audit
+
+
+def recorded_horizon(
+    actions: Sequence[Any],
+    recorded_states: Sequence[Any],
+    *,
+    max_steps: int,
+) -> int:
+    """DexJoCo episodes stop at env horizon (~1000) or earlier on success/fail."""
+
+    n = min(len(actions), len(recorded_states))
+    if n <= 0:
+        raise ValueError("Episode has no frames")
+    return min(int(max_steps), n)
+
+
+def clip_scan_frames(frames: Sequence[int], *, horizon: int) -> list[int]:
+    return [int(frame) for frame in frames if 0 <= int(frame) < int(horizon)]
 
 
 def validate_scan_frames(
@@ -419,8 +466,8 @@ def estimate_scan_cost(
         "policy_load_count": 1,
         "note": (
             "Upper bound assumes every prefix runs all Pass@4 trials to "
-            "max_steps. Recoverable prefixes stop after the first success, "
-            "and successful continuations terminate before max_steps."
+            "max_steps. Successful continuations may still terminate before "
+            "max_steps; later prefixes after the first 0/M cliff are not scanned."
         ),
     }
 
@@ -470,12 +517,13 @@ def prepare_factual_snapshots(
 
     from fastwam_dexjoco.policy import fastwam_action_to_dexjoco
 
-    if len(actions) < max_steps or len(recorded_states) < max_steps:
+    horizon = recorded_horizon(actions, recorded_states, max_steps=max_steps)
+    wanted = set(clip_scan_frames(scan_frames, horizon=horizon))
+    if not wanted:
         raise ValueError(
-            f"Episode has {min(len(actions), len(recorded_states))} frames, "
-            f"shorter than max_steps={max_steps}"
+            f"No scan frames within recorded horizon={horizon} "
+            f"(max_steps={max_steps})"
         )
-    wanted = set(int(frame) for frame in scan_frames)
     snapshots: dict[int, tuple[np.ndarray, dict[str, Any]]] = {}
     checks: list[dict[str, Any]] = []
     observation, _ = reset_to_repeat(env, int(attempt["repeat"]))
@@ -484,7 +532,7 @@ def prepare_factual_snapshots(
     terminated = False
     truncated = False
     executed = 0
-    for frame in range(max_steps):
+    for frame in range(horizon):
         if frame in wanted:
             error = np.abs(_state23(observation) - recorded_states[frame, :23])
             checks.append(
@@ -500,9 +548,9 @@ def prepare_factual_snapshots(
         )
         executed += 1
         if terminated or truncated:
-            if frame + 1 < max_steps:
+            if frame + 1 < horizon:
                 raise RuntimeError(
-                    f"Factual replay terminated at frame {frame}, before {max_steps}"
+                    f"Factual replay terminated at frame {frame}, before {horizon}"
                 )
             break
 
@@ -513,7 +561,7 @@ def prepare_factual_snapshots(
     replayed_success = bool(final_info.get("succeed", False))
     recorded_success = bool(attempt["success"])
     passed = bool(
-        executed == max_steps
+        executed == horizon
         and max_error <= state_atol
         and replayed_success == recorded_success
     )
@@ -538,7 +586,7 @@ def prepare_factual_snapshots(
         raise RuntimeError(
             "Integrated factual replay gate failed: "
             f"episode={attempt['saved_episode_index']} max_error={max_error:.6g} "
-            f"outcome={replayed_success}/{recorded_success} steps={executed}/{max_steps}"
+            f"outcome={replayed_success}/{recorded_success} steps={executed}/{horizon}"
         )
     return snapshots, gate
 
@@ -568,6 +616,7 @@ def run_closed_loop_continuation(
     captured_frames: list[int] = []
     fronts: list[np.ndarray] = []
     wrists: list[np.ndarray] = []
+    predicted_chunks: list[np.ndarray] = []
     noise_schedule: list[dict[str, int]] = []
     replan_index = 0
     terminated = False
@@ -598,6 +647,7 @@ def run_closed_loop_continuation(
             )
             if chunk.shape != (policy.action_horizon, 22):
                 raise ValueError(f"Unexpected policy action chunk {chunk.shape}")
+            predicted_chunks.append(np.asarray(chunk, dtype=np.float32).copy())
             pending.extend(chunk[: policy.replan_steps])
             noise_schedule.append(
                 {
@@ -627,6 +677,16 @@ def run_closed_loop_continuation(
 
     action_array = np.asarray(actions, dtype=np.float32).reshape(-1, 22)
     state_array = np.asarray(states, dtype=np.float32).reshape(-1, 23)
+    chunk_array = (
+        np.stack(predicted_chunks).astype(np.float32)
+        if predicted_chunks
+        else np.zeros((0, policy.action_horizon, 22), dtype=np.float32)
+    )
+    first_chunk = (
+        np.asarray(predicted_chunks[0], dtype=np.float32)
+        if predicted_chunks
+        else np.zeros((policy.action_horizon, 22), dtype=np.float32)
+    )
     return {
         "episode_index": int(episode_index),
         "prefix_frame": int(prefix_frame),
@@ -644,6 +704,8 @@ def run_closed_loop_continuation(
         "noise_schedule": noise_schedule,
         "actions": action_array,
         "states": state_array,
+        "predicted_chunks": chunk_array,
+        "first_action_chunk": first_chunk,
         "capture_frames": np.asarray(captured_frames, dtype=np.int32),
         "fronts": np.asarray(fronts, dtype=np.uint8),
         "wrists": np.asarray(wrists, dtype=np.uint8),
@@ -653,7 +715,15 @@ def run_closed_loop_continuation(
 
 
 def _trajectory_public_row(result: Mapping[str, Any]) -> dict[str, Any]:
-    excluded = {"actions", "states", "capture_frames", "fronts", "wrists"}
+    excluded = {
+        "actions",
+        "states",
+        "capture_frames",
+        "fronts",
+        "wrists",
+        "predicted_chunks",
+        "first_action_chunk",
+    }
     return {key: value for key, value in result.items() if key not in excluded}
 
 
@@ -683,20 +753,30 @@ def save_trajectory_arrays(path: Path, result: Mapping[str, Any]) -> None:
     temporary.replace(path)
 
 
-# Kept as a small compatibility alias for callers that only persist successful
-# branches. Failed replicates before the first hit remain auditable; later
-# Pass@4 trials are not run once recoverability is established.
+# Compatibility alias: every Pass@M replicate is persisted, success or failure.
 save_success_trajectory = save_trajectory_arrays
 
 
 def prefix_scan_should_stop(
     trajectory_rows: Sequence[Mapping[str, Any]], *, pass_m: int
 ) -> bool:
-    """Stop after the first success, or after ``pass_m`` failures."""
+    """Stop only after all Pass@M trials have been recorded."""
 
-    if any(bool(row.get("success")) for row in trajectory_rows):
-        return True
     return len(trajectory_rows) >= int(pass_m)
+
+
+def ordered_success_candidates(
+    trajectory_rows: Sequence[Mapping[str, Any]], *, prefix_frame: int
+) -> list[dict[str, Any]]:
+    """Success replicates at ``prefix_frame``, lowest index first."""
+
+    selected = [
+        dict(row)
+        for row in trajectory_rows
+        if int(row["prefix_frame"]) == int(prefix_frame) and bool(row.get("success"))
+    ]
+    selected.sort(key=lambda row: int(row["replicate_index"]))
+    return selected
 
 
 def _compatible_cached_trajectory(
@@ -719,6 +799,7 @@ def scan_prefix(
     pass_m: int,
     base_noise_seed: int,
     max_steps: int,
+    fps: int,
     output: Path,
     run_signature: Mapping[str, Any],
     overwrite: bool,
@@ -729,6 +810,7 @@ def scan_prefix(
     for replicate_index in range(pass_m):
         replicate_dir = prefix_dir / f"replicate_{replicate_index:02d}"
         row_path = replicate_dir / "trajectory.json"
+        used_cache = False
         if row_path.exists() and not overwrite:
             cached = read_json(row_path)
             if not _compatible_cached_trajectory(
@@ -742,8 +824,17 @@ def scan_prefix(
             artifact = cached.get("trajectory_arrays")
             if not artifact or not Path(artifact).is_file():
                 raise RuntimeError(f"Cached trajectory artifact is missing: {row_path}")
-            trajectory_rows.append(dict(cached))
-        else:
+            if saved_success_rollout_videos_complete(cached):
+                trajectory_rows.append(dict(cached))
+                used_cache = True
+            else:
+                print(
+                    f"[episode {episode_index}] prefix={prefix_frame} "
+                    f"replicate={replicate_index} cache missing full success "
+                    f"rollout RGB; re-running closed-loop",
+                    flush=True,
+                )
+        if not used_cache:
             result = run_closed_loop_continuation(
                 env,
                 policy,
@@ -753,11 +844,16 @@ def scan_prefix(
                 replicate_index=replicate_index,
                 base_noise_seed=base_noise_seed,
                 max_steps=max_steps,
+                capture_window=(prefix_frame, max_steps),
             )
             artifact = replicate_dir / "trajectory.npz"
             save_trajectory_arrays(artifact, result)
+            video_meta = save_success_rollout_videos(
+                replicate_dir, result, fps=fps
+            )
             row = {
                 **_trajectory_public_row(result),
+                **video_meta,
                 "format": "FoldGlassesRecoverabilityContinuation",
                 "version": FORMAT_VERSION,
                 "status": "complete",
@@ -770,15 +866,7 @@ def scan_prefix(
             }
             atomic_write_json(row_path, row)
             trajectory_rows.append(row)
-        last = trajectory_rows[-1]
         if prefix_scan_should_stop(trajectory_rows, pass_m=pass_m):
-            if bool(last["success"]) and len(trajectory_rows) < int(pass_m):
-                print(
-                    f"[episode {episode_index}] prefix={prefix_frame} "
-                    f"recoverable after replicate={int(last['replicate_index'])}; "
-                    f"skip remaining Pass@{pass_m}",
-                    flush=True,
-                )
             break
 
     success_count = sum(bool(row["success"]) for row in trajectory_rows)
@@ -794,10 +882,9 @@ def scan_prefix(
         "prefix_frame": int(prefix_frame),
         "pass_m": int(pass_m),
         "replicates_evaluated": int(replicates_evaluated),
-        "early_stop_on_first_success": True,
-        "truncated_after_first_success": bool(
-            success_count > 0 and replicates_evaluated < int(pass_m)
-        ),
+        "early_stop_on_first_success": False,
+        "truncated_after_first_success": False,
+        "full_pass_at_m": bool(replicates_evaluated >= int(pass_m)),
         "success_count": int(success_count),
         "success_rate": float(success_count / pass_m),
         "pass_at_m_hit": bool(success_count > 0),
@@ -862,6 +949,158 @@ def save_event_arrays(
     temporary.replace(path)
 
 
+def continuation_video_paths(replicate_dir: Path) -> dict[str, Path]:
+    return {
+        "front": replicate_dir / "continuation_front.mp4",
+        "wrist": replicate_dir / "continuation_wrist.mp4",
+    }
+
+
+def saved_success_rollout_videos_complete(row: Mapping[str, Any]) -> bool:
+    """Failure caches need no RGB; success caches must have the full rollout videos."""
+
+    if not bool(row.get("success")):
+        return True
+    front = row.get("continuation_front_video")
+    wrist = row.get("continuation_wrist_video")
+    return bool(
+        front
+        and wrist
+        and Path(str(front)).is_file()
+        and Path(str(wrist)).is_file()
+    )
+
+
+def save_success_rollout_videos(
+    replicate_dir: Path,
+    result: Mapping[str, Any],
+    *,
+    fps: int,
+) -> dict[str, Any]:
+    """Write the closed-loop success RGB. The pair event is cropped from this."""
+
+    if not bool(result["success"]):
+        return {}
+    prefix_frame = int(result["prefix_frame"])
+    actions = np.asarray(result["actions"])
+    capture_frames = np.asarray(result["capture_frames"], dtype=np.int32)
+    expected = np.arange(prefix_frame, prefix_frame + len(actions), dtype=np.int32)
+    if capture_frames.shape != expected.shape or not np.array_equal(
+        capture_frames, expected
+    ):
+        raise RuntimeError(
+            "Closed-loop success RGB must cover every continuation frame "
+            f"[{prefix_frame}, {prefix_frame + len(actions)}); "
+            f"captured {len(capture_frames)}"
+        )
+    fronts = np.asarray(result["fronts"], dtype=np.uint8)
+    wrists = np.asarray(result["wrists"], dtype=np.uint8)
+    if len(fronts) != len(actions) or len(wrists) != len(actions):
+        raise RuntimeError("Success rollout RGB length does not match actions")
+    paths = continuation_video_paths(replicate_dir)
+    write_rgb_video(paths["front"], fronts, fps)
+    write_rgb_video(paths["wrist"], wrists, fps)
+    return {
+        "continuation_front_video": str(paths["front"].resolve()),
+        "continuation_wrist_video": str(paths["wrist"].resolve()),
+        "captured_frame_start": prefix_frame,
+        "captured_frame_end_exclusive": int(prefix_frame + len(actions)),
+        "success_event_source": SUCCESS_EVENT_SOURCE,
+    }
+
+
+def crop_counterfactual_success_event(
+    *,
+    event_start: int,
+    event_end: int,
+    prefix_frame: int,
+    factual_actions: np.ndarray,
+    factual_states: np.ndarray,
+    factual_front: Mapping[int, np.ndarray],
+    factual_wrist: Mapping[int, np.ndarray],
+    continuation_actions: np.ndarray,
+    continuation_states: np.ndarray,
+    continuation_fronts: np.ndarray,
+    continuation_wrists: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Crop ``[event_start, event_end)`` from a saved closed-loop success rollout.
+
+    Frames before ``prefix_frame`` stay on the factual failure prefix. Frames at
+    or after it come from the saved success continuation. This does not replay
+    actions and does not re-infer the policy.
+    """
+
+    continuation_actions = np.asarray(continuation_actions, dtype=np.float32)
+    continuation_states = np.asarray(continuation_states, dtype=np.float32)
+    continuation_fronts = np.asarray(continuation_fronts, dtype=np.uint8)
+    continuation_wrists = np.asarray(continuation_wrists, dtype=np.uint8)
+    continuation_end = int(prefix_frame) + len(continuation_actions)
+    materialized_end = min(int(event_end), continuation_end)
+    if materialized_end <= int(prefix_frame):
+        raise RuntimeError("Saved success rollout ended before the event branch")
+    if materialized_end <= int(event_start):
+        raise RuntimeError("Saved success rollout does not overlap the event window")
+    frames = np.arange(int(event_start), materialized_end, dtype=np.int32)
+    actions: list[np.ndarray] = []
+    states: list[np.ndarray] = []
+    fronts: list[np.ndarray] = []
+    wrists: list[np.ndarray] = []
+    for frame in frames:
+        frame_i = int(frame)
+        if frame_i < int(prefix_frame):
+            actions.append(np.asarray(factual_actions[frame_i], dtype=np.float32))
+            states.append(np.asarray(factual_states[frame_i, :23], dtype=np.float32))
+            fronts.append(np.asarray(factual_front[frame_i], dtype=np.uint8))
+            wrists.append(np.asarray(factual_wrist[frame_i], dtype=np.uint8))
+            continue
+        index = frame_i - int(prefix_frame)
+        actions.append(np.asarray(continuation_actions[index], dtype=np.float32))
+        states.append(np.asarray(continuation_states[index, :23], dtype=np.float32))
+        fronts.append(np.asarray(continuation_fronts[index], dtype=np.uint8))
+        wrists.append(np.asarray(continuation_wrists[index], dtype=np.uint8))
+    return {
+        "frame_indices": frames,
+        "actions": np.stack(actions).astype(np.float32),
+        "states": np.stack(states).astype(np.float32),
+        "front": np.stack(fronts).astype(np.uint8),
+        "wrist": np.stack(wrists).astype(np.uint8),
+        "materialized_end": np.asarray(materialized_end, dtype=np.int32),
+    }
+
+
+def load_saved_success_rollout(
+    row: Mapping[str, Any],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    payload = np.load(Path(str(row["trajectory_arrays"])))
+    actions = np.asarray(payload["actions"], dtype=np.float32)
+    states = np.asarray(payload["states"], dtype=np.float32)
+    count = len(actions)
+    front_map = read_video_frames(
+        Path(str(row["continuation_front_video"])), range(count)
+    )
+    wrist_map = read_video_frames(
+        Path(str(row["continuation_wrist_video"])), range(count)
+    )
+    fronts = np.stack([front_map[index] for index in range(count)])
+    wrists = np.stack([wrist_map[index] for index in range(count)])
+    return actions, states, fronts, wrists
+
+
+def stitch_full_success_video(
+    *,
+    prefix_frame: int,
+    source_path: Path,
+    continuation: np.ndarray,
+) -> np.ndarray:
+    if prefix_frame <= 0:
+        return np.asarray(continuation, dtype=np.uint8)
+    pre = read_video_frames(source_path, range(prefix_frame))
+    prefix_images = np.stack([pre[index] for index in range(prefix_frame)])
+    return np.concatenate(
+        [prefix_images, np.asarray(continuation, dtype=np.uint8)], axis=0
+    )
+
+
 def materialize_frontier_pair(
     env: Any,
     policy: Any,
@@ -872,7 +1111,7 @@ def materialize_frontier_pair(
     snapshot: tuple[np.ndarray, Mapping[str, Any]],
     attempt: Mapping[str, Any],
     frontier: Mapping[str, Any],
-    successful_trajectory: Mapping[str, Any],
+    successful_trajectories: Sequence[Mapping[str, Any]],
     base_noise_seed: int,
     max_steps: int,
     fps: int,
@@ -880,110 +1119,109 @@ def materialize_frontier_pair(
     run_signature: Mapping[str, Any],
     overwrite: bool,
 ) -> dict[str, Any]:
+    del env, policy, snapshot, base_noise_seed, max_steps
     episode_index = int(attempt["saved_episode_index"])
     frontier_id = str(frontier["frontier_id"])
     pair_dir = output / "event_pairs" / f"ep{episode_index:06d}_{frontier_id}"
     pair_path = pair_dir / "pair.json"
+    candidates = [
+        dict(row)
+        for row in successful_trajectories
+        if bool(row.get("success"))
+    ]
+    candidates.sort(key=lambda row: int(row["replicate_index"]))
+    if not candidates:
+        raise RuntimeError(
+            f"Frontier {frontier_id} has no success candidates to materialize"
+        )
     if pair_path.exists() and not overwrite:
         cached = read_json(pair_path)
         if cached.get("run_signature") != run_signature:
             raise RuntimeError(f"Cached pair is incompatible with this run: {pair_path}")
-        return dict(cached)
+        if (
+            cached.get("status") == "complete"
+            and cached.get("success_event_source") == SUCCESS_EVENT_SOURCE
+        ):
+            return dict(cached)
 
     prefix_frame = int(frontier["last_recoverable_frame"])
     requested_start = int(frontier["event_start"])
     requested_end = int(frontier["event_end_exclusive"])
-    replicate_index = int(successful_trajectory["replicate_index"])
-    rerun = run_closed_loop_continuation(
-        env,
-        policy,
-        snapshot=snapshot,
-        episode_index=episode_index,
-        prefix_frame=prefix_frame,
-        replicate_index=replicate_index,
-        base_noise_seed=base_noise_seed,
-        max_steps=max_steps,
-        capture_window=(prefix_frame, requested_end),
-    )
-    if not bool(rerun["success"]):
+    skipped_missing_rollouts: list[int] = []
+    successful_trajectory: Mapping[str, Any] | None = None
+    for candidate in candidates:
+        replicate_index = int(candidate["replicate_index"])
+        if not saved_success_rollout_videos_complete(candidate):
+            skipped_missing_rollouts.append(replicate_index)
+            print(
+                f"[episode {episode_index}] prefix={prefix_frame} "
+                f"success replicate={replicate_index} has no saved full "
+                f"success rollout RGB; trying next Pass@4 candidate",
+                flush=True,
+            )
+            continue
+        successful_trajectory = candidate
+        break
+    if successful_trajectory is None:
         pair = {
             "format": "FoldGlassesRecoverabilityEventPair",
             "version": FORMAT_VERSION,
-            "status": "deterministic_success_rerun_failed",
+            "status": "saved_success_rollout_missing",
+            "success_event_source": SUCCESS_EVENT_SOURCE,
             "seed": int(attempt["seed"]),
             "source_failure_episode_index": episode_index,
             "frontier": dict(frontier),
-            "successful_replicate_index": replicate_index,
+            "successful_replicate_index": None,
+            "tried_success_replicate_indices": [
+                int(row["replicate_index"]) for row in candidates
+            ],
+            "skipped_missing_rollout_indices": skipped_missing_rollouts,
             "training_eligible": False,
             "run_signature": dict(run_signature),
             "completed_at": utc_now(),
         }
         atomic_write_json(pair_path, pair)
         return pair
+    replicate_index = int(successful_trajectory["replicate_index"])
+    (
+        continuation_actions,
+        continuation_states,
+        continuation_fronts,
+        continuation_wrists,
+    ) = load_saved_success_rollout(successful_trajectory)
 
-    materialized_end = min(requested_end, int(rerun["final_global_frame_exclusive"]))
-    if materialized_end <= prefix_frame:
-        raise RuntimeError("Successful rerun ended before the event branch began")
-    frames = np.arange(requested_start, materialized_end, dtype=np.int32)
     source_paths = video_paths(dataset, episode_index)
+    continuation_end = prefix_frame + len(continuation_actions)
+    source_needed = list(range(requested_start, min(requested_end, continuation_end)))
     source_images = {
-        camera: read_video_frames(path, frames.tolist())
+        camera: read_video_frames(path, source_needed)
         for camera, path in source_paths.items()
     }
-    failure_front = np.stack([source_images["front"][int(frame)] for frame in frames])
-    failure_wrist = np.stack([source_images["wrist"][int(frame)] for frame in frames])
-
-    captured_frames = np.asarray(rerun["capture_frames"], dtype=np.int32)
-    captured_front = {
-        int(frame): image for frame, image in zip(captured_frames, rerun["fronts"])
-    }
-    captured_wrist = {
-        int(frame): image for frame, image in zip(captured_frames, rerun["wrists"])
-    }
-    success_front = np.stack(
-        [
-            source_images["front"][int(frame)]
-            if frame < prefix_frame
-            else captured_front[int(frame)]
-            for frame in frames
-        ]
+    cropped = crop_counterfactual_success_event(
+        event_start=requested_start,
+        event_end=requested_end,
+        prefix_frame=prefix_frame,
+        factual_actions=actions,
+        factual_states=recorded_states,
+        factual_front=source_images["front"],
+        factual_wrist=source_images["wrist"],
+        continuation_actions=continuation_actions,
+        continuation_states=continuation_states,
+        continuation_fronts=continuation_fronts,
+        continuation_wrists=continuation_wrists,
     )
-    success_wrist = np.stack(
-        [
-            source_images["wrist"][int(frame)]
-            if frame < prefix_frame
-            else captured_wrist[int(frame)]
-            for frame in frames
-        ]
+    frames = np.asarray(cropped["frame_indices"], dtype=np.int32)
+    materialized_end = int(cropped["materialized_end"])
+    success_actions = np.asarray(cropped["actions"], dtype=np.float32)
+    success_states = np.asarray(cropped["states"], dtype=np.float32)
+    success_front = np.asarray(cropped["front"], dtype=np.uint8)
+    success_wrist = np.asarray(cropped["wrist"], dtype=np.uint8)
+    failure_front = np.stack(
+        [source_images["front"][int(frame)] for frame in frames]
     )
-
-    # The continuation starts at the last recoverable prefix, while the event
-    # starts at t-9.  Usually t-9 is later than the prefix (one 24-step scan
-    # block), so explicitly offset into the rerun arrays instead of assuming
-    # that event frame zero equals continuation frame zero.
-    factual_end = min(prefix_frame, materialized_end)
-    factual_start = min(requested_start, factual_end)
-    success_parts_actions: list[np.ndarray] = []
-    success_parts_states: list[np.ndarray] = []
-    if factual_start < factual_end:
-        success_parts_actions.append(actions[factual_start:factual_end])
-        success_parts_states.append(recorded_states[factual_start:factual_end, :23])
-    rerun_start = max(requested_start, prefix_frame)
-    rerun_count = materialized_end - rerun_start
-    if rerun_count > 0:
-        rerun_offset = rerun_start - prefix_frame
-        success_parts_actions.append(
-            np.asarray(rerun["actions"], dtype=np.float32)[
-                rerun_offset : rerun_offset + rerun_count
-            ]
-        )
-        success_parts_states.append(
-            np.asarray(rerun["states"], dtype=np.float32)[
-                rerun_offset : rerun_offset + rerun_count
-            ]
-        )
-    success_actions = np.concatenate(success_parts_actions, axis=0)
-    success_states = np.concatenate(success_parts_states, axis=0)
+    failure_wrist = np.stack(
+        [source_images["wrist"][int(frame)] for frame in frames]
+    )
     failure_actions = actions[requested_start:materialized_end]
     failure_states = recorded_states[requested_start:materialized_end, :23]
     expected_shape = (len(frames), 22)
@@ -1012,10 +1250,30 @@ def materialize_frontier_pair(
     failure_wrist_video = pair_dir / "failure_wrist.mp4"
     success_front_video = pair_dir / "success_front.mp4"
     success_wrist_video = pair_dir / "success_wrist.mp4"
+    success_full_front_video = pair_dir / "success_full_front.mp4"
+    success_full_wrist_video = pair_dir / "success_full_wrist.mp4"
     write_rgb_video(failure_front_video, failure_front, fps)
     write_rgb_video(failure_wrist_video, failure_wrist, fps)
     write_rgb_video(success_front_video, success_front, fps)
     write_rgb_video(success_wrist_video, success_wrist, fps)
+    write_rgb_video(
+        success_full_front_video,
+        stitch_full_success_video(
+            prefix_frame=prefix_frame,
+            source_path=source_paths["front"],
+            continuation=continuation_fronts,
+        ),
+        fps,
+    )
+    write_rgb_video(
+        success_full_wrist_video,
+        stitch_full_success_video(
+            prefix_frame=prefix_frame,
+            source_path=source_paths["wrist"],
+            continuation=continuation_wrists,
+        ),
+        fps,
+    )
 
     common = {
         "seed": int(attempt["seed"]),
@@ -1056,6 +1314,8 @@ def materialize_frontier_pair(
         "arrays": str(success_arrays.resolve()),
         "front_video": str(success_front_video.resolve()),
         "wrist_video": str(success_wrist_video.resolve()),
+        "full_front_video": str(success_full_front_video.resolve()),
+        "full_wrist_video": str(success_full_wrist_video.resolve()),
         "successful_continuation_arrays": successful_trajectory[
             "trajectory_arrays"
         ],
@@ -1069,10 +1329,15 @@ def materialize_frontier_pair(
             ).resolve()
         ),
         "successful_replicate_index": replicate_index,
+        "tried_success_replicate_indices": [
+            int(row["replicate_index"]) for row in candidates
+        ],
+        "skipped_missing_rollout_indices": skipped_missing_rollouts,
         "t_frame": prefix_frame,
         "t_plus_24_frame": int(frontier["t_plus_24_frame"]),
         "noise_scheme": NOISE_SCHEME,
-        "noise_schedule": rerun["noise_schedule"],
+        "noise_schedule": list(successful_trajectory.get("noise_schedule") or []),
+        "success_event_source": SUCCESS_EVENT_SOURCE,
         "deterministic_rerun_succeeded": True,
     }
     success_descriptor_path = pair_dir / "success_event.json"
@@ -1091,6 +1356,11 @@ def materialize_frontier_pair(
         "factual_failure_event": str(failure_descriptor_path.resolve()),
         "counterfactual_success_event": str(success_descriptor_path.resolve()),
         "successful_replicate_index": replicate_index,
+        "tried_success_replicate_indices": [
+            int(row["replicate_index"]) for row in candidates
+        ],
+        "skipped_missing_rollout_indices": skipped_missing_rollouts,
+        "success_event_source": SUCCESS_EVENT_SOURCE,
         "training_eligible": bool(attempt["training_eligible"]),
         "evaluation_only": bool(attempt["evaluation_only"]),
         "selector_interpretation": (
@@ -1118,6 +1388,7 @@ def run_episode_scan(
     event_expansion_blocks: int,
     run_signature: Mapping[str, Any],
     overwrite: bool,
+    task_name: str = "fold_glasses",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     episode_index = int(attempt["saved_episode_index"])
     canonical_attempt = attempt_for_episode(dataset, episode_index)
@@ -1129,15 +1400,34 @@ def run_episode_scan(
     if bool(canonical_attempt["success"]):
         raise ValueError(f"Episode {episode_index} is not a failure")
     actions, recorded_states = load_episode(dataset, episode_index)
-    _, env = create_environment(int(attempt["seed"]))
+    horizon = recorded_horizon(actions, recorded_states, max_steps=max_steps)
+    episode_frames = clip_scan_frames(scan_frames, horizon=horizon)
     episode_dir = output / "episodes" / f"ep{episode_index:06d}"
+    if not episode_frames:
+        episode_summary = {
+            "format": "FoldGlassesRecoverabilityEpisodeScan",
+            "version": FORMAT_VERSION,
+            "status": "skipped_short_episode",
+            "seed": int(attempt["seed"]),
+            "seed_classification": str(attempt["seed_classification"]),
+            "source_failure_episode_index": episode_index,
+            "recorded_steps": horizon,
+            "max_steps": int(max_steps),
+            "num_scan_points": 0,
+            "num_complete_event_pairs": 0,
+            "run_signature": dict(run_signature),
+            "completed_at": utc_now(),
+        }
+        atomic_write_json(episode_dir / "summary.json", episode_summary)
+        return [], [], episode_summary
+    _, env = create_environment(int(attempt["seed"]), task_name=task_name)
     try:
         snapshots, factual_gate = prepare_factual_snapshots(
             env,
             actions=actions,
             recorded_states=recorded_states,
             attempt=canonical_attempt,
-            scan_frames=scan_frames,
+            scan_frames=episode_frames,
             max_steps=max_steps,
             state_atol=state_atol,
         )
@@ -1145,9 +1435,9 @@ def run_episode_scan(
 
         prefix_rows: list[dict[str, Any]] = []
         trajectory_rows: list[dict[str, Any]] = []
-        for position, prefix_frame in enumerate(scan_frames, start=1):
+        for position, prefix_frame in enumerate(episode_frames, start=1):
             print(
-                f"[episode {episode_index} {position}/{len(scan_frames)}] "
+                f"[episode {episode_index} {position}/{len(episode_frames)}] "
                 f"prefix={prefix_frame} M={pass_m}",
                 flush=True,
             )
@@ -1160,6 +1450,7 @@ def run_episode_scan(
                 pass_m=pass_m,
                 base_noise_seed=base_noise_seed,
                 max_steps=max_steps,
+                fps=fps,
                 output=output,
                 run_signature=run_signature,
                 overwrite=overwrite,
@@ -1198,16 +1489,13 @@ def run_episode_scan(
                     }
                 )
                 continue
-            candidates = [
-                row
-                for row in trajectory_rows
-                if int(row["prefix_frame"]) == recoverable and bool(row["success"])
-            ]
+            candidates = ordered_success_candidates(
+                trajectory_rows, prefix_frame=recoverable
+            )
             if not candidates:
                 raise RuntimeError(
                     f"Frontier {frontier['frontier_id']} has no saved success replicate"
                 )
-            successful = min(candidates, key=lambda row: int(row["replicate_index"]))
             pair_rows.append(
                 materialize_frontier_pair(
                     env,
@@ -1218,7 +1506,7 @@ def run_episode_scan(
                     snapshot=snapshots[recoverable],
                     attempt=attempt,
                     frontier=frontier,
-                    successful_trajectory=successful,
+                    successful_trajectories=candidates,
                     base_noise_seed=base_noise_seed,
                     max_steps=max_steps,
                     fps=fps,
@@ -1281,7 +1569,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scan-end", type=int, default=0)
     parser.add_argument("--scan-stride", type=int, default=24)
     parser.add_argument("--pass-m", type=int, default=4)
-    parser.add_argument("--max-steps", type=int, default=1200)
+    parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--action-horizon", type=int, default=32)
     parser.add_argument("--replan-steps", type=int, default=24)
     parser.add_argument("--num-inference-steps", type=int, default=10)
@@ -1294,6 +1582,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-config", type=Path, default=DEFAULT_CFG)
     parser.add_argument("--dataset-stats", type=Path, default=DEFAULT_STATS)
     parser.add_argument("--text-embedding", type=Path, default=DEFAULT_TEXT)
+    parser.add_argument("--task-name", default="fold_glasses")
     parser.add_argument("--skip-pin-check", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--shard-rank", type=int, default=0)
@@ -1375,6 +1664,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "model_config": str(args.model_config.expanduser().resolve()),
         "dataset_stats": str(args.dataset_stats.expanduser().resolve()),
         "text_embedding": str(args.text_embedding.expanduser().resolve()),
+        "task_name": str(args.task_name),
         "action_horizon": int(args.action_horizon),
         "replan_steps": int(args.replan_steps),
         "num_inference_steps": int(args.num_inference_steps),
@@ -1446,6 +1736,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             event_expansion_blocks=int(args.event_expansion_blocks),
             run_signature=run_signature,
             overwrite=bool(args.overwrite),
+            task_name=str(args.task_name),
         )
         all_prefix_rows.extend(prefix_rows)
         all_pair_rows.extend(pair_rows)

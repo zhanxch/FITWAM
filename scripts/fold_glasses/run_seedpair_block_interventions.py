@@ -111,20 +111,41 @@ def orthogonal_matched_control(
 
 
 def progress_delta(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
-    before_xyz = np.asarray(before["glass_minus_box_xyz"], dtype=np.float64)
-    after_xyz = np.asarray(after["glass_minus_box_xyz"], dtype=np.float64)
-    return {
-        "hinge_0": float(after["hinge_0"] - before["hinge_0"]),
-        "hinge_1": float(after["hinge_1"] - before["hinge_1"]),
-        "hinge_min": float(after["hinge_min"] - before["hinge_min"]),
-        "glass_minus_box_xyz": (after_xyz - before_xyz).tolist(),
-        "glass_to_box_xy_distance": float(
-            np.linalg.norm(after_xyz[:2]) - np.linalg.norm(before_xyz[:2])
-        ),
-        "trigger_active_changed": bool(
-            after["trigger_active"] and not before["trigger_active"]
+    """Fold-glasses progress diff when sensors exist; else succeed-counter only."""
+    delta: dict[str, Any] = {
+        "success_trigger_count": float(
+            after.get("success_trigger_count", 0)
+            - before.get("success_trigger_count", 0)
         ),
     }
+    if "glass_minus_box_xyz" not in before or "glass_minus_box_xyz" not in after:
+        return delta
+    before_xyz = np.asarray(before["glass_minus_box_xyz"], dtype=np.float64)
+    after_xyz = np.asarray(after["glass_minus_box_xyz"], dtype=np.float64)
+    delta.update(
+        {
+            "hinge_0": float(after["hinge_0"] - before["hinge_0"]),
+            "hinge_1": float(after["hinge_1"] - before["hinge_1"]),
+            "hinge_min": float(after["hinge_min"] - before["hinge_min"]),
+            "glass_minus_box_xyz": (after_xyz - before_xyz).tolist(),
+            "glass_to_box_xy_distance": float(
+                np.linalg.norm(after_xyz[:2]) - np.linalg.norm(before_xyz[:2])
+            ),
+            "trigger_active_changed": bool(
+                after.get("trigger_active") and not before.get("trigger_active")
+            ),
+        }
+    )
+    return delta
+
+
+_SNAPSHOT_SCALAR_ATTRS = (
+    "env_step",
+    "_success_trigger_count",
+    "reset_trigger",
+    "_nail_depth",
+    "_prev_face_z",
+)
 
 
 def snapshot_integration_state(env: Any) -> tuple[np.ndarray, dict[str, Any]]:
@@ -133,11 +154,23 @@ def snapshot_integration_state(env: Any) -> tuple[np.ndarray, dict[str, Any]]:
     size = mujoco.mj_stateSize(raw._model, specification)
     state = np.empty(size, dtype=np.float64)
     mujoco.mj_getState(raw._model, raw._data, state, specification)
-    attrs = {
-        "env_step": int(raw.env_step),
-        "success_trigger_count": int(raw._success_trigger_count),
-        "reset_trigger": bool(raw.reset_trigger),
-    }
+    attrs: dict[str, Any] = {}
+    for name in _SNAPSHOT_SCALAR_ATTRS:
+        if not hasattr(raw, name):
+            continue
+        value = getattr(raw, name)
+        if name == "env_step":
+            attrs[name] = int(value)
+        elif name == "_success_trigger_count":
+            attrs["success_trigger_count"] = int(value)
+        elif name == "reset_trigger":
+            attrs[name] = bool(value)
+        elif name == "_nail_depth":
+            attrs[name] = float(value)
+        elif name == "_prev_face_z":
+            attrs[name] = None if value is None else float(value)
+    if hasattr(raw, "_vz_buf"):
+        attrs["_vz_buf"] = [float(item) for item in list(raw._vz_buf)]
     return state, attrs
 
 
@@ -147,9 +180,18 @@ def restore_integration_state(
     raw = env.unwrapped
     specification = mujoco.mjtState.mjSTATE_INTEGRATION
     mujoco.mj_setState(raw._model, raw._data, state, specification)
-    raw.env_step = int(attrs["env_step"])
-    raw._success_trigger_count = int(attrs["success_trigger_count"])
-    raw.reset_trigger = bool(attrs["reset_trigger"])
+    if "env_step" in attrs:
+        raw.env_step = int(attrs["env_step"])
+    if "success_trigger_count" in attrs and hasattr(raw, "_success_trigger_count"):
+        raw._success_trigger_count = int(attrs["success_trigger_count"])
+    if "reset_trigger" in attrs and hasattr(raw, "reset_trigger"):
+        raw.reset_trigger = bool(attrs["reset_trigger"])
+    if "_nail_depth" in attrs and hasattr(raw, "_nail_depth"):
+        raw._nail_depth = float(attrs["_nail_depth"])
+    if "_prev_face_z" in attrs and hasattr(raw, "_prev_face_z"):
+        raw._prev_face_z = attrs["_prev_face_z"]
+    if "_vz_buf" in attrs and hasattr(raw, "_vz_buf"):
+        raw._vz_buf = [float(item) for item in list(attrs["_vz_buf"])]
     mujoco.mj_forward(raw._model, raw._data)
 
 

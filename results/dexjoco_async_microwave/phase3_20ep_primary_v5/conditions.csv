@@ -1,4 +1,0 @@
-sync_stride24,blocking,24,none,5570,ORIGINAL_RESULT_ROOT/phase3_20ep_primary_v5/sync_stride24
-sync_stride24_lpf,blocking,24,0.5,5571,ORIGINAL_RESULT_ROOT/phase3_20ep_primary_v5/sync_stride24_lpf
-overlap_stride8_lpf,overlap,8,0.5,5572,ORIGINAL_RESULT_ROOT/phase3_20ep_primary_v5/overlap_stride8_lpf
-overlap_stride32_lpf,overlap,32,0.5,5573,ORIGINAL_RESULT_ROOT/phase3_20ep_primary_v5/overlap_stride32_lpf

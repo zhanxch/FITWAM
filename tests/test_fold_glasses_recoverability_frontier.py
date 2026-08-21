@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
-from scripts.fold_glasses import scan_failure_recoverability_frontier as frontier
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts" / "fold_glasses"))
+
+import scan_failure_recoverability_frontier as frontier  # noqa: E402
 
 
 def prefix(frame: int, successes: int, pass_m: int = 4) -> dict[str, object]:
@@ -18,8 +25,22 @@ class ScanFrameValidationTest(unittest.TestCase):
     def test_rejects_non_replan_aligned_prefix(self) -> None:
         with self.assertRaisesRegex(ValueError, "aligned"):
             frontier.validate_scan_frames(
-                [0, 24, 50], replan_steps=24, max_steps=1200
+                [0, 24, 50], replan_steps=24, max_steps=1000
             )
+
+    def test_clips_scan_frames_to_recorded_horizon(self) -> None:
+        self.assertEqual(
+            frontier.clip_scan_frames([48, 72, 192, 216], horizon=198),
+            [48, 72, 192],
+        )
+        self.assertEqual(
+            frontier.recorded_horizon([0] * 1000, [0] * 1000, max_steps=1200),
+            1000,
+        )
+        self.assertEqual(
+            frontier.recorded_horizon([0] * 198, [0] * 198, max_steps=1000),
+            198,
+        )
 
 
 class RecoverabilityFrontierTest(unittest.TestCase):
@@ -84,16 +105,94 @@ class RecoverabilityFrontierTest(unittest.TestCase):
         self.assertEqual(frontier.find_recoverability_frontiers(rows), [])
 
 
-class PrefixEarlyStopTest(unittest.TestCase):
-    def test_stops_after_first_success(self) -> None:
+class PrefixPassAtMTest(unittest.TestCase):
+    def test_does_not_stop_after_first_success(self) -> None:
         rows = [{"success": False}, {"success": True}]
-        self.assertTrue(frontier.prefix_scan_should_stop(rows, pass_m=4))
+        self.assertFalse(frontier.prefix_scan_should_stop(rows, pass_m=4))
 
-    def test_requires_all_failures_to_declare_unrecoverable(self) -> None:
-        rows = [{"success": False}] * 3
+    def test_stops_only_after_all_trials(self) -> None:
+        rows = [{"success": True}] * 3
         self.assertFalse(frontier.prefix_scan_should_stop(rows, pass_m=4))
         self.assertTrue(
             frontier.prefix_scan_should_stop(rows + [{"success": False}], pass_m=4)
+        )
+
+    def test_success_candidates_are_ordered_by_replicate(self) -> None:
+        rows = [
+            {"prefix_frame": 48, "replicate_index": 2, "success": True},
+            {"prefix_frame": 48, "replicate_index": 0, "success": True},
+            {"prefix_frame": 48, "replicate_index": 1, "success": False},
+            {"prefix_frame": 72, "replicate_index": 0, "success": True},
+        ]
+        candidates = frontier.ordered_success_candidates(rows, prefix_frame=48)
+        self.assertEqual([row["replicate_index"] for row in candidates], [0, 2])
+
+
+class CropSavedSuccessRolloutTest(unittest.TestCase):
+    def test_event_uses_factual_prefix_then_saved_continuation(self) -> None:
+        prefix = 72
+        event_start = 63
+        event_end = 96
+        factual_actions = np.zeros((120, 22), dtype=np.float32)
+        factual_states = np.zeros((120, 23), dtype=np.float32)
+        factual_actions[:, 0] = np.arange(120)
+        factual_states[:, 0] = np.arange(120) + 1000
+        continuation_len = 80
+        continuation_actions = np.zeros((continuation_len, 22), dtype=np.float32)
+        continuation_states = np.zeros((continuation_len, 23), dtype=np.float32)
+        continuation_actions[:, 0] = np.arange(continuation_len) + 5000
+        continuation_states[:, 0] = np.arange(continuation_len) + 6000
+        factual_front = {
+            frame: np.full((2, 2, 3), frame, dtype=np.uint8)
+            for frame in range(event_start, prefix)
+        }
+        factual_wrist = {
+            frame: np.full((2, 2, 3), frame + 10, dtype=np.uint8)
+            for frame in range(event_start, prefix)
+        }
+        continuation_fronts = np.stack(
+            [
+                np.full((2, 2, 3), 200 + index, dtype=np.uint8)
+                for index in range(continuation_len)
+            ]
+        )
+        continuation_wrists = np.stack(
+            [
+                np.full((2, 2, 3), 220 + index, dtype=np.uint8)
+                for index in range(continuation_len)
+            ]
+        )
+
+        cropped = frontier.crop_counterfactual_success_event(
+            event_start=event_start,
+            event_end=event_end,
+            prefix_frame=prefix,
+            factual_actions=factual_actions,
+            factual_states=factual_states,
+            factual_front=factual_front,
+            factual_wrist=factual_wrist,
+            continuation_actions=continuation_actions,
+            continuation_states=continuation_states,
+            continuation_fronts=continuation_fronts,
+            continuation_wrists=continuation_wrists,
+        )
+
+        self.assertEqual(list(cropped["frame_indices"]), list(range(63, 96)))
+        self.assertEqual(int(cropped["materialized_end"]), 96)
+        np.testing.assert_array_equal(cropped["actions"][:9, 0], np.arange(63, 72))
+        np.testing.assert_array_equal(
+            cropped["actions"][9:, 0], np.arange(24) + 5000
+        )
+        np.testing.assert_array_equal(cropped["front"][0], factual_front[63])
+        np.testing.assert_array_equal(cropped["front"][9], continuation_fronts[0])
+        np.testing.assert_array_equal(cropped["front"][-1], continuation_fronts[23])
+
+    def test_failure_cache_does_not_need_rollout_videos(self) -> None:
+        self.assertTrue(
+            frontier.saved_success_rollout_videos_complete({"success": False})
+        )
+        self.assertFalse(
+            frontier.saved_success_rollout_videos_complete({"success": True})
         )
 
 

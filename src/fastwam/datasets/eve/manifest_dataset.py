@@ -363,6 +363,15 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             return "primary"
         return "auxiliary_success"
 
+    @classmethod
+    def _cfg_schedule(cls, unit: dict[str, Any]) -> str:
+        role = cls._sampling_role(unit)
+        if role == "primary":
+            return "primary"
+        if role == "auxiliary":
+            return "aux_failure"
+        return "aux_success"
+
     def _apply_action_loss_window(
         self,
         data: dict[str, Any],
@@ -414,6 +423,7 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             sample_ref["global_frame_idx"],
             outcome_flag_override=outcome_flag,
             skip_video=skip_video,
+            cfg_schedule=self._cfg_schedule(unit),
         )
 
         data["action_loss_weight"] = torch.tensor(

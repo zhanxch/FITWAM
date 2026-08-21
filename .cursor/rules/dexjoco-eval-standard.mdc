@@ -1,0 +1,66 @@
+---
+description: DexJoCo official eval protocol + opensource 224/z-score stack
+alwaysApply: true
+---
+
+# DexJoCo evaluation standard
+
+## Official policy eval (S0 / B1 / future methods)
+
+When reporting DexJoCo task success (e.g. `water_plant`), use this protocol—not a one-off fresh seed range:
+
+1. **Seeds**: `0` through `49` (50 seeds). Colloquially “seed 0–50”; count is **50** so that `50 × 4 = 200`.
+2. **Repeats**: run the same seed set **4 independent times** (4 full passes).
+3. **Budget**: **200 episodes total**.
+4. **Metrics**: report **mean and variance** of success rate across the 4 runs (each run = success rate on seeds 0–49). Also keep the pooled `successes/200` for reference.
+5. **Control protocol** (unless the user overrides): blocking, `replan_steps=24`, `max_env_steps=1000`, no domain randomization / dynamics randomization.
+
+Do **not** treat a single contiguous block of 200 fresh seeds (e.g. `seed=28704217`, `n=200`) as the official score.
+
+Smoke / debug evals may use fewer episodes or other seeds; label them clearly as non-standard.
+
+## Stack (mandatory for all DexJoCo / DEWO v2)
+
+There is **no 384 / min-max training or eval plan**. Every infer / eval / collect / continue-train / DEWO v2 path — including mixed-S0 `water_plant` — uses the open-source recipe (fold_glasses DEWO v2 / FastWAM-infer-in-DexJoco).
+
+| Piece | Pin / path |
+|---|---|
+| Inference repo | `FastWAM-infer-in-DexJoco` (`scripts/eval_dexjoco.py`, `FastWAMDexJocoPolicy`) |
+| FastWAM code | `third_party/FastWAM_pin_45d8e14` @ `45d8e14…` |
+| DexJoco | `third_party/dexjoco` @ `8d23b0f…` |
+| Model config | `OPEN/configs/fastwam_dexjoco.yaml` → **224×224**, **z-score** |
+| Stats | `OPEN/artifacts/<task>/dataset_stats.json` (or mixed `artifacts/mixed_5task/dataset_stats.json`); **not** `data/<task>_fastwam/meta` min-max |
+| Text (base) | `OPEN/artifacts/<task>/*.t5_len128*.pt` (CFG/FAST suffixes may add a dedicated cache, still T5/Wan) |
+| Expert data | `data/dexjoco/dexjoco_lerobot_datasets/<task>` |
+| Control (default) | `action_horizon=32`, `replan_steps=24`, `nfe=10`, `max_steps=1000` |
+
+Weights under `checkpoints/dexjoco/<task>_fastwam` are **release ckpts** for this stack (name only). Do not pair them with local async `s0_bundle` packing.
+
+**DEWO v2** (unspecified = **scratch**) entrypoints pin this stack (`TASK=` + `INIT=` + session env, no per-task copy):
+
+- Collect / prepare / train / CFG eval: `scripts/dewo_v2/{collect_opensource_4x50,prepare_pair_eve,train,eval_cfg_official_4x50}.sh` (`TASK`, `INIT=scratch|s0|lora`, `GPUS`, `DEWO_HYDRA_OVERRIDES`)
+- Task identity: `scripts/dewo_v2/tasks.py`
+- Data/task: generic Hydra `dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4` (scratch/s0) or `dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5`
+
+Other launchers:
+
+- Official open-source 4×50: `scripts/dexjoco/eval_opensource_4x50.sh` (`TASK`/`TASKS`, `GPUS`, `WAIT_IDLE`)
+- Baseline suite: `scripts/dexjoco/eval_all_opensource_baselines_4x50.sh`
+
+If a path still points at `data/<task>_fastwam` or `*/meta/` min-max, **align** it to the table above. Do not refuse-and-stop, and do not recreate the 384 recipe.
+
+## Rollout / data collection (S0 and later)
+
+Collection seeds must **not overlap** the official eval set `0..49`.
+
+Use a disjoint seed range (or an explicit high base seed) for S0/B1 rollout datasets so training data does not contaminate the held-out eval seeds.
+
+Collection for DexJoCo / DEWO v2 stays on the open-source recipe (224 / z-score / artifacts / replan=24).
+
+## Agent behavior
+
+- Default to the open-source 224 / z-score stack for eval, infer, collect, open-loop width, continue-train, mixed S0, and **DEWO v2**.
+- Default to the official 4×50 protocol when the user asks to “测一下 / evaluate / benchmark” S0, B1, or later schemes on DexJoCo.
+- Launch via env knobs on the generic scripts (`scripts/dexjoco/eval_opensource_4x50.sh`, `scripts/dewo_v2/*.sh`). **Do not** copy a task `.sh` or bake `GPUS` / `RUN_DIR` / a dated experiment into a new launcher.
+- If currently running a non-standard / wrong-stack eval, stop or finish only as the user prefers, then schedule the correct stack + 4×50 protocol.
+- When summarizing results, prefer `mean ± var` (or `std`) over the 4 runs, not only a single pooled rate.

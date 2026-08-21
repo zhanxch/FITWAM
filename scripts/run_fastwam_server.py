@@ -185,7 +185,6 @@ class FastWAMPolicy:
         return normalized
 
     def get_action(self, observation: dict, options: dict | None = None) -> tuple[dict, dict]:
-        del options
         observation = self._normalize_observation(observation)
         validate_policy_observation(observation)
         tensors = to_inference_tensors(
@@ -201,6 +200,12 @@ class FastWAMPolicy:
             # use the last obs frame as the relative->absolute reference state.
             self._last_normalized_proprio = proprio.detach().to(dtype=torch.float32, device="cpu")
 
+        infer_seed = self.seed
+        if options:
+            raw_seed = options.get("seed", options.get("inference_seed"))
+            if raw_seed is not None:
+                infer_seed = int(raw_seed)
+
         infer_kwargs: dict[str, Any] = {
             KEY_INPUT_IMAGE: tensors[KEY_INPUT_IMAGE],
             "action_horizon": self.action_horizon,
@@ -208,7 +213,7 @@ class FastWAMPolicy:
             "text_cfg_scale": self.text_cfg_scale,
             "num_inference_steps": self.num_inference_steps,
             "sigma_shift": self.sigma_shift,
-            "seed": self.seed,
+            "seed": infer_seed,
             "rand_device": self.rand_device,
             "tiled": self.tiled,
         }

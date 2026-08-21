@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple, TypeVar
 from urllib.parse import urlparse
 
-import boto3
 import numpy as np
 import termcolor
 import torch

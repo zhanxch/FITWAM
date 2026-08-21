@@ -1,4 +1,0 @@
-comparison,episodes,baseline_successes,method_successes,success_delta_count,success_delta,ci95_low,ci95_high,method_only_success,baseline_only_success,mcnemar_exact_two_sided_p
-M_PAIR_SHUFFLE_vs_C_STRICT,200,170,142,-28,-0.14,-0.21,-0.07,14,42,0.00023444586091919684
-M_STRICT_vs_C_STRICT,200,170,109,-61,-0.305,-0.38,-0.23,8,69,3.137352112678877e-13
-M_STRICT_vs_M_PAIR_SHUFFLE,200,142,109,-33,-0.165,-0.245,-0.085,19,52,0.00011226864689498799

@@ -1,0 +1,54 @@
+# Shared DEWO v2 CFG. Defaults = hammer_nail recipe; override via env.
+# FAST is aux-only and must not mix with action-loss (primary) samples.
+#   CFG_PRIMARY=0.5,0.0,0.5
+#   CFG_AUX_SUCCESS=0.4,0.2,0.4
+#   CFG_AUX_FAIL=0.0,0.2,0.4
+#   CFG_SUCCESS_SUFFIX=' Successful execution.'
+#   CFG_FAILURE_SUFFIX=null
+#   CFG_DROPOUT=0.0
+#   CFG_FAST_FAIL_CLOSED=true
+defaults:
+  - dewo_v2_eve_jump_fast
+  - _self_
+
+train:
+  outcome_text_success_suffix: ${oc.env:CFG_SUCCESS_SUFFIX, Successful execution.}
+  outcome_text_failure_suffix: ${oc.decode:${oc.env:CFG_FAILURE_SUFFIX,null}}
+  outcome_text_dropout_prob: ${oc.decode:${oc.env:CFG_DROPOUT,0.0}}
+  primary_cfg_channel_probs:
+    outcome: ${oc.decode:${oc.env:CFG_PRIMARY_OUTCOME,0.5}}
+    fast: ${oc.decode:${oc.env:CFG_PRIMARY_FAST,0.0}}
+    base: ${oc.decode:${oc.env:CFG_PRIMARY_BASE,0.5}}
+  cfg_channel_probs:
+    outcome: ${oc.decode:${oc.env:CFG_AUX_SUCCESS_OUTCOME,0.4}}
+    fast: ${oc.decode:${oc.env:CFG_AUX_SUCCESS_FAST,0.2}}
+    base: ${oc.decode:${oc.env:CFG_AUX_SUCCESS_BASE,0.4}}
+  failure_cfg_channel_probs:
+    outcome: ${oc.decode:${oc.env:CFG_AUX_FAIL_OUTCOME,0.0}}
+    fast: ${oc.decode:${oc.env:CFG_AUX_FAIL_FAST,0.2}}
+    base: ${oc.decode:${oc.env:CFG_AUX_FAIL_BASE,0.4}}
+  fast_tokenizer_model_id: ${oc.env:CFG_FAST_MODEL_ID,physical-intelligence/fast}
+  fast_max_tokens: ${oc.decode:${oc.env:CFG_FAST_MAX_TOKENS,32}}
+  fast_fail_closed: ${oc.decode:${oc.env:CFG_FAST_FAIL_CLOSED,true}}
+  text_embedding_cache_dir: ${oc.env:TEXT_EMBEDDING_CACHE_DIR}
+
+val:
+  outcome_text_success_suffix: ${data.train.outcome_text_success_suffix}
+  outcome_text_failure_suffix: ${data.train.outcome_text_failure_suffix}
+  outcome_text_dropout_prob: 0.0
+  primary_cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
+  cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
+  failure_cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
+  fast_tokenizer_model_id: ${data.train.fast_tokenizer_model_id}
+  fast_max_tokens: ${data.train.fast_max_tokens}
+  fast_fail_closed: ${data.train.fast_fail_closed}
+  text_embedding_cache_dir: ${data.train.text_embedding_cache_dir}

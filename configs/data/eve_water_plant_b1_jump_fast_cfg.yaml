@@ -1,0 +1,3 @@
+defaults:
+  - dewo_v2_eve_jump_fast_cfg
+  - _self_

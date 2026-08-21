@@ -1,8 +1,40 @@
-# DEWOv2: fold_glasses recoverability-pair pipeline
+# DEWOv2: recoverability-pair pipeline
 
-This document describes the current DEWOv2 implementation for `fold_glasses`.
-The active recipe uses recoverability pairs. The older width-jump / pm1p5-minb1
-pipeline is obsolete and must not be used for the main result.
+This document describes the current DEWOv2 implementation. The active recipe
+uses recoverability pairs on the open-source DexJoCo stack (224×224, z-score).
+The older width-jump / pm1p5-minb1 pipeline is obsolete.
+
+## Launchers (change env, not scripts)
+
+Session knobs (`GPUS`, `RUN_DIR`, `CKPT`, `WAIT_IDLE`, `OUT_ROOT`) are
+environment variables. Task identity lives in `scripts/dewo_v2/tasks.py`.
+
+```bash
+# Collect S0 rollouts (seeds 10086..10135 × 4)
+TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dewo_v2/collect_opensource_4x50.sh
+
+# Scan + pair LeRobot + Eve/text/FAST
+TASK=fold_glasses SOURCE_ROOT=/path/to/s0_collect GPUS=4,5,6,7 \
+  bash scripts/dewo_v2/run_pair_pipeline.sh
+
+# Train (after sourcing the prepare env)
+source /path/to/experiment/eve_v02/protocol/offline_v1_b1_jump_fast.env
+TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dewo_v2/train_jump_fast_lora.sh
+
+# Official CFG 4×50
+TASK=fold_glasses RUN_DIR=/path/to/run CKPT=/path/to/step_xxxxxx.pt \
+  TEXT_EMBEDDING_CACHE_DIR=/path/to/text_embeds_cache GPUS=4,5,6,7 \
+  bash scripts/dewo_v2/eval_cfg_official_4x50.sh
+```
+
+Per-task paths under `scripts/fold_glasses/` and `scripts/hammer_nail/` are
+compatibility wrappers that only set `TASK`.
+
+Release-ckpt eval (not DEWO v2) uses:
+
+```bash
+TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dexjoco/eval_opensource_4x50.sh
+```
 
 ## Pipeline
 
@@ -11,10 +43,14 @@ S0 rollout_raw_200
   -> recoverability intervention scan
   -> paired success/failure LeRobot dataset
   -> Eve train/validation manifests
-  -> base, outcome and FAST text caches + VAE latent cache
-  -> Video LoRA training
+  -> base, outcome and FAST text caches
+  -> Video LoRA / full DiT training (online VAE by default)
   -> success-vs-base CFG inference (4 x 50 seeds)
 ```
+
+VAE latent pre-encode is **off by default** (encode cost was high, train-step
+speedup was small once DiT dominated). Opt back in with
+`USE_VAE_LATENT_CACHE=1` on the train launcher.
 
 The training mixture is:
 
@@ -23,104 +59,49 @@ The training mixture is:
 - auxiliary success: the same pair-success events, with action loss disabled;
 - auxiliary failure: paired failure events, with action loss disabled.
 
-Original S0 success rollouts are deliberately excluded. The implementation uses
-the open-source DexJoCo-compatible stack: two cameras at 224 x 224 and z-score
-normalization from the released `dataset_stats.json`.
+Original S0 success rollouts are deliberately excluded.
+
+### Text embeds vs FAST
+
+- **Expert / primary never uses FAST** (`CFG_PRIMARY_FAST` must be `0`). Primary
+  mixes outcome + base only, so `precompute_text_embeds.py` (base + success /
+  failure suffixes) **is still required for expert**.
+- **FAST text embeds** are only for aux channels when `CFG_AUX_*_FAST > 0`.
+  `precompute_fast_cfg_text_embeds.py` already skips `eve_batch_role=primary`
+  windows. If all `CFG_*_FAST` are `0`, or `SKIP_FAST_TEXT_PRECOMPUTE=1`,
+  prepare skips the FAST precompute entirely.
 
 ## Prerequisites
 
 - Conda environment `fastwam` (override with `FITWAM_ENV`).
-- The open inference repository at
-  `/data_all/xiangchengzhan/FastWAM-infer-in-DexJoco` (override `OPEN_REPO`).
-- Released `fold_glasses` checkpoint/config/statistics in that repository.
-- An S0 collection containing `rollout_raw_200`.
-- Four GPUs by default; override `GPUS` with a comma-separated list.
+- Open inference repo: `../FastWAM-infer-in-DexJoco` (override `OPEN_REPO`).
+- Released task checkpoint/config/statistics in that repository (or
+  `checkpoints/dexjoco/<task>_fastwam`).
+- `GPUS` must be set; there is no hidden default card list.
 
-Generated datasets, caches, checkpoints and evaluation results are intentionally
-not versioned in Git.
+Generated datasets, caches, checkpoints and evaluation results are not
+versioned in Git.
 
-## Data preparation and training
+Useful overrides: `ROLLOUT_RAW`, `SCAN_ROOT`, `PAIR_DATASET`, `EXP_ROOT`,
+`SKIP_SCAN=1`, `CFG_SCALE`, `WAIT_IDLE`, `OUT_ROOT`.
 
-The end-to-end entry point scans the S0 rollouts, materializes the paired
-LeRobot dataset, builds Eve manifests and caches, pre-encodes VAE latents, and
-starts training inline:
+Training uses the Hydra task from `scripts/dewo_v2/tasks.py` (LoRA rank 32,
+lr `3e-5`, 15,000 steps unless a recipe wrapper sets `DEWO_TASK`). Set
+`DEWO_HYDRA_OVERRIDES` for extra Hydra knobs. Without `RUN_INLINE=1`, the
+launcher creates a tmux session.
 
-```bash
-SOURCE_ROOT=/path/to/fold_glasses_s0_collection \
-GPUS=0,1,2,3 \
-bash scripts/fold_glasses/run_dewo_v2_pair_pipeline.sh
-```
-
-Useful overrides are `ROLLOUT_RAW`, `SCAN_ROOT`, `PAIR_DATASET`, `EXP_ROOT`,
-and `SKIP_SCAN=1`. Re-running the command reuses an existing scan summary and
-pair dataset when present.
-
-The preparation stage writes:
-
-```text
-${EXP_ROOT}/
-  eve_v02/manifests/offline_b1_jump_fast_pair.json
-  eve_v02/manifests/offline_selection_primary_success.json
-  eve_v02/protocol/offline_v1_b1_jump_fast.env
-  eve_v02/protocol/offline_v1_b1_jump_fast.json
-  text_embeds_cache/
-  vae_latent_cache/
-  logs/
-```
-
-To run preparation and training separately:
-
-```bash
-PAIR_DATASET=/path/to/pair_lerobot EXP_ROOT=/path/to/experiment \
-  bash scripts/fold_glasses/prepare_dewo_v2_pair_eve.sh
-
-source /path/to/experiment/eve_v02/protocol/offline_v1_b1_jump_fast.env
-GPUS=0,1,2,3 RUN_INLINE=1 \
-  bash scripts/fold_glasses/train_dewo_v2_jump_fast_lora.sh
-```
-
-Training uses
-`configs/task/dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5.yaml`.
-Its defaults are Video LoRA rank 32, learning rate `3e-5`, 15,000 steps, and
-checkpoints every 2,500 steps. Set `DEWO_HYDRA_OVERRIDES` for explicit Hydra
-overrides. Without `RUN_INLINE=1`, the launcher creates a tmux session.
-
-## Inference and evaluation
-
-Run the official success-vs-base CFG evaluation after selecting a checkpoint:
-
-```bash
-RUN_DIR=/path/to/training/run \
-CKPT=/path/to/step_xxxxxx.pt \
-TEXT_EMBEDDING_CACHE_DIR=/path/to/text_embeds_cache \
-GPUS=0,1,2,3 \
-bash scripts/fold_glasses/eval_dewo_v2_cfg_official_4x50.sh
-```
-
-The default CFG scale is 2.0. Override `CFG_SCALE`, `SEEDS_PER_GPU`, `OUT_ROOT`,
-or `CFG_TASK_DIR` as needed. The launcher runs four disjoint 50-seed shards,
-merges their summaries, and records the checkpoint and evaluation protocol in
-the output directory.
-
-For validation-only scale selection, use:
-
-```bash
-RUN_DIR=/path/to/training/run \
-TEXT_EMBEDDING_CACHE_DIR=/path/to/text_embeds_cache \
-bash scripts/fold_glasses/eval_dewo_v2_cfg_ablation.sh
-```
-
-Choose the CFG scale once on validation seeds, then report the final checkpoint
-on fresh test seeds that were not used for scale or checkpoint selection.
+CFG scale selection: `scripts/dewo_v2/eval_cfg_ablation.sh`. Choose the scale
+once on validation seeds, then report the final checkpoint on held-out test
+seeds.
 
 ## Key files
 
-- `scripts/fold_glasses/run_dewo_v2_pair_pipeline.sh`: end-to-end entry point.
-- `scripts/fold_glasses/run_recoverability_pair_scan.py`: intervention scan.
-- `scripts/fold_glasses/materialize_recoverability_pairs_lerobot.py`: paired
-  LeRobot materialization.
-- `scripts/fold_glasses/prepare_dewo_v2_pair_eve.sh`: manifests and caches.
-- `scripts/fold_glasses/train_dewo_v2_jump_fast_lora.sh`: training launcher.
-- `scripts/fold_glasses/eval_dewo_v2_cfg_official_4x50.sh`: official inference.
-- `DEWO.md`: motivation, design history, and experiment-level notes.
-
+- `scripts/dewo_v2/tasks.py`: task registry + CFG recipe
+- `scripts/dewo_v2/collect_opensource_4x50.sh`
+- `scripts/dewo_v2/run_pair_pipeline.sh`
+- `scripts/dewo_v2/prepare_pair_eve.sh`
+- `scripts/dewo_v2/train_jump_fast_lora.sh`
+- `scripts/dewo_v2/eval_cfg_official_4x50.sh`
+- `scripts/fold_glasses/run_recoverability_pair_scan.py`
+- `scripts/fold_glasses/materialize_recoverability_pairs_lerobot.py`
+- `DEWO.md`: motivation, design history, and experiment-level notes

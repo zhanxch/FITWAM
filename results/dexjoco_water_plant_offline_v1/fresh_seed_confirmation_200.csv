@@ -1,4 +1,0 @@
-comparison,baseline_successes,method_successes,delta,ci95_low,ci95_high,method_only,baseline_only,mcnemar_p
-B1_vs_S0,150,170,0.1,0.025,0.175,42,22,0.01685819004428113
-M_vs_S0,150,175,0.125,0.055,0.195,41,16,0.0012635594724354632
-M_vs_B1,170,175,0.025,-0.035,0.085,21,16,0.5113757815852296

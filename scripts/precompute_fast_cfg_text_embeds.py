@@ -103,6 +103,7 @@ def _strip_cfg_for_action_scan(node: DictConfig) -> DictConfig:
     cfg["outcome_text_dropout_prob"] = 0.0
     cfg["cfg_channel_probs"] = None
     cfg["failure_cfg_channel_probs"] = None
+    cfg["primary_cfg_channel_probs"] = None
     # FAST prompt scan only needs actions/text; VAE caches are built later in train.
     cfg["require_vae_latent_cache"] = False
     cfg["vae_latent_cache_dir"] = None
@@ -150,6 +151,8 @@ def _scan_prompts(
                 raise RuntimeError(f"FAST dataset scan failed at idx={idx}.") from exc
             if errors <= 5:
                 logger.warning("skip idx=%d: %s", idx, exc)
+            continue
+        if sample.get("eve_batch_role") == "primary":
             continue
         action = sample.get("action")
         if action is None:

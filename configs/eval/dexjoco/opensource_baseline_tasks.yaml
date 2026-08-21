@@ -1,0 +1,44 @@
+fold_glasses:
+  instruction: Fold the glasses and place them into the case.
+  best_step: 10000
+  checkpoint_path: null
+  checkpoint_url: null
+  checkpoint_remote_path: null
+  dataset_stats: artifacts/fold_glasses/dataset_stats.json
+  text_embedding: artifacts/fold_glasses/0c3367ce1d74848cc46b93c6d2eee5e2097dca410a2c95f3da48bd8c8673fa20.t5_len128.wan22ti2v5b.pt
+
+hammer_nail:
+  instruction: Use the hammer to drive the nail into the wooden board.
+  best_step: 2500
+  checkpoint_path: null
+  checkpoint_url: null
+  checkpoint_remote_path: null
+  dataset_stats: artifacts/hammer_nail/dataset_stats.json
+  text_embedding: artifacts/hammer_nail/2941943bfb071bc01050d29e5fe36594b4d56bcf37897d79930731244d535302.t5_len128.wan22ti2v5b.pt
+
+pick_bucket:
+  instruction: Place the boxed food into the bucket and then lift the bucket.
+  best_step: 10000
+  checkpoint_path: null
+  checkpoint_url: null
+  checkpoint_remote_path: null
+  dataset_stats: artifacts/pick_bucket/dataset_stats.json
+  text_embedding: artifacts/pick_bucket/dcdf8d9ebb2d6fa61e9879cb19c6c48513db618cf60feb094c0cdeb4a143d65f.t5_len128.wan22ti2v5b.pt
+
+pinch_tongs:
+  instruction: Grasp the tongs and perform three consecutive open-close motions.
+  best_step: 10000
+  checkpoint_path: null
+  checkpoint_url: null
+  checkpoint_remote_path: null
+  dataset_stats: artifacts/pinch_tongs/dataset_stats.json
+  text_embedding: artifacts/pinch_tongs/593930da136e44111506b8b7bce9389c7f006b225280c7fdaf1217e9d7d7df8e.t5_len128.wan22ti2v5b.pt
+
+water_plant:
+  instruction: Grasp the watering can and apply water to the plant.
+  best_step: 12500
+  checkpoint_path: null
+  checkpoint_url: null
+  checkpoint_remote_path: null
+  dataset_stats: artifacts/water_plant/dataset_stats.json
+  text_embedding: artifacts/water_plant/f742556deff61d95d9f67eb3522f56d6f6c69ff9833ffa5b4beb83dc0d6a40df.t5_len128.wan22ti2v5b.pt

@@ -18,6 +18,8 @@ DexJoCo 不随本仓库分发。按 [官方仓库](https://github.com/brave-eai/
 | `../collect_dexjoco_rollouts.py` | 通用 rollout collect client |
 | `../build_rollout_datasets.py` | 通用 rollout dataset merge / trim |
 
+DexJoCo / DEWO v2 官方评测走开源栈 `scripts/dexjoco/eval_opensource_4x50.sh`（224 / z-score）。本目录是本地 async 闭环工具。
+
 ## 多卡 eval 示例
 
 ```bash
@@ -27,15 +29,16 @@ conda activate fastwam
 
 python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
   --gpus 0,1,2,3 \
-  --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
-  --checkpoint runs/.../checkpoints/weights/step_006500.pt \
+  --run-dir runs/dexjoco_fold_glasses_dewo_v2/<timestamp> \
+  --checkpoint runs/.../checkpoints/weights/step_002500.pt \
+  --dataset-stats-path /path/to/OPEN/artifacts/fold_glasses/dataset_stats.json \
   --no-load-text-encoder \
   --task-config-dir third_party/dexjoco/configs/rand_obj \
-  --tasks water_plant \
-  --episodes 100 --seed 0 \
+  --tasks fold_glasses \
+  --episodes 50 --seed 0 \
   --replan-steps 24 --control-mode blocking \
-  --max-env-steps 1500 \
-  --output-dir evaluate_results/dexjoco/water_plant/step_006500
+  --max-env-steps 1200 \
+  --output-dir evaluate_results/dexjoco/fold_glasses/step_002500
 ```
 
 ## 输出目录
@@ -47,17 +50,16 @@ python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
 ```bash
 python scripts/dexjoco_async/run_multi_gpu_dexjoco_collect.py \
   --gpus 0,1,2,3 \
-  --run-dir runs/hammer_nail_uncond_2cam_384_1e-4/2026-07-01_10-04-05 \
-  --checkpoint runs/hammer_nail_uncond_2cam_384_1e-4/2026-07-01_10-04-05/checkpoints/weights/step_006500.pt \
+  --run-dir runs/dexjoco_fold_glasses_dewo_v2/<timestamp> \
+  --checkpoint runs/.../checkpoints/weights/step_002500.pt \
+  --dataset-stats-path /path/to/OPEN/artifacts/fold_glasses/dataset_stats.json \
   --no-load-text-encoder \
-  --tasks hammer_nail \
+  --tasks fold_glasses \
   --episodes 200 \
   --replan-steps 24 \
-  --max-env-steps 600 \
-  --output-dir logs/hammer_nail_rollout_200_step6500_trim8s/collect \
-  --raw-output-dataset data/hammer_nail_rollout_200_step6500_raw \
-  --trimmed-output-dataset data/hammer_nail_rollout_200_step6500_trim8s \
-  --trim-failure-seconds 8
+  --max-env-steps 1200 \
+  --output-dir logs/fold_glasses_opensource_collect \
+  --raw-output-dataset data/fold_glasses_opensource_collect/rollout_raw_200
 ```
 output-dir/
   summary.json

@@ -21,7 +21,8 @@ ENV_PREFIX="${FITWAM_ENV_PREFIX:-$(conda info --base)/envs/fastwam}"
 export PATH="${ENV_PREFIX}/bin:${PATH}"
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 
-OPEN_REPO="${OPEN_REPO:-/data_all/xiangchengzhan/FastWAM-infer-in-DexJoco}"
+OPEN_REPO="${OPEN_REPO:-${ROOT_DIR}/../FastWAM-infer-in-DexJoco}"
+OPEN_REPO="$(cd "${OPEN_REPO}" && pwd)"
 BASE_DATASET="${BASE_DATASET:-${ROOT_DIR}/data/dexjoco/dexjoco_lerobot_datasets/fold_glasses}"
 ROLLOUT_RAW="${ROLLOUT_RAW:?Set ROLLOUT_RAW to the opensource collect rollout_raw_200}"
 WIDTH_JUMP_LEDGER="${WIDTH_JUMP_LEDGER:?Set WIDTH_JUMP_LEDGER to failure_events.jsonl}"
@@ -47,11 +48,9 @@ mkdir -p "${EXP_ROOT}" "${LOG_DIR}" "${TEXT_CACHE}" "${VAE_LATENT_CACHE_DIR}" "$
 
 log() { echo "[fold-glasses-dewo-v2-opensource-prep $(date -Is)] $*" | tee -a "${LOG_DIR}/prepare.log"; }
 
-# Guardrails: refuse local 384/min-max paths.
 if [[ "${BASE_DATASET}" == *fold_glasses_fastwam* ]]; then
-  log "ERROR: BASE_DATASET looks like local FitWAM expert (${BASE_DATASET})."
-  log "Use data/dexjoco/dexjoco_lerobot_datasets/fold_glasses for opensource DEWO v2."
-  exit 2
+  BASE_DATASET="${ROOT_DIR}/data/dexjoco/dexjoco_lerobot_datasets/fold_glasses"
+  log "aligned BASE_DATASET to opensource expert ${BASE_DATASET}"
 fi
 if [[ ! -f "${PRETRAINED_NORM_STATS}" ]]; then
   log "ERROR: missing OPEN stats: ${PRETRAINED_NORM_STATS}"
@@ -282,9 +281,10 @@ export REQUIRE_VAE_LATENT_CACHE=0
   "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5" \
   2>&1 | tee -a "${LOG_DIR}/precompute_text_embeds.log"
 
-log "precomputing FAST CFG text embeds on GPUs ${FAST_PRECOMPUTE_GPUS:-0,1,2,3}"
-IFS=',' read -r -a fast_gpu_array <<< "${FAST_PRECOMPUTE_GPUS:-0,1,2,3}"
-CUDA_VISIBLE_DEVICES="${FAST_PRECOMPUTE_GPUS:-0,1,2,3}" \
+FAST_PRECOMPUTE_GPUS="${FAST_PRECOMPUTE_GPUS:-${GPUS:?Set GPUS or FAST_PRECOMPUTE_GPUS}}"
+log "precomputing FAST CFG text embeds on GPUs ${FAST_PRECOMPUTE_GPUS}"
+IFS=',' read -r -a fast_gpu_array <<< "${FAST_PRECOMPUTE_GPUS}"
+CUDA_VISIBLE_DEVICES="${FAST_PRECOMPUTE_GPUS}" \
   torchrun --standalone --nproc_per_node="${#fast_gpu_array[@]}" \
   scripts/precompute_fast_cfg_text_embeds.py \
   "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5" \
@@ -313,5 +313,5 @@ echo "export TEXT_EMBEDDING_CACHE_SHA256=${text_sha}" >> "${env_file}"
 
 log "DONE. Next (tmux: VAE pre-encode then train on opensource stack):"
 log "  source ${env_file}"
-log "  GPUS=0,1,2,3 bash scripts/fold_glasses/train_dewo_v2_jump_fast_lora.sh"
+log "  TASK=fold_glasses GPUS=<ids> bash scripts/dewo_v2/train_jump_fast_lora.sh"
 log "  tmux attach -t fold_dewo_v2_train"

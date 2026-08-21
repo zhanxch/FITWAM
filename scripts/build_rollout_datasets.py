@@ -702,24 +702,33 @@ def validate_merge_shard_summary(
             f"{shard_root}: collection status is {summary.get('status')!r}, "
             "expected 'complete'"
         )
-    if summary.get("mode") != "save_all":
+    allowed_modes = {"save_all", "raw_merged_save_all"}
+    mode = summary.get("mode")
+    if mode not in allowed_modes:
         raise ValueError(
-            f"{shard_root}: merge requires mode='save_all', "
-            f"got {summary.get('mode')!r}"
+            f"{shard_root}: merge requires mode in {sorted(allowed_modes)}, "
+            f"got {mode!r}"
         )
     if summary.get("outcome_task_mode") not in {"clean", "task-marker"}:
         raise ValueError(
             f"{shard_root}: outcome_task_mode must be 'clean' or 'task-marker', "
             f"got {summary.get('outcome_task_mode')!r}"
         )
+    attempt_log = summary.get("attempt_log")
+    if not isinstance(attempt_log, list):
+        raise ValueError(f"{shard_root}: collection summary attempt_log must be a list")
+    # Already-merged run datasets write mode=raw_merged_save_all and historically
+    # omitted target_episodes/attempts; recover them from the attempt_log.
     target = summary.get("target_episodes")
+    if target is None and mode == "raw_merged_save_all":
+        target = len(attempt_log)
     if isinstance(target, bool) or not isinstance(target, int) or target < 1:
         raise ValueError(
             f"{shard_root}: target_episodes must be a positive integer, got {target!r}"
         )
-    attempt_log = summary.get("attempt_log")
-    if not isinstance(attempt_log, list):
-        raise ValueError(f"{shard_root}: collection summary attempt_log must be a list")
+    attempts = summary.get("attempts")
+    if attempts is None and mode == "raw_merged_save_all":
+        attempts = len(attempt_log)
 
     counts = {
         "info.total_episodes": info.get("total_episodes"),
@@ -738,7 +747,7 @@ def validate_merge_shard_summary(
         raise ValueError(
             f"{shard_root}: shard episode counts disagree: {normalized_counts}"
         )
-    if int(summary.get("attempts", -1)) != len(attempt_log):
+    if int(attempts) != len(attempt_log):
         raise ValueError(
             f"{shard_root}: summary.attempts disagrees with attempt_log length"
         )
@@ -894,6 +903,8 @@ def merge_shards(shard_datasets: list[Path], output_dataset: Path, overwrite: bo
             "status": "complete",
             "mode": "raw_merged_save_all",
             "episodes": len(out_episodes),
+            "target_episodes": len(out_episodes),
+            "attempts": len(attempt_log),
             "failures": sum(1 for row in out_outcomes if row["outcome"] == "failure"),
             "successes_saved": sum(1 for row in out_outcomes if row["outcome"] == "success"),
             "outcome_source": OUTCOME_LEDGER_NAME,

@@ -9,15 +9,16 @@ Typical usage (4 GPUs, 100 episodes of ``water_plant``)::
 
     python scripts/dexjoco_async/run_multi_gpu_dexjoco_eval.py \
       --gpus 4,5,6,7 \
-      --run-dir runs/water_plant_uncond_2cam_384_1e-4/2026-06-29_16-38-39 \
-      --checkpoint runs/.../checkpoints/weights/step_006500.pt \
+      --run-dir runs/dexjoco_fold_glasses_dewo_v2/<timestamp> \
+      --checkpoint runs/.../checkpoints/weights/step_002500.pt \
+      --dataset-stats-path /path/to/OPEN/artifacts/fold_glasses/dataset_stats.json \
       --no-load-text-encoder \
       --task-config-dir third_party/dexjoco/configs/rand_obj \
-      --tasks water_plant \
-      --episodes 100 --seed 0 \
+      --tasks fold_glasses \
+      --episodes 50 --seed 0 \
       --replan-steps 24 --control-mode blocking \
-      --max-env-steps 1500 \
-      --output-dir evaluate_results/dexjoco/water_plant/step_006500
+      --max-env-steps 1200 \
+      --output-dir evaluate_results/dexjoco/fold_glasses/step_002500
 
 The orchestrator itself runs in an env with ``zmq``+``msgpack`` (e.g. ``fastwam``)
 and only needs ``conda`` on PATH. Each server is launched in ``--server-conda-env``
@@ -96,6 +97,12 @@ def parse_args() -> argparse.Namespace:
     gpus.add_argument("--client-host", type=str, default="127.0.0.1", help="Host clients use to reach servers.")
     gpus.add_argument("--episodes", type=int, required=True, help="Total episodes (split across shards).")
     gpus.add_argument("--seed", type=int, default=0, help="Base seed; shard seeds are contiguous from here.")
+    gpus.add_argument(
+        "--eval-repeat",
+        type=int,
+        default=0,
+        help="OPEN-stack repeat index for diffusion noise (seed*100000 + repeat*1000 + replan).",
+    )
     gpus.add_argument(
         "--launch-servers",
         dest="launch_servers",
@@ -310,6 +317,7 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
         "--task-config-dir", str(args.task_config_dir.resolve()),
         "--episodes", str(shard.num_episodes),
         "--seed", str(shard.base_seed),
+        "--eval-repeat", str(int(getattr(args, "eval_repeat", 0))),
         "--replan-steps", str(args.replan_steps),
         "--control-mode", str(args.control_mode),
         "--async-fallback", str(args.async_fallback),

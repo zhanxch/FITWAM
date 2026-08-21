@@ -1,0 +1,44 @@
+{
+  "intake": {
+    "domain": "closed-loop visuomotor policy learning for Fold Glasses manipulation",
+    "venue": "unspecified",
+    "time": "unspecified",
+    "data": ["4 same-seed rollouts with success/failure outcomes and action/state traces"],
+    "compute": "80GB-class GPUs (A100/H100), up to 8 concurrent (one node), approximately 150 GPU-days over 5 months, plus approximately $10k inference/API budget for the full falsification campaign",
+    "expertise": "reinforcement learning and robotic manipulation",
+    "preference": "empirical",
+    "baseline": "same-seed success/failure action-distribution critical-event selection; control replans every 24 frames",
+    "limitation": "direct absolute-frame action distance selects frame-0 noise; state lacks object state; a causal actionable branch point and held-out closed-loop falsification are needed",
+    "contribution_type": "method",
+    "_inferred_fields": ["domain", "venue", "time", "data", "compute", "expertise", "preference", "baseline", "limitation", "contribution_type"]
+  },
+  "bottleneck_statement": "Phase 1 cannot form a literature-grounded bottleneck: the retrieval contains zero papers, so there are no cited residues establishing how same-seed critical-event selection fails or what frontier remains open.",
+  "closest_adjacent": [],
+  "what_phase_0_did_not_address": [],
+  "method_lineage": {
+    "line": "same-seed critical-event selection for closed-loop visuomotor policy learning",
+    "nodes": [],
+    "notes": "No retrieved frontier exists from which to construct a grounded lineage; no parametric ancestry is emitted as a substitute for missing evidence."
+  },
+  "domain_pattern_distribution": {
+    "n_total": 0,
+    "n_on_topic": 0,
+    "patterns": [],
+    "saturation_threshold_saturated": 0.5,
+    "saturation_threshold_untested_count": 1,
+    "notes": "No retrieved papers."
+  },
+  "state": "do_not_generate",
+  "ood_reasons": [
+    {
+      "trigger_id": 2,
+      "trigger_name": "insufficient literature anchor",
+      "match_evidence": "lit_results.json is empty and fewer than approximately five papers relate to the direction, so a literature-grounded bottleneck and closest-adjacent set cannot be established."
+    }
+  ],
+  "remedial_steps": [
+    "Add at least five relevant paper records or rerun Phase 0 retrieval with focused queries covering same-seed rollout diagnosis, causal critical-event selection, and held-out closed-loop policy falsification.",
+    "Regenerate lit_table.md with the required columns: paper_id, year_month, venue, title, ideation pattern tags, bottleneck this paper targets, open issue / unresolved gap, resolves_problem, and retrieved_via.",
+    "Fetch full text for the retrieved candidate pool before rerunning Phase 1."
+  ]
+}

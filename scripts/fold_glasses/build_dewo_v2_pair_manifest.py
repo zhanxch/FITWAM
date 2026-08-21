@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build the DEWO v2 pair training manifest.
 
-Primary: expert success episodes mixed with pair success events, action loss on.
+Primary: success episodes from --expert-manifest (expert or S0 success rollouts)
+mixed with pair success events, action loss on.
 Aux: one pair-success copy (action loss off) and the paired failure event
-(action loss off). Original S0 success rollouts are not included.
+(action loss off).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 
 from fastwam.everobot_schema import validate_manifest, with_manifest_hash
 
-PROMPT = "Fold the glasses and place them into the case."
+DEFAULT_PROMPT = "Fold the glasses and place them into the case."
 NUM_FRAMES = 33
 
 
@@ -31,13 +32,24 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expert-manifest", type=Path, required=True)
     parser.add_argument("--pair-dataset", type=Path, required=True)
     parser.add_argument("--pair-dataset-id", default="fold_glasses_pair_events")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument(
+        "--recipe",
+        default="fold_glasses_dewo_v2_recoverability_pairs",
+    )
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--primary-source",
+        choices=("expert", "success_rollouts"),
+        default="expert",
+    )
+    args = parser.parse_args(argv)
+    prompt = str(args.prompt)
 
     expert = load_json(args.expert_manifest)
     pair_root = args.pair_dataset.expanduser().resolve()
@@ -78,7 +90,7 @@ def main() -> int:
             "episode_index": ep_idx,
             "round_id": f"{args.pair_dataset_id}::r1",
             "collection_round": 1,
-            "task": PROMPT,
+            "task": prompt,
             "start_frame": 0,
             "end_frame": NUM_FRAMES,
             "sample_stride": 1,
@@ -165,10 +177,15 @@ def main() -> int:
         "source_hashes": dict(expert.get("source_hashes") or {}),
         "samples": samples,
         "selection": {
-            "recipe": "fold_glasses_dewo_v2_recoverability_pairs",
-            "primary": "expert_success_plus_pair_success_action",
+            "recipe": str(args.recipe),
+            "primary": (
+                "success_rollout_episodes_plus_pair_success_action"
+                if args.primary_source == "success_rollouts"
+                else "expert_success_plus_pair_success_action"
+            ),
             "auxiliary": "pair_success_video_plus_pair_failure_video",
-            "include_s0_success_rollouts": False,
+            "include_s0_success_rollouts": args.primary_source == "success_rollouts",
+            "primary_source": args.primary_source,
             "num_pairs": len(pair_index),
         },
     }
@@ -176,10 +193,11 @@ def main() -> int:
     validate_manifest(hashed, verify_hash=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(hashed, indent=2, sort_keys=True) + "\n")
+    n_rollout_primary = len(samples) - 3 * len(pair_index)
     print(
         f"wrote {args.output} samples={len(samples)} "
-        f"pairs={len(pair_index)} expert_primary="
-        f"{len(samples) - 3 * len(pair_index)}",
+        f"pairs={len(pair_index)} primary_source={args.primary_source} "
+        f"episode_primary={n_rollout_primary}",
         flush=True,
     )
     return 0

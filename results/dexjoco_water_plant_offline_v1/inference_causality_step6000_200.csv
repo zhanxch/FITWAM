@@ -1,3 +1,0 @@
-comparison,episodes,baseline_successes,method_successes,success_delta_count,success_delta,ci95_low,ci95_high,method_only_success,baseline_only_success,mcnemar_exact_two_sided_p
-bypass_vs_learned,200,175,20,-155,-0.775,-0.835,-0.715,1,156,1.729727791900946e-45
-shuffled_vs_learned,200,175,176,1,0.005,-0.05,0.06,16,15,1.0

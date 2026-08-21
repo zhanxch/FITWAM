@@ -25,12 +25,12 @@ from scripts.collect_dexjoco_rollouts import (  # noqa: E402
     write_episode_parquet,
     write_json,
 )
-from scripts.fold_glasses.collect_opensource_4x50 import SUCCESS_PROMPT  # noqa: E402
 from scripts.fold_glasses.validate_factual_replay import read_json  # noqa: E402
 
 
 EVENT_NUM_FRAMES = 33
 FAILURE_PHRASE = "Failed to finish the whole process."
+DEFAULT_SUCCESS_PROMPT = "Fold the glasses and place them into the case."
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -139,8 +139,14 @@ def main() -> int:
     parser.add_argument("--scan-root", type=Path, required=True)
     parser.add_argument("--source-dataset", type=Path, required=True)
     parser.add_argument("--output-dataset", type=Path, required=True)
+    parser.add_argument(
+        "--success-prompt",
+        default=DEFAULT_SUCCESS_PROMPT,
+        help="Clean task prompt written into the pair LeRobot dataset.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    success_prompt = str(args.success_prompt)
 
     scan_root = args.scan_root.expanduser().resolve()
     pairs = [
@@ -154,8 +160,8 @@ def main() -> int:
     info, n_ep, global_i, stats_list, _attempts = prepare_dataset(
         args.source_dataset.expanduser().resolve(),
         args.output_dataset.expanduser().resolve(),
-        SUCCESS_PROMPT,
-        f"{SUCCESS_PROMPT} {FAILURE_PHRASE}",
+        success_prompt,
+        f"{success_prompt} {FAILURE_PHRASE}",
         overwrite=bool(args.overwrite),
         resume=False,
         save_all_trajectories=True,
@@ -175,7 +181,7 @@ def main() -> int:
             episode_index=success_ep,
             global_start_index=global_i,
             descriptor=success_desc,
-            task_text=SUCCESS_PROMPT,
+            task_text=success_prompt,
             fps=fps,
         )
         append_jsonl(
@@ -200,7 +206,7 @@ def main() -> int:
             episode_index=failure_ep,
             global_start_index=global_i,
             descriptor=failure_desc,
-            task_text=SUCCESS_PROMPT,
+            task_text=success_prompt,
             fps=fps,
         )
         append_jsonl(

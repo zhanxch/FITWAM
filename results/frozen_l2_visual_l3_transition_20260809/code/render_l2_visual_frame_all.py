@@ -30,7 +30,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[3]  # archive/l2l3_.../scripts → repo root
-DEFAULT_EXPERT = ROOT / "data/water_plant_fastwam"
+DEFAULT_EXPERT = ROOT / "data/dexjoco/dexjoco_lerobot_datasets/water_plant"
 DEFAULT_ROLLOUT = ROOT / "data/water_plant_s0_b1_video_cfg_20260808_152243/rollout_raw_200"
 DEFAULT_VIS = ROOT / "results/frozen_l2_visual_l3_transition_20260809/L2_visual_features_fulltraj.npz"
 DEFAULT_OUT = ROOT / "results/frozen_l2_visual_l3_transition_20260809/L2_visual_frame_all"

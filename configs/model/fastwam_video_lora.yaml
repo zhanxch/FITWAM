@@ -1,9 +1,5 @@
 # Video DiT LoRA + ActionDiT full fine-tune (DiffSynth-style video adapters).
-#
-# Usage (LeRobot sliding-window):
-#   bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
-# Usage (EveRobot):
-#   bash scripts/water_plant/train_2cam.sh task=water_plant_uncond_2cam_384_1e-4_lora
+# DexJoCo / DEWO v2: task=dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5
 
 defaults:
   - fastwam

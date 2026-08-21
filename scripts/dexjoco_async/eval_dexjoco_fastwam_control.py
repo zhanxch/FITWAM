@@ -128,6 +128,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tasks", type=str, nargs="*", default=None)
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--eval-repeat",
+        type=int,
+        default=0,
+        help="OPEN-stack repeat index for diffusion noise: seed*100000 + repeat*1000 + replan.",
+    )
     parser.add_argument("--replan-steps", type=int, required=True)
     parser.add_argument(
         "--action-horizon",
@@ -314,15 +320,24 @@ def _apply_low_pass(
     return action, filtered.copy()
 
 
+def opensource_diffusion_seed(env_seed: int, *, repeat: int = 0, replan_index: int = 0) -> int:
+    """Match FastWAM-infer-in-DexJoco ``rollout_episode`` noise_seed."""
+    return int(env_seed) * 100_000 + int(repeat) * 1_000 + int(replan_index)
+
+
 def _predict_chunk(
     client: PolicyClientAsync,
     adapter: DexJoCoFastWAMAdapter,
     policy_obs: dict[str, Any],
     *,
     start_step: int,
+    noise_seed: int,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    response = client.get_action(_copy_for_async(policy_obs))
+    response = client.get_action(
+        _copy_for_async(policy_obs),
+        options={"seed": int(noise_seed)},
+    )
     chunk = adapter.parse_policy_response(response)
     return {
         "start_step": int(start_step),
@@ -413,8 +428,24 @@ def run_episode(
         chunks: list[dict[str, Any]] = []
         future: Future | None = None
         next_submit_step = 0
+        replan_index = 0
+        eval_repeat = int(getattr(args, "eval_repeat", 0))
         low_pass_state: np.ndarray | None = None
         last_action: np.ndarray | None = None
+
+        def _next_chunk(*, start_step: int) -> dict[str, Any]:
+            nonlocal replan_index
+            noise_seed = opensource_diffusion_seed(
+                seed, repeat=eval_repeat, replan_index=replan_index
+            )
+            replan_index += 1
+            return _predict_chunk(
+                infer_client,
+                adapter,
+                env.build_policy_obs(adapter),
+                start_step=start_step,
+                noise_seed=noise_seed,
+            )
 
         frames: list[np.ndarray] = []
         executed_actions: list[np.ndarray] = []
@@ -457,13 +488,7 @@ def run_episode(
 
                 if args.control_mode == "blocking":
                     if steps >= next_submit_step:
-                        policy_obs = env.build_policy_obs(adapter)
-                        pred = _predict_chunk(
-                            infer_client,
-                            adapter,
-                            policy_obs,
-                            start_step=steps,
-                        )
+                        pred = _next_chunk(start_step=steps)
                         _append_prediction(
                             pred,
                             chunks,
@@ -479,14 +504,7 @@ def run_episode(
                 else:
                     if steps >= next_submit_step:
                         if future is None:
-                            policy_obs = env.build_policy_obs(adapter)
-                            future = executor.submit(
-                                _predict_chunk,
-                                infer_client,
-                                adapter,
-                                policy_obs,
-                                start_step=steps,
-                            )
+                            future = executor.submit(_next_chunk, start_step=steps)
                             next_submit_step = steps + int(args.replan_steps)
                         else:
                             metrics["async_replan_delays"] += 1
@@ -527,13 +545,7 @@ def run_episode(
                         raw_action = last_action.copy()
                         metrics["hold_last_actions"] += 1
                     if raw_action is None:
-                        policy_obs = env.build_policy_obs(adapter)
-                        pred = _predict_chunk(
-                            infer_client,
-                            adapter,
-                            policy_obs,
-                            start_step=steps,
-                        )
+                        pred = _next_chunk(start_step=steps)
                         _append_prediction(
                             pred,
                             chunks,

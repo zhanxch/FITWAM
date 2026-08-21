@@ -397,6 +397,20 @@ class TrainerRoleBalancedLoaderTest(unittest.TestCase):
                 }
             )
 
+        schedule = EveManifestRobotVideoDataset._cfg_schedule
+        self.assertEqual(
+            schedule({"episode_outcome": "success", "action_loss": "enabled"}),
+            "primary",
+        )
+        self.assertEqual(
+            schedule({"episode_outcome": "success", "action_loss": "disabled"}),
+            "aux_success",
+        )
+        self.assertEqual(
+            schedule({"episode_outcome": "failure", "action_loss": "disabled"}),
+            "aux_failure",
+        )
+
     def test_each_rank_local_batch_is_exactly_two_primary_two_auxiliary(self):
         dataset = _Dataset()
         trainers = []

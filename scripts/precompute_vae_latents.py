@@ -4,10 +4,10 @@
 Wan2.2 VAE is causal/chunked, so each training window must be encoded
 independently (slicing a long-episode encode is not training-equivalent).
 
-Usage (after sourcing offline_v1_b1_video_cfg.env):
+Usage (after sourcing DEWO v2 offline_v1_b1_jump_fast.env):
 
   python scripts/precompute_vae_latents.py \\
-    task=dexjoco/dexjoco_water_plant_offline_b1_video_cfg_2cam_proprio_1e-4 \\
+    task=dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_s0 \\
     +vae_latent_cache_dir=/path/to/vae_latent_cache
 
 Or set env VAE_LATENT_CACHE_DIR. Multi-GPU:

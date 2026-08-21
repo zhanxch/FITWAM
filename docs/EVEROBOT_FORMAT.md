@@ -34,7 +34,7 @@ EveRobot 是 LeRobot 的 self-improving sidecar。原始视频、状态和动作
 
 左右手 event 可以重叠。例如左手持续抓取、右手同时开门，不应被强行压成同一个 hard segment。
 
-`steer_token` 是计划中的模型参数，不是数据 metadata。EveRobot 只保存学习 token 所需的 event 标签和 provenance；实现后，token 应跟随 checkpoint 保存。
+EveRobot 只保存 event 标签、outcome 和 provenance。模型侧如何消费这些字段不写入数据 metadata。
 
 ## 追加与取子集
 

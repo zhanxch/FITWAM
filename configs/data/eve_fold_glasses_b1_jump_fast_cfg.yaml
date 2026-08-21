@@ -1,4 +1,8 @@
-# Success samples: outcome / FAST / base. Failure samples: FAST / base.
+# DEWO v2 CFG by Eve role. FAST is aux-only: it encodes GT action tokens and
+# must not mix with action-loss (primary) samples.
+# primary: outcome 0.5 / base 0.5
+# aux success: outcome 0.4 / FAST 0.2 / base 0.4
+# aux fail: outcome 0.0 / FAST 0.2 / base 0.4 (normalized to 0 / 1/3 / 2/3)
 defaults:
   - eve_fold_glasses_b1_jump_fast
   - _self_
@@ -7,14 +11,18 @@ train:
   outcome_text_success_suffix: " Successful execution."
   outcome_text_failure_suffix: null
   outcome_text_dropout_prob: 0.0
+  primary_cfg_channel_probs:
+    outcome: 0.5
+    fast: 0.0
+    base: 0.5
   cfg_channel_probs:
     outcome: 0.4
     fast: 0.2
     base: 0.4
   failure_cfg_channel_probs:
     outcome: 0.0
-    fast: 0.5
-    base: 0.5
+    fast: 0.2
+    base: 0.4
   fast_tokenizer_model_id: physical-intelligence/fast
   fast_max_tokens: 32
   # Formal recipe must not silently replace missing/broken FAST samples with outcome.
@@ -26,6 +34,10 @@ val:
   outcome_text_failure_suffix: null
   outcome_text_dropout_prob: 0.0
   # Checkpoint selection is explicitly task-only, so val_base_loss is literal.
+  primary_cfg_channel_probs:
+    outcome: 0.0
+    fast: 0.0
+    base: 1.0
   cfg_channel_probs:
     outcome: 0.0
     fast: 0.0

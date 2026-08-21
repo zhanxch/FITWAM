@@ -29,7 +29,7 @@ from sklearn.decomposition import PCA
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN = ROOT / "results/frozen_l2_visual_l3_transition_20260809"
-DEFAULT_EXPERT = ROOT / "data/water_plant_fastwam"
+DEFAULT_EXPERT = ROOT / "data/dexjoco/dexjoco_lerobot_datasets/water_plant"
 DEFAULT_L2_ROLLOUT = ROOT / "data/water_plant_s0_b1_video_cfg_20260808_152243/rollout_raw_200"
 DEFAULT_L3_ROLLOUT = ROOT / "data/water_plant_s0_rollout_b0_b1_20260718/rollout"
 DEFAULT_VIS = FROZEN / "L2_visual_features_fulltraj.npz"

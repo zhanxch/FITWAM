@@ -38,6 +38,59 @@ def normalize_cfg_channel_probs(
     return {key: value / total for key, value in out.items()}
 
 
+CFG_SCHEDULE_PRIMARY = "primary"
+CFG_SCHEDULE_AUX_SUCCESS = "aux_success"
+CFG_SCHEDULE_AUX_FAILURE = "aux_failure"
+
+
+def select_cfg_schedule_probs(
+    *,
+    cfg_schedule: Optional[str],
+    outcome_flag: int,
+    channel_probs: Optional[Mapping[str, float]],
+    failure_channel_probs: Optional[Mapping[str, float]] = None,
+    primary_channel_probs: Optional[Mapping[str, float]] = None,
+) -> Optional[Mapping[str, float]]:
+    """Pick CFG mixing weights for a sample.
+
+    Eve DEWO v2 uses three schedules:
+    - primary: action-loss samples; outcome/base only, never FAST
+    - aux_success: video-only success events
+    - aux_failure: video-only failure events
+    """
+
+    schedule = None if cfg_schedule in {None, ""} else str(cfg_schedule)
+    if schedule == CFG_SCHEDULE_PRIMARY:
+        selected = (
+            primary_channel_probs if primary_channel_probs is not None else channel_probs
+        )
+    elif schedule in {CFG_SCHEDULE_AUX_FAILURE, "auxiliary", "failure"}:
+        selected = (
+            failure_channel_probs if failure_channel_probs is not None else channel_probs
+        )
+    elif schedule in {CFG_SCHEDULE_AUX_SUCCESS, "auxiliary_success"}:
+        selected = channel_probs
+    elif schedule is None:
+        selected = (
+            failure_channel_probs
+            if int(outcome_flag) == 1 and failure_channel_probs is not None
+            else channel_probs
+        )
+    else:
+        raise ValueError(
+            "cfg_schedule must be primary, aux_success, aux_failure, or empty, "
+            f"got {cfg_schedule!r}"
+        )
+
+    probs = normalize_cfg_channel_probs(selected)
+    if schedule == CFG_SCHEDULE_PRIMARY and probs is not None and probs["fast"] > 0.0:
+        raise ValueError(
+            "Primary CFG cannot include FAST; FAST leaks ground-truth action "
+            "tokens into Action DiT while action loss is enabled."
+        )
+    return probs
+
+
 def sample_cfg_channel(
     probs: Mapping[str, float],
     *,
@@ -119,6 +172,8 @@ def apply_ternary_cfg_suffix(
     failure_suffix: Optional[str],
     channel_probs: Optional[Mapping[str, float]],
     failure_channel_probs: Optional[Mapping[str, float]] = None,
+    primary_channel_probs: Optional[Mapping[str, float]] = None,
+    cfg_schedule: Optional[str] = None,
     actions: Optional[np.ndarray | Any] = None,
     is_training: bool = True,
     fast_model_id: str = "physical-intelligence/fast",
@@ -131,12 +186,13 @@ def apply_ternary_cfg_suffix(
     channel_name in {base, outcome, fast}.
     """
 
-    selected_probs = (
-        failure_channel_probs
-        if int(outcome_flag) == 1 and failure_channel_probs is not None
-        else channel_probs
+    probs = select_cfg_schedule_probs(
+        cfg_schedule=cfg_schedule,
+        outcome_flag=int(outcome_flag),
+        channel_probs=channel_probs,
+        failure_channel_probs=failure_channel_probs,
+        primary_channel_probs=primary_channel_probs,
     )
-    probs = normalize_cfg_channel_probs(selected_probs)
     if probs is None:
         # Legacy binary outcome CFG with dropout → base.
         if success_suffix is None or failure_suffix is None:

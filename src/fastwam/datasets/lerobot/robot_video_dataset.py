@@ -69,6 +69,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         outcome_text_dropout_prob: float = 0.0,
         cfg_channel_probs=None,
         failure_cfg_channel_probs=None,
+        primary_cfg_channel_probs=None,
         fast_tokenizer_model_id: str = "physical-intelligence/fast",
         fast_max_tokens: int = 32,
         fast_fail_closed: bool = False,
@@ -124,6 +125,17 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         self.failure_cfg_channel_probs = normalize_cfg_channel_probs(
             failure_cfg_channel_probs
         )
+        self.primary_cfg_channel_probs = normalize_cfg_channel_probs(
+            primary_cfg_channel_probs
+        )
+        if (
+            self.primary_cfg_channel_probs is not None
+            and self.primary_cfg_channel_probs["fast"] > 0.0
+        ):
+            raise ValueError(
+                "primary_cfg_channel_probs.fast must be 0; FAST is incompatible "
+                "with action-loss (primary) samples."
+            )
         self.fast_tokenizer_model_id = str(fast_tokenizer_model_id)
         self.fast_max_tokens = int(fast_max_tokens)
         self.fast_fail_closed = _as_bool(
@@ -133,8 +145,16 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         if self.fast_max_tokens < 1:
             raise ValueError(f"fast_max_tokens must be >= 1, got {fast_max_tokens}")
         if (
-            self.cfg_channel_probs is not None
-            and self.cfg_channel_probs["outcome"] > 0.0
+            (
+                (
+                    self.cfg_channel_probs is not None
+                    and self.cfg_channel_probs["outcome"] > 0.0
+                )
+                or (
+                    self.primary_cfg_channel_probs is not None
+                    and self.primary_cfg_channel_probs["outcome"] > 0.0
+                )
+            )
             and self.outcome_text_success_suffix is None
         ):
             raise ValueError(
@@ -224,6 +244,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         outcome_flag: int,
         *,
         actions=None,
+        cfg_schedule: Optional[str] = None,
     ) -> tuple[str, str]:
         """Append ternary CFG suffix: outcome / FAST(action) / base."""
 
@@ -234,6 +255,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             failure_suffix=self.outcome_text_failure_suffix,
             channel_probs=self.cfg_channel_probs,
             failure_channel_probs=self.failure_cfg_channel_probs,
+            primary_channel_probs=self.primary_cfg_channel_probs,
+            cfg_schedule=cfg_schedule,
             actions=actions,
             is_training=self.is_training_set,
             fast_model_id=self.fast_tokenizer_model_id,
@@ -242,7 +265,14 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             legacy_dropout_prob=self.outcome_text_dropout_prob,
         )
 
-    def _get(self, idx, *, outcome_flag_override: Optional[int] = None, skip_video: bool = False):
+    def _get(
+        self,
+        idx,
+        *,
+        outcome_flag_override: Optional[int] = None,
+        skip_video: bool = False,
+        cfg_schedule: Optional[str] = None,
+    ):
         sample_idx = idx
         sample = None
         if skip_video:
@@ -383,6 +413,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             base_task_text,
             outcome_flag,
             actions=action_for_cfg,
+            cfg_schedule=cfg_schedule,
         )
         instruction = DEFAULT_PROMPT.format(task=video_task_text)
         action_instruction = (

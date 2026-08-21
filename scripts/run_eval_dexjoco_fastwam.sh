@@ -3,25 +3,22 @@
 #
 # Prerequisite: start the policy server in another terminal (`fitwam` env), e.g.
 #   CUDA_VISIBLE_DEVICES=7 python scripts/run_fastwam_server.py \
-#     --run-dir runs/dexjoco_ego_uncond_1cam_384_1e-4/2026-06-05_17-18-31 \
+#     --run-dir runs/dexjoco_fold_glasses_dewo_v2/<timestamp> \
 #     --checkpoint checkpoints/weights/step_002500.pt \
+#     --dataset-stats-path /path/to/OPEN/artifacts/fold_glasses/dataset_stats.json \
 #     --device cuda:0 --host 0.0.0.0 --port 5560
 #
 # Usage:
 #   bash scripts/run_eval_dexjoco_fastwam.sh
 #   EPISODES=10 bash scripts/run_eval_dexjoco_fastwam.sh
 #   TASKS="click_mouse hammer_nail" bash scripts/run_eval_dexjoco_fastwam.sh
-#   ACTION_CLIP=1 REPLAN_STEPS=8 EPISODES=5 TASKS=bimanual_microwave_cook \
-#     RUN_DIR=runs/dexjoco_microwave_cook_uncond_3cam_384_1e-4_egodex_pretrain/2026-06-15_15-32-35 \
-#     OUTPUT_DIR=logs/dexjoco_fastwam_eval/egodex_pretrain_step3000_clipped \
-#     bash scripts/run_eval_dexjoco_fastwam.sh
 
 set -euo pipefail
 
 FASTWAM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$FASTWAM_ROOT"
 
-RUN_DIR="${RUN_DIR:-runs/dexjoco_microwave_cook_uncond_3cam_384_1e-4/2026-06-09_16-54-35}"
+RUN_DIR="${RUN_DIR:?Set RUN_DIR to the FastWAM training run}"
 POLICY_HOST="${POLICY_HOST:-127.0.0.1}"
 POLICY_PORT="${POLICY_PORT:-5560}"
 EPISODES="${EPISODES:-50}"

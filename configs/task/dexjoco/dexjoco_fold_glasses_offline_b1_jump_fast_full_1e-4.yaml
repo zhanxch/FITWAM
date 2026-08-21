@@ -1,6 +1,6 @@
 # @package _global_
-# Fold-glasses DEWO v2 continue-train from official S0 weights.
-# Init: checkpoints/dexjoco/fold_glasses_fastwam/step_010000.pt
+# Fold-glasses DEWO v2 train-from-scratch (no S0 continue-train).
+# Init: Wan2.2-TI2V-5B video DiT + ActionDiT linear-interp; resume=null.
 # Stack: FastWAM-infer-in-DexJoco (224×224, z-score, OPEN stats), no Video LoRA.
 # Optimizer: official uncond recipe — lr=1e-4, cosine, wd=1e-2, full DiT.
 # Data/conditions: recoverability-pair mix + outcome/FAST/base CFG.
@@ -25,10 +25,10 @@ model:
   fill_vae_latent_cache: false
   proprio_dim: ${data.train.processor.proprio_output_dim}
   state_dit_config: null
-  # Match official infer yaml / S0 ckpt; do not inject LoRA or mixed-attn train path.
+  # From-scratch: load Wan video DiT + ActionDiT linear-interp (not S0 MoT weights).
   mot_checkpoint_mixed_attn: false
-  skip_dit_load_from_pretrain: true
-  action_dit_pretrained_path: null
+  skip_dit_load_from_pretrain: false
+  action_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
   video_dit_config:
     use_gradient_checkpointing: true
   action_dit_config:
@@ -56,14 +56,14 @@ mixed_precision: bf16
 seed: 42
 max_grad_norm: 1.0
 weight_decay: 0.01
-resume: ${oc.env:FASTWAM_RESUME}
+resume: null
 resume_experts: null
 
 experiment_provenance:
-  protocol: fold_glasses_dewo_v2_jump_fast_full_1e-4_continue
-  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-full-1e-4}
+  protocol: fold_glasses_dewo_v2_jump_fast_full_1e-4_from_scratch
+  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-full-1e-4-scratch}
   stack: opensource_224_zscore
-  source_checkpoint_sha256: ${oc.env:FASTWAM_RESUME_SHA256}
+  source_checkpoint_sha256: from_scratch_wan_actiondit
   source_config_sha256: ${oc.env:FASTWAM_SOURCE_CONFIG_SHA256}
   manifest_sha256: ${oc.env:EVE_MANIFEST_SHA256}
   selection_manifest_sha256: ${oc.env:EVE_VAL_MANIFEST_SHA256}
