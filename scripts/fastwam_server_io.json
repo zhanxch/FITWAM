@@ -29,6 +29,8 @@
       "device": "Torch device string. Default: cuda:0; falls back to cpu when CUDA is unavailable.",
       "action_horizon": "Override predicted action chunk length. Default: cfg.data.train.num_frames - 1.",
       "num_inference_steps": "Override diffusion inference steps. Default: cfg.eval_num_inference_steps or 10.",
+      "cfg_epsilon_l": "Optional per-token action CFG residual RMS bound; null leaves legacy guidance unchanged.",
+      "cfg_residual_clip_mode": "Residual bound mode: rms (default) or elementwise.",
       "host": "Bind host. Default: 0.0.0.0.",
       "port": "Bind port. Default: 5560.",
       "api_token": "Optional shared token checked on every request.",
@@ -133,7 +135,16 @@
               "shape": "[L] or [1, L]"
             }
           },
-          "options": "object or null; currently ignored by FastWAMPolicy.get_action"
+          "options": {
+            "type": "object or null",
+            "fields": {
+              "seed": "Optional per-request diffusion seed.",
+              "adaptive_cfg_tau": "Optional per-request adaptive CFG gate threshold.",
+              "cfg_epsilon_l": "Optional per-request residual RMS bound; aliases epsilon_l and cfg_residual_epsilon are accepted.",
+              "cfg_residual_clip_mode": "rms or elementwise; used with cfg_epsilon_l.",
+              "return_cfg_residual": "Include residual diagnostics in the response."
+            }
+          }
         }
       },
       "mutual_exclusion": [

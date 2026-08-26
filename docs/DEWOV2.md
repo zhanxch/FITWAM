@@ -19,7 +19,7 @@ TASK=fold_glasses SOURCE_ROOT=/path/to/s0_collect GPUS=4,5,6,7 \
 
 # Train (after sourcing the prepare env)
 source /path/to/experiment/eve_v02/protocol/offline_v1_b1_jump_fast.env
-TASK=fold_glasses GPUS=4,5,6,7 bash scripts/dewo_v2/train_jump_fast_lora.sh
+TASK=fold_glasses INIT=s0 GPUS=4,5,6,7 bash scripts/dewo_v2/train.sh
 
 # Official CFG 4×50
 TASK=fold_glasses RUN_DIR=/path/to/run CKPT=/path/to/step_xxxxxx.pt \
@@ -44,7 +44,7 @@ S0 rollout_raw_200
   -> paired success/failure LeRobot dataset
   -> Eve train/validation manifests
   -> base, outcome and FAST text caches
-  -> Video LoRA / full DiT training (online VAE by default)
+  -> full DiT training (INIT=scratch or INIT=s0; online VAE by default)
   -> success-vs-base CFG inference (4 x 50 seeds)
 ```
 
@@ -85,10 +85,13 @@ versioned in Git.
 Useful overrides: `ROLLOUT_RAW`, `SCAN_ROOT`, `PAIR_DATASET`, `EXP_ROOT`,
 `SKIP_SCAN=1`, `CFG_SCALE`, `WAIT_IDLE`, `OUT_ROOT`.
 
-Training uses the Hydra task from `scripts/dewo_v2/tasks.py` (LoRA rank 32,
-lr `3e-5`, 15,000 steps unless a recipe wrapper sets `DEWO_TASK`). Set
-`DEWO_HYDRA_OVERRIDES` for extra Hydra knobs. Without `RUN_INLINE=1`, the
-launcher creates a tmux session.
+Training uses the Hydra task from `INIT` in `scripts/dewo_v2/train.sh`:
+`dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4` (scratch) or
+`dexjoco_dewo_v2_offline_b1_jump_fast_full_s0` (continue from S0). Full DiT
+only; there is no LoRA recipe. Set `DEWO_HYDRA_OVERRIDES` for extra Hydra
+knobs. Without `RUN_INLINE=1`, the launcher creates a tmux session. Val is
+off (`eval_every=0`); VAE pre-encode does not encode the val split unless
+`VAE_ENCODE_VAL=true`.
 
 CFG scale selection: `scripts/dewo_v2/eval_cfg_ablation.sh`. Choose the scale
 once on validation seeds, then report the final checkpoint on held-out test
@@ -100,7 +103,7 @@ seeds.
 - `scripts/dewo_v2/collect_opensource_4x50.sh`
 - `scripts/dewo_v2/run_pair_pipeline.sh`
 - `scripts/dewo_v2/prepare_pair_eve.sh`
-- `scripts/dewo_v2/train_jump_fast_lora.sh`
+- `scripts/dewo_v2/train.sh`
 - `scripts/dewo_v2/eval_cfg_official_4x50.sh`
 - `scripts/fold_glasses/run_recoverability_pair_scan.py`
 - `scripts/fold_glasses/materialize_recoverability_pairs_lerobot.py`

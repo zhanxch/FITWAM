@@ -1,4 +1,8 @@
-"""Video DiT LoRA helpers (DiffSynth-style PEFT adapters on the video expert only)."""
+"""Video DiT LoRA helpers (unused by current DexJoCo / DEWO v2 recipes).
+
+DEWO v2 trains full DiT only (`INIT=scratch` or `INIT=s0`). Do not add a LoRA
+Hydra task or enable `video_lora` for DexJoCo.
+"""
 
 from __future__ import annotations
 

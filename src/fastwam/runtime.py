@@ -95,12 +95,18 @@ def create_fastwam(
     state_scheduler=None,
     loss=None,
     video_lora=None,
+    uncond_adapter=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
     model_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
 ):
     from .models.wan22.fastwam import FastWAM
+    from .models.wan22.uncond_adapter import (
+        inject_uncond_adapter,
+        load_uncond_adapter_state_dict,
+        normalize_uncond_adapter_config,
+    )
     from .models.wan22.video_lora import inject_video_lora, normalize_video_lora_config
     from .datasets.vae_latent_cache import resolve_optional_path
 
@@ -221,6 +227,57 @@ def create_fastwam(
             target_modules=video_lora_cfg["target_modules"],
             checkpoint=video_lora_cfg.get("checkpoint"),
         )
+    if isinstance(uncond_adapter, DictConfig):
+        uncond_adapter = OmegaConf.to_container(uncond_adapter, resolve=True)
+    uncond_adapter_cfg = normalize_uncond_adapter_config(uncond_adapter)
+    model.uncond_adapter_injected = bool(uncond_adapter_cfg.get("enabled", False))
+    model.uncond_adapter_config = uncond_adapter_cfg
+    if model.uncond_adapter_injected:
+        inject_uncond_adapter(
+            model,
+            rank=int(uncond_adapter_cfg["rank"]),
+            alpha=float(uncond_adapter_cfg["alpha"]),
+            target_modules=uncond_adapter_cfg["target_modules"],
+            experts=uncond_adapter_cfg["experts"],
+            checkpoint=None,
+        )
+        adapter_cfg = dict(getattr(model, "uncond_adapter_config", {}) or {})
+        adapter_cfg["pin_video_context_to_base"] = bool(
+            uncond_adapter_cfg.get("pin_video_context_to_base", False)
+        )
+        adapter_cfg["identity_lock_lambda"] = float(
+            uncond_adapter_cfg.get("identity_lock_lambda", 0.0) or 0.0
+        )
+        adapter_cfg["action_residual_lock_lambda"] = float(
+            uncond_adapter_cfg.get("action_residual_lock_lambda", 0.0) or 0.0
+        )
+        adapter_cfg["video_bc_on_zero_action"] = bool(
+            uncond_adapter_cfg.get("video_bc_on_zero_action", False)
+        )
+        adapter_cfg["recipe"] = str(uncond_adapter_cfg.get("recipe") or "v5")
+        adapter_cfg["value_head"] = dict(uncond_adapter_cfg.get("value_head") or {})
+        model.uncond_adapter_config = adapter_cfg
+        value_head_cfg = adapter_cfg["value_head"]
+        recipe = str(adapter_cfg["recipe"])
+        if recipe in {"v8", "v9"} or bool(value_head_cfg.get("enabled", False)):
+            from fastwam.models.wan22.value_head import attach_recoverability_value_head
+
+            attach_recoverability_value_head(model, value_head_cfg, recipe=recipe)
+        checkpoint = uncond_adapter_cfg.get("checkpoint")
+        if checkpoint:
+            load_uncond_adapter_state_dict(model, str(checkpoint))
+    model.pin_video_context_to_base = bool(
+        uncond_adapter_cfg.get("pin_video_context_to_base", False)
+    )
+    model.video_identity_lock_lambda = float(
+        uncond_adapter_cfg.get("identity_lock_lambda", 0.0) or 0.0
+    )
+    model.action_residual_lock_lambda = float(
+        uncond_adapter_cfg.get("action_residual_lock_lambda", 0.0) or 0.0
+    )
+    model.video_bc_on_zero_action = bool(
+        uncond_adapter_cfg.get("video_bc_on_zero_action", False)
+    )
     return model
 
 

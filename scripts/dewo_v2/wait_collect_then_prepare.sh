@@ -65,10 +65,9 @@ log "DONE collect=${COLLECT_OUT} exp=${EXP_ROOT}"
 log "env=${ENV_FILE}"
 
 if [[ "${RUN_TRAIN}" == "1" ]]; then
-  log "LAUNCH train INIT=${INIT:-scratch} USE_VAE_LATENT_CACHE=${USE_VAE_LATENT_CACHE:-0}"
+  log "LAUNCH train INIT=${INIT:-scratch} USE_VAE_LATENT_CACHE=${USE_VAE_LATENT_CACHE:-1}"
   ENV_FILE="${ENV_FILE}" \
   INIT="${INIT:-scratch}" \
-  USE_VAE_LATENT_CACHE="${USE_VAE_LATENT_CACHE:-0}" \
   RUN_INLINE=1 \
     bash scripts/dewo_v2/train.sh \
     2>&1 | tee -a "${LOG_DIR}/train_${STAMP}.log"

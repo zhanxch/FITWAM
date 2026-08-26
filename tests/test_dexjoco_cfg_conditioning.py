@@ -83,6 +83,40 @@ class DexJoCoCfgConditioningTest(unittest.TestCase):
         self.assertTrue(np.all(observation["context"] == 1.0))
         self.assertTrue(np.all(observation["negative_context"] == 0.0))
 
+    def test_cached_mode_loads_failure_context(self) -> None:
+        adapter = adapter_module.DexJoCoFastWAMAdapter(self._settings(use_prompt=False))
+
+        def fake_load(instruction, **_kwargs):
+            if instruction.endswith("Failed execution."):
+                fill = 2.0
+            elif instruction.endswith("Successful execution."):
+                fill = 1.0
+            else:
+                fill = 0.0
+            return (
+                np.full((4, 3), fill, dtype=np.float32),
+                np.ones(4, dtype=bool),
+            )
+
+        with mock.patch.object(
+            adapter_module,
+            "load_text_context_arrays",
+            side_effect=fake_load,
+        ) as loader:
+            observation = adapter.env_obs_to_policy_obs(
+                self._env_obs(),
+                camera_key="front",
+                camera_mapping={"base": "front"},
+                task_prompt="Task. Successful execution.",
+                cfg_base_prompt="Task.",
+                cfg_failure_prompt="Task. Failed execution.",
+            )
+
+        self.assertEqual(loader.call_count, 3)
+        self.assertTrue(np.all(observation["context"] == 1.0))
+        self.assertTrue(np.all(observation["negative_context"] == 0.0))
+        self.assertTrue(np.all(observation["failure_context"] == 2.0))
+
 
 if __name__ == "__main__":
     unittest.main()

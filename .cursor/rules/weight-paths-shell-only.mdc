@@ -1,0 +1,18 @@
+---
+description: Resolve ckpts/stats via Shell; never Glob gitignored weight dirs
+alwaysApply: true
+---
+
+# Weight / artifact discovery (anti-empty-Glob)
+
+`.gitignore` hides `checkpoints`, `runs`, `evaluate_results`, `data/*`, `third_party/`, and `*.pt`. **Glob / rg over those trees often returns zero matches even when files exist.**
+
+This rule does **not** disable Shell or any other tool. It only bans **workspace Glob/rg** for weight discovery.
+
+**Before any train / eval / collect / CFG launch that needs a weight:**
+
+1. If needed once per session, open `.cursor/skills/fastwam-weight-resolve/SKILL.md` for the pin table — then **execute** Shell checks (`ls` / `find` / `test -f`). Do not substitute Read for those checks.
+2. Prefer pins in `scripts/dewo_v2/tasks.py` (`resolve_ckpt`) over rediscovering by search.
+3. Continue with `.cursor/skills/fastwam-gpu-launch/SKILL.md` (host tmux + cuda verify).
+
+Canonical release weights: `checkpoints` → `/data_all/xiangchengzhan/models/fastwam`. Adapters: `runs/.../checkpoints/weights/`.

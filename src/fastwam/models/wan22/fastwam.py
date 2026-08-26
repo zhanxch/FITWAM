@@ -17,6 +17,16 @@ from .state_dit import StateDiT
 logger = get_logger(__name__)
 
 
+def action_cfg_residual_energy(delta: torch.Tensor) -> torch.Tensor:
+    """Per-token RMS of a CFG residual ``ε_posi − ε_base``.
+
+    ``delta`` is ``[B, H, D]``; returns ``[B, H]``.
+    """
+    if delta.ndim != 3:
+        raise ValueError(f"`delta` must be [B, H, D], got {tuple(delta.shape)}")
+    return delta.float().square().mean(dim=-1).sqrt()
+
+
 class FastWAM(torch.nn.Module):
     """MoT world model with video/action experts."""
 
@@ -647,6 +657,26 @@ class FastWAM(torch.nn.Module):
         context_mask = sample["context_mask"]
         action_context = sample.get("action_context", context)
         action_context_mask = sample.get("action_context_mask", context_mask)
+        if bool(getattr(self, "pin_video_context_to_base", False)):
+            if "base_context" not in sample or "base_context_mask" not in sample:
+                raise ValueError(
+                    "`pin_video_context_to_base` requires `sample['base_context']` "
+                    "and `sample['base_context_mask']`."
+                )
+            action_loss_weight = sample.get("action_loss_weight", None)
+            if action_loss_weight is None:
+                context = sample["base_context"]
+                context_mask = sample["base_context_mask"]
+            else:
+                from fastwam.models.wan22.uncond_adapter import pin_video_context_per_sample
+
+                context, context_mask = pin_video_context_per_sample(
+                    context,
+                    context_mask,
+                    sample["base_context"],
+                    sample["base_context_mask"],
+                    action_loss_weight,
+                )
         proprio = sample.get("proprio", None)
         state_is_pad = sample.get("proprio_is_pad", None)
 
@@ -900,6 +930,125 @@ class FastWAM(torch.nn.Module):
         valid_sum = valid.sum(dim=1).clamp(min=1.0)
         return (video_loss_token * valid).sum(dim=1) / valid_sum
 
+    @staticmethod
+    def _cfg_channels_from_sample(sample, batch_size: int) -> Optional[list[str]]:
+        raw = sample.get("cfg_channel") if isinstance(sample, dict) else None
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            channels = [raw]
+        else:
+            channels = [str(item) for item in raw]
+        if len(channels) != int(batch_size):
+            raise ValueError(
+                "`sample['cfg_channel']` must have one value per batch element, "
+                f"got {len(channels)} vs batch={batch_size}."
+            )
+        return channels
+
+    def _denoise_joint(
+        self,
+        *,
+        latents_video: torch.Tensor,
+        latents_action: torch.Tensor,
+        timestep_video: torch.Tensor,
+        timestep_action: torch.Tensor,
+        video_context: torch.Tensor,
+        video_context_mask: torch.Tensor,
+        action_context: torch.Tensor,
+        action_context_mask: torch.Tensor,
+        fuse_vae_embedding_in_latents: bool,
+        gt_action: Optional[torch.Tensor],
+        state: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        video_expert = self.video_expert
+        action_expert = self.action_expert
+        mot = self.mot
+        device = next(video_expert.parameters()).device
+
+        def _to(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+            if tensor is None:
+                return None
+            return tensor.to(device=device, non_blocking=True)
+
+        latents_video = _to(latents_video)
+        latents_action = _to(latents_action)
+        timestep_video = _to(timestep_video)
+        timestep_action = _to(timestep_action)
+        video_context = _to(video_context)
+        video_context_mask = _to(video_context_mask)
+        action_context = _to(action_context)
+        action_context_mask = _to(action_context_mask)
+        gt_action = _to(gt_action)
+        state = _to(state)
+
+        video_pre = video_expert.pre_dit(
+            x=latents_video,
+            timestep=timestep_video,
+            context=video_context,
+            context_mask=video_context_mask,
+            action=gt_action,
+            fuse_vae_embedding_in_latents=fuse_vae_embedding_in_latents,
+        )
+        action_pre = action_expert.pre_dit(
+            action_tokens=latents_action,
+            timestep=timestep_action,
+            context=action_context,
+            context_mask=action_context_mask,
+        )
+        state_pre = None
+        if self.state_expert is not None and state is not None:
+            state_pre = self._state_condition_pre_dit(
+                state=state,
+                context=action_context,
+                context_mask=action_context_mask,
+            )
+
+        video_tokens = video_pre["tokens"]
+        action_tokens = action_pre["tokens"]
+        state_tokens = None if state_pre is None else state_pre["tokens"]
+        attention_mask = self._build_conditioned_mot_attention_mask(
+            video_seq_len=video_tokens.shape[1],
+            action_seq_len=action_tokens.shape[1],
+            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
+            device=video_tokens.device,
+            state_seq_len=None if state_tokens is None else state_tokens.shape[1],
+        )
+        embeds_all = {"video": video_tokens, "action": action_tokens}
+        freqs_all = {"video": video_pre["freqs"], "action": action_pre["freqs"]}
+        context_all = {
+            "video": {"context": video_pre["context"], "mask": video_pre["context_mask"]},
+            "action": {"context": action_pre["context"], "mask": action_pre["context_mask"]},
+        }
+        t_mod_all = {"video": video_pre["t_mod"], "action": action_pre["t_mod"]}
+        if state_pre is not None:
+            embeds_all["state"] = state_tokens
+            freqs_all["state"] = state_pre["freqs"]
+            context_all["state"] = {
+                "context": state_pre["context"],
+                "mask": state_pre["context_mask"],
+            }
+            t_mod_all["state"] = state_pre["t_mod"]
+        tokens_out = mot(
+            embeds_all=embeds_all,
+            attention_mask=attention_mask,
+            freqs_all=freqs_all,
+            context_all=context_all,
+            t_mod_all=t_mod_all,
+        )
+        pred_video = video_expert.post_dit(tokens_out["video"], video_pre)
+        pred_action = action_expert.post_dit(tokens_out["action"], action_pre)
+        pred_state = None
+        if state_pre is not None:
+            pred_state = self.state_expert.post_dit(tokens_out["state"], state_pre)
+        if pred_video.device != self.device:
+            pred_video = pred_video.to(self.device, non_blocking=True)
+        if pred_action.device != self.device:
+            pred_action = pred_action.to(self.device, non_blocking=True)
+        if pred_state is not None and pred_state.device != self.device:
+            pred_state = pred_state.to(self.device, non_blocking=True)
+        return pred_video, pred_action, pred_state
+
     def training_loss(
         self,
         sample,
@@ -957,82 +1106,19 @@ class FastWAM(torch.nn.Module):
             noisy_state[:, :1, :] = state[:, :1, :]
             target_state = self.train_state_scheduler.training_target(state, noise_state, timestep_state)
 
-        video_pre = self.video_expert.pre_dit(
-            x=latents,
-            timestep=timestep_video,
-            context=context,
-            context_mask=context_mask,
-            action=action,
+        pred_video, pred_action, pred_state = self._denoise_joint(
+            latents_video=latents,
+            latents_action=noisy_action,
+            timestep_video=timestep_video,
+            timestep_action=timestep_action,
+            video_context=context,
+            video_context_mask=context_mask,
+            action_context=action_context,
+            action_context_mask=action_context_mask,
             fuse_vae_embedding_in_latents=inputs["fuse_vae_embedding_in_latents"],
-        )
-
-        action_pre = self.action_expert.pre_dit(
-            action_tokens=noisy_action,
-            timestep=timestep_action,
-            context=action_context,
-            context_mask=action_context_mask,
-        )
-        state_pre = self._state_condition_pre_dit(
+            gt_action=action,
             state=noisy_state,
-            context=action_context,
-            context_mask=action_context_mask,
         )
-
-        video_tokens = video_pre["tokens"]
-        action_tokens = action_pre["tokens"]
-        state_tokens = None if state_pre is None else state_pre["tokens"]
-
-        attention_mask = self._build_conditioned_mot_attention_mask(
-            video_seq_len=video_tokens.shape[1],
-            action_seq_len=action_tokens.shape[1],
-            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-            device=video_tokens.device,
-            state_seq_len=None if state_tokens is None else state_tokens.shape[1],
-        )
-        embeds_all = {
-            "video": video_tokens,
-            "action": action_tokens,
-        }
-        freqs_all = {
-            "video": video_pre["freqs"],
-            "action": action_pre["freqs"],
-        }
-        context_all = {
-            "video": {
-                "context": video_pre["context"],
-                "mask": video_pre["context_mask"],
-            },
-            "action": {
-                "context": action_pre["context"],
-                "mask": action_pre["context_mask"],
-            },
-        }
-        t_mod_all = {
-            "video": video_pre["t_mod"],
-            "action": action_pre["t_mod"],
-        }
-        if state_pre is not None:
-            embeds_all["state"] = state_tokens
-            freqs_all["state"] = state_pre["freqs"]
-            context_all["state"] = {
-                "context": state_pre["context"],
-                "mask": state_pre["context_mask"],
-            }
-            t_mod_all["state"] = state_pre["t_mod"]
-        tokens_out = self.mot(
-            embeds_all=embeds_all,
-            attention_mask=attention_mask,
-            freqs_all=freqs_all,
-            context_all=context_all,
-            t_mod_all=t_mod_all,
-        )
-
-        pred_video = self.video_expert.post_dit(tokens_out["video"], video_pre)
-
-        pred_action = self.action_expert.post_dit(tokens_out["action"], action_pre)
-        pred_state = None
-        if state_pre is not None:
-            pred_state = self.state_expert.post_dit(tokens_out["state"], state_pre)
         include_initial_video_step = inputs["first_frame_latents"] is None
         if inputs["first_frame_latents"] is not None:
             pred_video = pred_video[:, :, 1:]
@@ -1044,11 +1130,6 @@ class FastWAM(torch.nn.Module):
             image_is_pad=image_is_pad,
             include_initial_video_step=include_initial_video_step,
         )
-        video_weight = self.train_video_scheduler.training_weight(timestep_video).to(
-            loss_video_per_sample.device, dtype=loss_video_per_sample.dtype
-        )
-        loss_video = (loss_video_per_sample * video_weight).mean()
-
         action_loss_token = F.mse_loss(pred_action.float(), target_action.float(), reduction="none").mean(dim=2) # [B, T]
         if action_is_pad is not None:
             valid = (~action_is_pad).to(device=action_loss_token.device, dtype=action_loss_token.dtype)
@@ -1057,17 +1138,26 @@ class FastWAM(torch.nn.Module):
         else:
             action_loss_per_sample = action_loss_token.mean(dim=1)
 
+        channels = self._cfg_channels_from_sample(sample, batch_size)
+
+        video_weight = self.train_video_scheduler.training_weight(timestep_video).to(
+            loss_video_per_sample.device, dtype=loss_video_per_sample.dtype
+        )
+        loss_video = (loss_video_per_sample * video_weight).mean()
+
         action_weight = self.train_action_scheduler.training_weight(timestep_action).to(
             action_loss_per_sample.device, dtype=action_loss_per_sample.dtype
         )
         action_loss_sample_weight = sample.get("action_loss_weight", None)
         action_loss_enabled_frac = None
+        primary_lock_w = None
         if action_loss_sample_weight is not None:
             action_loss_sample_weight = action_loss_sample_weight.to(
                 device=action_loss_per_sample.device, dtype=action_loss_per_sample.dtype, non_blocking=True
             ).view(-1)
             if action_loss_sample_weight.shape[0] != action_loss_per_sample.shape[0]:
                 raise ValueError("`sample['action_loss_weight']` must have one value per batch element.")
+            primary_lock_w = action_loss_sample_weight.detach()
             action_loss_enabled_frac = action_loss_sample_weight.detach().mean()
             loss_action = (
                 action_loss_per_sample * action_weight * action_loss_sample_weight
@@ -1093,15 +1183,195 @@ class FastWAM(torch.nn.Module):
             )
             loss_state = (state_loss_per_sample * state_weight).mean()
 
-        loss_total = self.loss_lambda_video * loss_video + self.loss_lambda_action * loss_action
+        video_loss_sample_weight = sample.get("video_loss_weight", None)
+        video_bc_on_zero_action = bool(getattr(self, "video_bc_on_zero_action", False))
+        video_term = self.loss_lambda_video * loss_video
+        video_w = None
+        if video_loss_sample_weight is not None:
+            video_w = video_loss_sample_weight.to(
+                device=loss_video_per_sample.device,
+                dtype=loss_video_per_sample.dtype,
+                non_blocking=True,
+            ).view(-1)
+            if video_w.shape[0] != loss_video_per_sample.shape[0]:
+                raise ValueError(
+                    "`sample['video_loss_weight']` must have one value per batch element."
+                )
+            if float(video_w.sum().item()) > 0:
+                loss_video = (
+                    loss_video_per_sample * video_weight * video_w
+                ).sum() / video_w.sum().clamp(min=1.0)
+                video_term = loss_video
+            else:
+                loss_video = loss_video_per_sample.new_zeros(())
+                video_term = loss_video
+        elif video_bc_on_zero_action and primary_lock_w is not None:
+            fail_w = (1.0 - primary_lock_w.to(dtype=loss_video_per_sample.dtype)).clamp(min=0)
+            if float(fail_w.sum().item()) > 0:
+                loss_video = (
+                    loss_video_per_sample * video_weight * fail_w
+                ).sum() / fail_w.sum().clamp(min=1.0)
+                video_term = loss_video
+            else:
+                loss_video = loss_video_per_sample.new_zeros(())
+                video_term = loss_video
+
+        loss_total = video_term + self.loss_lambda_action * loss_action
         if loss_state is not None:
             loss_total = loss_total + self.loss_lambda_state * loss_state
+
+        identity_lambda = float(getattr(self, "video_identity_lock_lambda", 0.0) or 0.0)
+        identity_mse = None
+        if identity_lambda > 0.0 and bool(getattr(self, "uncond_adapter_injected", False)):
+            from fastwam.models.wan22.uncond_adapter import uncond_adapter_residual_mse
+
+            identity_mse = uncond_adapter_residual_mse(
+                self, expert="video", sample_weight=primary_lock_w
+            )
+            if identity_mse is not None and bool(
+                torch.isfinite(identity_mse.detach()).all().item()
+            ):
+                loss_total = loss_total + identity_lambda * identity_mse
+
+        action_lock_lambda = float(getattr(self, "action_residual_lock_lambda", 0.0) or 0.0)
+        action_lock_mse = None
+        action_lock_w = primary_lock_w
+        adapter_recipe = str(
+            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v5"
+        )
+        if adapter_recipe in {"v8", "v9"}:
+            # Idle the residual on D0 only (action BC and video BC both on).
+            action_w = sample.get("action_loss_weight", None)
+            if action_w is not None and video_w is not None:
+                action_lock_w = (
+                    action_w.to(device=video_w.device, dtype=video_w.dtype).view(-1)
+                    * video_w
+                ).clamp(min=0)
+        elif video_w is not None and primary_lock_w is not None:
+            action_lock_w = (primary_lock_w * (1.0 - video_w.detach())).clamp(min=0)
+        outcome_for_lock = sample.get("outcome_flag", None)
+        if outcome_for_lock is not None:
+            fail_row = (
+                outcome_for_lock.to(device=loss_total.device, dtype=torch.float32)
+                .view(-1)
+                == 1
+            ).to(dtype=loss_total.dtype)
+            if action_lock_w is None:
+                action_lock_w = (1.0 - fail_row).clamp(min=0)
+            else:
+                action_lock_w = (
+                    action_lock_w.to(device=fail_row.device, dtype=fail_row.dtype)
+                    * (1.0 - fail_row)
+                ).clamp(min=0)
+        if action_lock_lambda > 0.0 and bool(getattr(self, "uncond_adapter_injected", False)):
+            from fastwam.models.wan22.uncond_adapter import uncond_adapter_residual_mse
+
+            action_lock_mse = uncond_adapter_residual_mse(
+                self, expert="action", sample_weight=action_lock_w
+            )
+            if action_lock_mse is not None and bool(
+                torch.isfinite(action_lock_mse.detach()).all().item()
+            ):
+                loss_total = loss_total + action_lock_lambda * action_lock_mse
+
+        value_loss = None
+        cliff_loss = None
+        head = getattr(self, "value_head", None)
+        value_target = sample.get("value_target", None)
+        lambda_value = float(getattr(self, "value_head_lambda", 1.0) or 0.0)
+        lambda_cliff = float(getattr(self, "value_cliff_lambda", 0.0) or 0.0)
+        if (
+            head is not None
+            and value_target is not None
+            and (lambda_value > 0.0 or lambda_cliff > 0.0)
+        ):
+            from fastwam.models.wan22.value_head import (
+                VALUE_ENCODER_DIT,
+                VALUE_LOSS_HUBER,
+                recoverability_cliff_loss,
+            )
+
+            # Keep the critic off the (noisy) DiT graph and out of bf16
+            # autocast. A NaN in this branch previously poisoned ZeRO buckets.
+            device_type = input_latents.device.type
+            amp_off = (
+                torch.autocast(device_type=device_type, enabled=False)
+                if device_type in {"cuda", "cpu"}
+                else torch.autocast(device_type="cpu", enabled=False)
+            )
+            encoder = str(
+                getattr(self, "value_head_encoder", "vae_latents") or "vae_latents"
+            )
+            loss_kind = str(getattr(self, "value_head_loss", "bce") or "bce")
+            with amp_off:
+                if encoder == VALUE_ENCODER_DIT:
+                    frame = inputs.get("first_frame_latents")
+                    if frame is None:
+                        frame = input_latents[:, :, 0:1]
+                    with torch.no_grad():
+                        tokens = self._encode_value_video_tokens(
+                            frame.detach(),
+                            context,
+                            context_mask,
+                            bool(inputs.get("fuse_vae_embedding_in_latents", False)),
+                        )
+                    value_logits = head.logits(tokens.detach())
+                else:
+                    value_logits = head.logits(input_latents.detach().clone())
+                pred_value = torch.sigmoid(value_logits)
+                target_value = value_target.to(
+                    device=pred_value.device, dtype=torch.float32, non_blocking=True
+                ).view(-1)
+                if pred_value.shape[0] != target_value.shape[0]:
+                    raise ValueError(
+                        "`value_target` batch mismatch: "
+                        f"pred={tuple(pred_value.shape)} target={tuple(target_value.shape)}"
+                    )
+                if loss_kind == VALUE_LOSS_HUBER:
+                    value_loss = F.smooth_l1_loss(pred_value, target_value)
+                else:
+                    value_loss = F.binary_cross_entropy_with_logits(
+                        value_logits, target_value
+                    )
+                value_loss = torch.nan_to_num(
+                    value_loss,
+                    nan=0.0,
+                    posinf=16.0,
+                    neginf=16.0,
+                )
+                # Keep the critic on every rank's graph even if a term is skipped.
+                graph_lock = value_logits.sum() * 0.0
+            loss_total = loss_total + graph_lock.to(dtype=loss_total.dtype)
+            if lambda_value > 0.0:
+                loss_total = loss_total + lambda_value * value_loss.to(
+                    dtype=loss_total.dtype
+                )
+            if lambda_cliff > 0.0:
+                pair_ids = sample.get("pair_id", None)
+                if pair_ids is None:
+                    cliff_loss = pred_value.sum() * 0.0
+                else:
+                    cliff_loss = recoverability_cliff_loss(
+                        pred_value.float(),
+                        target_value.float(),
+                        pair_ids,
+                        margin=float(getattr(self, "value_cliff_margin", 0.2) or 0.2),
+                    )
+                cliff_loss = torch.nan_to_num(
+                    cliff_loss, nan=0.0, posinf=1.0, neginf=0.0
+                )
+                loss_total = loss_total + lambda_cliff * cliff_loss.to(
+                    dtype=loss_total.dtype
+                )
+
         loss_dict = {
-            "loss_video": self.loss_lambda_video * float(loss_video.detach().item()),
+            "loss_video": float(video_term.detach().item()),
             "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
         }
         if action_loss_enabled_frac is not None:
             loss_dict["action_loss_enabled_frac"] = float(action_loss_enabled_frac.item())
+        if video_w is not None:
+            loss_dict["video_bc_enabled_frac"] = float(video_w.mean().item())
         outcome_flag = sample.get("outcome_flag", None)
         if outcome_flag is not None:
             loss_dict["outcome_failure_frac"] = float(
@@ -1109,6 +1379,41 @@ class FastWAM(torch.nn.Module):
             )
         if loss_state is not None:
             loss_dict["loss_state"] = self.loss_lambda_state * float(loss_state.detach().item())
+        if identity_mse is not None:
+            loss_dict["loss_video_identity"] = identity_lambda * float(
+                identity_mse.detach().item()
+            )
+        if action_lock_mse is not None:
+            loss_dict["loss_action_residual_lock"] = action_lock_lambda * float(
+                action_lock_mse.detach().item()
+            )
+        if value_loss is not None:
+            loss_dict["loss_value"] = float(
+                (getattr(self, "value_head_lambda", 1.0) or 0.0) * value_loss.detach().item()
+            )
+            loss_dict["value_pred_mean"] = float(pred_value.detach().mean().item())
+            loss_dict["value_target_mean"] = float(target_value.detach().mean().item())
+        if cliff_loss is not None:
+            loss_dict["loss_value_cliff"] = float(
+                (getattr(self, "value_cliff_lambda", 0.0) or 0.0) * cliff_loss.detach().item()
+            )
+        if primary_lock_w is not None:
+            loss_dict["primary_frac"] = float(primary_lock_w.mean().item())
+        loss_dict["finite_video_pred"] = float(torch.isfinite(pred_video).all().item())
+        loss_dict["finite_action_pred"] = float(torch.isfinite(pred_action).all().item())
+        loss_dict["finite_total"] = float(torch.isfinite(loss_total).all().item())
+        if torch.is_tensor(pred_video) and pred_video.numel():
+            loss_dict["pred_video_absmax"] = float(
+                pred_video.detach().float().abs().max().item()
+            )
+        if torch.is_tensor(pred_action) and pred_action.numel():
+            loss_dict["pred_action_absmax"] = float(
+                pred_action.detach().float().abs().max().item()
+            )
+        if channels is not None:
+            loss_dict["cfg_base_frac"] = float(
+                sum(1.0 if str(ch) == "base" else 0.0 for ch in channels) / max(len(channels), 1)
+            )
         return loss_total, loss_dict
 
     @torch.no_grad()
@@ -1193,6 +1498,58 @@ class FastWAM(torch.nn.Module):
         pred_video = self.video_expert.post_dit(tokens_out["video"], video_pre)
         pred_action = self.action_expert.post_dit(tokens_out["action"], action_pre)
         return pred_video, pred_action
+
+    def _encode_value_video_tokens(
+        self,
+        first_frame_latents: torch.Tensor,
+        context: torch.Tensor,
+        context_mask: torch.Tensor,
+        fuse_flag: bool,
+    ) -> torch.Tensor:
+        """Frozen-S0 current-obs VideoDiT tokens for the v9 value head.
+
+        Adapter is forced off. Text is whatever the caller passed (S0 base
+        when ``pin_video_context_to_base`` is on). Tokens are detached from
+        the action-denoising graph.
+        """
+
+        from fastwam.models.wan22.uncond_adapter import uncond_adapter_enabled
+
+        frame = first_frame_latents
+        if frame.ndim == 4:
+            frame = frame.unsqueeze(2)
+        timestep_video = torch.zeros(
+            (frame.shape[0],),
+            dtype=frame.dtype,
+            device=frame.device,
+        )
+        with uncond_adapter_enabled(self, False):
+            video_pre = self.video_expert.pre_dit(
+                x=frame,
+                timestep=timestep_video,
+                context=context,
+                context_mask=context_mask,
+                action=None,
+                fuse_vae_embedding_in_latents=fuse_flag,
+            )
+            video_seq_len = int(video_pre["tokens"].shape[1])
+            video_mask = self.video_expert.build_video_to_video_mask(
+                video_seq_len=video_seq_len,
+                video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
+                device=video_pre["tokens"].device,
+            )
+            _kv, tokens = self.mot.prefill_video_cache(
+                video_tokens=video_pre["tokens"],
+                video_freqs=video_pre["freqs"],
+                video_t_mod=video_pre["t_mod"],
+                video_context_payload={
+                    "context": video_pre["context"],
+                    "mask": video_pre["context_mask"],
+                },
+                video_attention_mask=video_mask,
+                return_tokens=True,
+            )
+        return tokens
 
     @torch.no_grad()
     def _predict_action_noise(
@@ -1506,18 +1863,60 @@ class FastWAM(torch.nn.Module):
         negative_prompt: Optional[str] = None,
         negative_context: Optional[torch.Tensor] = None,
         negative_context_mask: Optional[torch.Tensor] = None,
+        failure_prompt: Optional[str] = None,
+        failure_context: Optional[torch.Tensor] = None,
+        failure_context_mask: Optional[torch.Tensor] = None,
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        return_cfg_residual: bool = False,
+        cfg_exec_horizon: int = 24,
+        adaptive_cfg_tau: Optional[float] = None,
+        cfg_epsilon_l: Optional[float] = None,
+        cfg_residual_clip_mode: str = "rms",
+        cfg_gate_mode: Optional[str] = None,
+        cfg_value_prev: Optional[float] = None,
+        cfg_gate_fired: bool = False,
+        cfg_v_high: Optional[float] = None,
+        cfg_drop_delta: Optional[float] = None,
+        cfg_replan_index: Optional[int] = None,
+        cfg_growth_tau: Optional[float] = None,
+        cfg_growth_start_replan: Optional[int] = None,
     ) -> dict[str, Any]:
         self.eval()
         text_cfg_scale = float(text_cfg_scale)
         if not math.isfinite(text_cfg_scale):
             raise ValueError(f"`text_cfg_scale` must be finite, got {text_cfg_scale}.")
+        # text_cfg_scale=1 is the 本体 bypass (no mix). Mix w=1 is recipe-dependent:
+        # v5/v6 → ε_posi; v7 → ε_base+(ε_posi-ε_fail). Neither is this bypass.
         use_text_cfg = text_cfg_scale != 1.0
+        adaptive_tau = None if adaptive_cfg_tau is None else float(adaptive_cfg_tau)
+        if adaptive_tau is not None:
+            if not math.isfinite(adaptive_tau) or adaptive_tau < 0.0:
+                raise ValueError(
+                    f"`adaptive_cfg_tau` must be finite and >= 0, got {adaptive_cfg_tau}."
+                )
+            if not use_text_cfg:
+                raise ValueError(
+                    "adaptive CFG requires a guided mix (`text_cfg_scale != 1`). "
+                    "text_cfg_scale=1 is the 本体 bypass; low-E fallback is mix weight 0."
+                )
+        epsilon_l = None if cfg_epsilon_l is None else float(cfg_epsilon_l)
+        if epsilon_l is not None:
+            if not math.isfinite(epsilon_l) or epsilon_l < 0.0:
+                raise ValueError(
+                    f"`cfg_epsilon_l` must be finite and >= 0, got {cfg_epsilon_l}."
+                )
+            # Validate the mode once, before model execution.  The helper
+            # repeats no global state and is also used directly in tests.
+            from fastwam.models.wan22.uncond_adapter import normalize_cfg_residual_clip_mode
+
+            residual_clip_mode = normalize_cfg_residual_clip_mode(cfg_residual_clip_mode)
+        else:
+            residual_clip_mode = str(cfg_residual_clip_mode)
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
             raise ValueError(
                 "`infer_action` requires `video_attention_mask_mode='first_frame_causal'`."
@@ -1558,6 +1957,16 @@ class FastWAM(torch.nn.Module):
         input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
         fuse_flag = bool(getattr(self.video_expert, "fuse_vae_embedding_in_latents", False))
+        cfg_value = None
+        cfg_gate_g = None
+        cfg_value_rel = None
+        value_head = getattr(self, "value_head", None)
+        value_encoder = str(
+            getattr(self, "value_head_encoder", "vae_latents") or "vae_latents"
+        )
+        if value_head is not None and value_encoder != "video_dit":
+            cfg_value = float(value_head(first_frame_latents).reshape(-1)[0].item())
+        gate_mode = str(cfg_gate_mode or "").strip().lower()
 
         use_prompt = prompt is not None
         use_context = context is not None or context_mask is not None
@@ -1576,6 +1985,17 @@ class FastWAM(torch.nn.Module):
         ):
             raise ValueError(
                 "`negative_context` and `negative_context_mask` must be both provided together."
+            )
+        use_failure_context = failure_context is not None or failure_context_mask is not None
+        if use_failure_context and failure_prompt is not None:
+            raise ValueError(
+                "`failure_prompt` and `failure_context/failure_context_mask` are mutually exclusive."
+            )
+        if use_failure_context and (
+            failure_context is None or failure_context_mask is None
+        ):
+            raise ValueError(
+                "`failure_context` and `failure_context_mask` must be both provided together."
             )
         if use_text_cfg:
             if use_prompt and negative_prompt is None:
@@ -1615,8 +2035,10 @@ class FastWAM(torch.nn.Module):
 
         if use_prompt:
             context, context_mask = self.encode_prompt(prompt)
-            if use_text_cfg:
+            if negative_prompt:
                 negative_context, negative_context_mask = self.encode_prompt(negative_prompt)
+            if failure_prompt:
+                failure_context, failure_context_mask = self.encode_prompt(failure_prompt)
         else:
             if context is None or context_mask is None:
                 raise ValueError("`context` and `context_mask` must be both provided together.")
@@ -1625,21 +2047,35 @@ class FastWAM(torch.nn.Module):
                 context_mask,
                 label="context",
             )
-            if use_text_cfg:
+            if use_negative_context:
                 negative_context, negative_context_mask = prepare_cached_context(
                     negative_context,
                     negative_context_mask,
                     label="negative_context",
                 )
+            if use_failure_context:
+                failure_context, failure_context_mask = prepare_cached_context(
+                    failure_context,
+                    failure_context_mask,
+                    label="failure_context",
+                )
+        have_negative = negative_context is not None and negative_context_mask is not None
+        have_failure = failure_context is not None and failure_context_mask is not None
         context, context_mask = self._append_outcome_to_context(
             context=context,
             context_mask=context_mask,
             outcome_flag=outcome_flag,
         )
-        if use_text_cfg:
+        if have_negative:
             negative_context, negative_context_mask = self._append_outcome_to_context(
                 context=negative_context,
                 context_mask=negative_context_mask,
+                outcome_flag=outcome_flag,
+            )
+        if have_failure:
+            failure_context, failure_context_mask = self._append_outcome_to_context(
+                context=failure_context,
+                context_mask=failure_context_mask,
                 outcome_flag=outcome_flag,
             )
         if proprio_context is not None:
@@ -1648,26 +2084,109 @@ class FastWAM(torch.nn.Module):
                 context_mask=context_mask,
                 proprio=proprio_context,
             )
-            if use_text_cfg:
+            if have_negative:
                 negative_context, negative_context_mask = self._append_proprio_to_context(
                     context=negative_context,
                     context_mask=negative_context_mask,
                     proprio=proprio_context,
                 )
+            if have_failure:
+                failure_context, failure_context_mask = self._append_proprio_to_context(
+                    context=failure_context,
+                    context_mask=failure_context_mask,
+                    proprio=proprio_context,
+                )
+
+        from fastwam.models.wan22.uncond_adapter import (
+            adaptive_cfg_mix_weight,
+            bound_cfg_residual,
+            cfg_mix_subtract_branch,
+            CFG_MIX_SUBTRACT_FAIL,
+            mix_guided_action_epsilon,
+            uncond_adapter_enabled,
+            v5_infer_remap_to_base_context,
+            v5_infer_use_adapter,
+            v5_infer_video_uses_base_context,
+        )
+
+        adapter_injected = bool(getattr(self, "uncond_adapter_injected", False))
+        adapter_recipe = str(
+            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v5"
+        )
+        mix_subtract = cfg_mix_subtract_branch(adapter_recipe)
+        if mix_subtract == CFG_MIX_SUBTRACT_FAIL and use_text_cfg and not have_failure:
+            raise ValueError(
+                "DEWO v7 CFG mix requires `failure_prompt` or "
+                "`failure_context`/`failure_context_mask`. "
+                "Do not fall back to subtracting ε_base."
+            )
+        # S0 本体 = adapter off + base text. CFG posi = adapter on + success.
+        # text_cfg_scale=1 skips the mix and remaps onto cfg_base_prompt (本体).
+        # v5/v6 mix w=1 would be ε_posi; v7 mix w=1 is ε_base+(ε_posi-ε_fail).
+        if v5_infer_remap_to_base_context(
+            adapter_injected=adapter_injected,
+            use_text_cfg=use_text_cfg,
+            has_negative_context=have_negative,
+        ):
+            context = negative_context
+            context_mask = negative_context_mask
+        posi_use_adapter = adapter_injected and v5_infer_use_adapter(
+            branch="posi",
+            use_text_cfg=use_text_cfg,
+        )
+        base_use_adapter = adapter_injected and v5_infer_use_adapter(
+            branch="base",
+            use_text_cfg=use_text_cfg,
+        )
+        pin_video_to_base = v5_infer_video_uses_base_context(
+            adapter_injected=adapter_injected,
+            pin_video_context_to_base=bool(
+                getattr(self, "pin_video_context_to_base", False)
+            ),
+            has_negative_context=have_negative,
+        )
+        if (
+            adapter_injected
+            and bool(getattr(self, "pin_video_context_to_base", False))
+            and not have_negative
+            and use_text_cfg
+        ):
+            logger.warning(
+                "pin_video_context_to_base is set but cfg_base_prompt / "
+                "negative_context is missing; video prefill will follow the "
+                "action prompt and may leave the S0 observation encoding."
+            )
+        video_posi_context, video_posi_mask = context, context_mask
+        video_base_context, video_base_mask = negative_context, negative_context_mask
+        if pin_video_to_base:
+            video_posi_context, video_posi_mask = negative_context, negative_context_mask
+
+        if value_head is not None and value_encoder == "video_dit":
+            video_ctx, video_msk = video_posi_context, video_posi_mask
+            if video_ctx is None:
+                video_ctx, video_msk = context, context_mask
+            value_tokens = self._encode_value_video_tokens(
+                first_frame_latents,
+                video_ctx,
+                video_msk,
+                fuse_flag,
+            )
+            cfg_value = float(value_head(value_tokens).reshape(-1)[0].item())
 
         timestep_video = torch.zeros(
             (first_frame_latents.shape[0],),
             dtype=first_frame_latents.dtype,
             device=self.device,
         )
-        video_pre = self.video_expert.pre_dit(
-            x=first_frame_latents,
-            timestep=timestep_video,
-            context=context,
-            context_mask=context_mask,
-            action=None,
-            fuse_vae_embedding_in_latents=fuse_flag,
-        )
+        with uncond_adapter_enabled(self, posi_use_adapter):
+            video_pre = self.video_expert.pre_dit(
+                x=first_frame_latents,
+                timestep=timestep_video,
+                context=video_posi_context,
+                context_mask=video_posi_mask,
+                action=None,
+                fuse_vae_embedding_in_latents=fuse_flag,
+            )
         video_seq_len = int(video_pre["tokens"].shape[1])
         if state_cond is None:
             attention_mask = self._build_mot_attention_mask(
@@ -1688,28 +2207,29 @@ class FastWAM(torch.nn.Module):
             )
             negative_video_kv_cache = None
             if use_text_cfg:
-                negative_video_pre = self.video_expert.pre_dit(
-                    x=first_frame_latents,
-                    timestep=timestep_video,
-                    context=negative_context,
-                    context_mask=negative_context_mask,
-                    action=None,
-                    fuse_vae_embedding_in_latents=fuse_flag,
-                )
-                if int(negative_video_pre["tokens"].shape[1]) != video_seq_len:
-                    raise ValueError(
-                        "Positive and base CFG branches produced different video sequence lengths."
+                with uncond_adapter_enabled(self, base_use_adapter):
+                    negative_video_pre = self.video_expert.pre_dit(
+                        x=first_frame_latents,
+                        timestep=timestep_video,
+                        context=video_base_context,
+                        context_mask=video_base_mask,
+                        action=None,
+                        fuse_vae_embedding_in_latents=fuse_flag,
                     )
-                negative_video_kv_cache = self.mot.prefill_video_cache(
-                    video_tokens=negative_video_pre["tokens"],
-                    video_freqs=negative_video_pre["freqs"],
-                    video_t_mod=negative_video_pre["t_mod"],
-                    video_context_payload={
-                        "context": negative_video_pre["context"],
-                        "mask": negative_video_pre["context_mask"],
-                    },
-                    video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
-                )
+                    if int(negative_video_pre["tokens"].shape[1]) != video_seq_len:
+                        raise ValueError(
+                            "Positive and base CFG branches produced different video sequence lengths."
+                        )
+                    negative_video_kv_cache = self.mot.prefill_video_cache(
+                        video_tokens=negative_video_pre["tokens"],
+                        video_freqs=negative_video_pre["freqs"],
+                        video_t_mod=negative_video_pre["t_mod"],
+                        video_context_payload={
+                            "context": negative_video_pre["context"],
+                            "mask": negative_video_pre["context_mask"],
+                        },
+                        video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
+                    )
         else:
             attention_mask = None
             video_kv_cache = None
@@ -1721,61 +2241,229 @@ class FastWAM(torch.nn.Module):
             dtype=latents_action.dtype,
             shift_override=sigma_shift,
         )
+        cfg_token_rms_steps: list[torch.Tensor] = []
+        exec_horizon = max(1, min(int(cfg_exec_horizon), int(latents_action.shape[1])))
+        frozen_mix_weight: Optional[float] = None
+        gate_exec_rms: Optional[float] = None
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action):
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            if state_cond is None:
-                pred_action_posi = self._predict_action_noise_with_cache(
-                    latents_action=latents_action,
-                    timestep_action=timestep_action,
-                    context=context,
-                    context_mask=context_mask,
-                    video_kv_cache=video_kv_cache,
-                    attention_mask=attention_mask,
-                    video_seq_len=video_seq_len,
-                )
-            else:
-                pred_action_posi = self._predict_action_noise(
-                    first_frame_latents=first_frame_latents,
-                    latents_action=latents_action,
-                    timestep_action=timestep_action,
-                    context=context,
-                    context_mask=context_mask,
-                    fuse_vae_embedding_in_latents=fuse_flag,
-                    state=state_cond,
-                )
-            if use_text_cfg:
+            with uncond_adapter_enabled(self, posi_use_adapter):
                 if state_cond is None:
-                    pred_action_base = self._predict_action_noise_with_cache(
+                    pred_action_posi = self._predict_action_noise_with_cache(
                         latents_action=latents_action,
                         timestep_action=timestep_action,
-                        context=negative_context,
-                        context_mask=negative_context_mask,
-                        video_kv_cache=negative_video_kv_cache,
+                        context=context,
+                        context_mask=context_mask,
+                        video_kv_cache=video_kv_cache,
                         attention_mask=attention_mask,
                         video_seq_len=video_seq_len,
                     )
                 else:
-                    pred_action_base = self._predict_action_noise(
+                    pred_action_posi = self._predict_action_noise(
                         first_frame_latents=first_frame_latents,
                         latents_action=latents_action,
                         timestep_action=timestep_action,
-                        context=negative_context,
-                        context_mask=negative_context_mask,
+                        context=context,
+                        context_mask=context_mask,
                         fuse_vae_embedding_in_latents=fuse_flag,
                         state=state_cond,
                     )
-                pred_action = pred_action_base + text_cfg_scale * (
-                    pred_action_posi - pred_action_base
+            if use_text_cfg:
+                with uncond_adapter_enabled(self, base_use_adapter):
+                    if state_cond is None:
+                        pred_action_base = self._predict_action_noise_with_cache(
+                            latents_action=latents_action,
+                            timestep_action=timestep_action,
+                            context=negative_context,
+                            context_mask=negative_context_mask,
+                            video_kv_cache=negative_video_kv_cache,
+                            attention_mask=attention_mask,
+                            video_seq_len=video_seq_len,
+                        )
+                    else:
+                        pred_action_base = self._predict_action_noise(
+                            first_frame_latents=first_frame_latents,
+                            latents_action=latents_action,
+                            timestep_action=timestep_action,
+                            context=negative_context,
+                            context_mask=negative_context_mask,
+                            fuse_vae_embedding_in_latents=fuse_flag,
+                            state=state_cond,
+                        )
+                pred_action_fail = None
+                if mix_subtract == CFG_MIX_SUBTRACT_FAIL:
+                    # Same adapter-on video cache as ε_+; only the action text changes.
+                    with uncond_adapter_enabled(self, posi_use_adapter):
+                        if state_cond is None:
+                            pred_action_fail = self._predict_action_noise_with_cache(
+                                latents_action=latents_action,
+                                timestep_action=timestep_action,
+                                context=failure_context,
+                                context_mask=failure_context_mask,
+                                video_kv_cache=video_kv_cache,
+                                attention_mask=attention_mask,
+                                video_seq_len=video_seq_len,
+                            )
+                        else:
+                            pred_action_fail = self._predict_action_noise(
+                                first_frame_latents=first_frame_latents,
+                                latents_action=latents_action,
+                                timestep_action=timestep_action,
+                                context=failure_context,
+                                context_mask=failure_context_mask,
+                                fuse_vae_embedding_in_latents=fuse_flag,
+                                state=state_cond,
+                            )
+                _, raw_delta = mix_guided_action_epsilon(
+                    pred_action_base,
+                    pred_action_posi,
+                    mix_weight=1.0,
+                    subtract=mix_subtract,
+                    epsilon_fail=pred_action_fail,
                 )
+                # ``epsilon_l`` is a trust-region bound on the learned CFG
+                # correction.  It acts before the scalar guidance weight, so
+                # increasing ``text_cfg_scale`` cannot undo the bound.
+                delta = bound_cfg_residual(
+                    raw_delta,
+                    epsilon_l,
+                    mode=residual_clip_mode,
+                )
+                # Origin is always ε_base. v7 mix w=1 is ε_base+(ε_posi-ε_fail),
+                # not ε_posi. text_cfg_scale=1 never reaches this branch.
+                mix_weight = text_cfg_scale
+                if gate_mode == "value":
+                    from fastwam.models.wan22.value_head import (
+                        DEFAULT_VALUE_DROP_DELTA,
+                        drop_edge_gate,
+                    )
+
+                    if cfg_value is None:
+                        raise ValueError(
+                            "`cfg_gate_mode=value` requires a trained value_head."
+                        )
+                    if frozen_mix_weight is None:
+                        resolved_v_high = (
+                            cfg_v_high
+                            if cfg_v_high is not None
+                            else getattr(self, "value_v_high", None)
+                        )
+                        cfg_gate_g = drop_edge_gate(
+                            None if cfg_value_prev is None else float(cfg_value_prev),
+                            float(cfg_value),
+                            v_high=resolved_v_high,
+                            delta=float(
+                                getattr(self, "value_drop_delta", DEFAULT_VALUE_DROP_DELTA)
+                                if cfg_drop_delta is None
+                                else cfg_drop_delta
+                            ),
+                            fired=bool(cfg_gate_fired),
+                        )
+                        frozen_mix_weight = float(cfg_gate_g) * float(text_cfg_scale)
+                    mix_weight = frozen_mix_weight
+                elif gate_mode in {"value_growth", "growth"}:
+                    from fastwam.models.wan22.value_head import (
+                        DEFAULT_VALUE_GROWTH_START_REPLAN,
+                        DEFAULT_VALUE_GROWTH_TAU,
+                        relative_growth,
+                        relative_growth_gate,
+                    )
+
+                    if cfg_value is None:
+                        raise ValueError(
+                            "`cfg_gate_mode=value_growth` requires a trained value_head."
+                        )
+                    if frozen_mix_weight is None:
+                        v_prev = (
+                            None
+                            if cfg_value_prev is None
+                            else float(cfg_value_prev)
+                        )
+                        tau = (
+                            DEFAULT_VALUE_GROWTH_TAU
+                            if cfg_growth_tau is None
+                            else float(cfg_growth_tau)
+                        )
+                        start_replan = (
+                            DEFAULT_VALUE_GROWTH_START_REPLAN
+                            if cfg_growth_start_replan is None
+                            else int(cfg_growth_start_replan)
+                        )
+                        replan_index = (
+                            0 if cfg_replan_index is None else int(cfg_replan_index)
+                        )
+                        cfg_value_rel = relative_growth(v_prev, float(cfg_value))
+                        cfg_gate_g = relative_growth_gate(
+                            v_prev,
+                            float(cfg_value),
+                            tau=tau,
+                            replan_index=replan_index,
+                            start_replan=start_replan,
+                        )
+                        frozen_mix_weight = float(cfg_gate_g) * float(text_cfg_scale)
+                    mix_weight = frozen_mix_weight
+                elif adaptive_tau is not None:
+                    token_e = action_cfg_residual_energy(delta)
+                    step_exec_rms = float(token_e[0, :exec_horizon].mean().item())
+                    if frozen_mix_weight is None:
+                        frozen_mix_weight = adaptive_cfg_mix_weight(
+                            exec_rms=step_exec_rms,
+                            tau=adaptive_tau,
+                            guided_scale=text_cfg_scale,
+                        )
+                        gate_exec_rms = step_exec_rms
+                    mix_weight = frozen_mix_weight
+                pred_action = pred_action_base + mix_weight * delta
+                if return_cfg_residual:
+                    cfg_token_rms_steps.append(action_cfg_residual_energy(delta)[0].detach())
             else:
                 pred_action = pred_action_posi
+                if return_cfg_residual:
+                    cfg_token_rms_steps.append(
+                        torch.zeros(
+                            latents_action.shape[1],
+                            device=latents_action.device,
+                            dtype=torch.float32,
+                        )
+                    )
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 
         result = {
             "action": latents_action[0].detach().to(device="cpu", dtype=torch.float32),
         }
+        if return_cfg_residual:
+            if not cfg_token_rms_steps:
+                horizon = int(latents_action.shape[1])
+                stacked = torch.zeros((1, horizon), dtype=torch.float32)
+            else:
+                stacked = torch.stack(cfg_token_rms_steps, dim=0).to(
+                    device="cpu", dtype=torch.float32
+                )
+            result["cfg_token_rms_nfe"] = stacked
+            result["cfg_chunk_rms_nfe"] = stacked.mean(dim=-1)
+            result["cfg_token_rms"] = stacked.mean(dim=0)
+            result["cfg_chunk_rms"] = stacked.mean()
+            result["cfg_exec_rms"] = stacked[:, :exec_horizon].mean()
+        if adaptive_tau is not None:
+            result["cfg_mix_weight"] = (
+                0.0 if frozen_mix_weight is None else float(frozen_mix_weight)
+            )
+            if gate_exec_rms is not None:
+                result["cfg_gate_exec_rms"] = float(gate_exec_rms)
+        if cfg_value is not None:
+            result["cfg_value"] = float(cfg_value)
+        if cfg_value_rel is not None:
+            result["cfg_value_rel"] = float(cfg_value_rel)
+        if cfg_gate_g is not None:
+            result["cfg_gate_g"] = float(cfg_gate_g)
+            result["cfg_mix_weight"] = (
+                0.0 if frozen_mix_weight is None else float(frozen_mix_weight)
+            )
+        if epsilon_l is not None:
+            result["cfg_epsilon_l"] = float(epsilon_l)
+            result["cfg_residual_clip_mode"] = residual_clip_mode
         return result
 
     @torch.no_grad()
@@ -1871,6 +2559,14 @@ class FastWAM(torch.nn.Module):
         experts: Optional[Sequence[str]] = None,
     ):
         payload = torch.load(path, map_location="cpu")
+        from fastwam.models.wan22.uncond_adapter import is_uncond_adapter_checkpoint
+
+        if is_uncond_adapter_checkpoint(payload):
+            raise ValueError(
+                f"{path} is a DEWO v5 uncond-adapter file, not a backbone MoT. "
+                "Load the frozen 本体 checkpoint first, then "
+                "load_uncond_adapter_state_dict()."
+            )
         if "mot" in payload:
             mot_state = self._select_mot_state_dict(payload["mot"], experts=experts)
             filtered, skipped_shape = self._filter_state_dict_by_shape(self.mot, mot_state)

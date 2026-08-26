@@ -1,0 +1,10 @@
+---
+description: Launch GPU train/eval only via host tmux; never Cursor Shell nohup
+alwaysApply: true
+---
+
+# GPU job launch (anti-failure)
+
+Cursor Shell sandbox often breaks NVIDIA → CPU fallback. **Before any smoke/eval/train GPU launch, follow** `.cursor/skills/fastwam-gpu-launch/SKILL.md` (open the skill file if needed, then run its Shell/host-tmux steps).
+
+Quick path (under that skill): `scripts/host_tmux_run.sh` then `scripts/verify_eval_cuda.sh`. Resolve `CKPT`/`STATS` first with **Shell** per `.cursor/skills/fastwam-weight-resolve/SKILL.md` (not Glob — weights are gitignored). Rules never remove Shell. Never `nohup`/`setsid` GPU jobs from Cursor Shell; never claim “running” without cuda + mem checks.

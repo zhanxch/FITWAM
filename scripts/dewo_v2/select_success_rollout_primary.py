@@ -15,6 +15,7 @@ import argparse
 import json
 import random
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,51 @@ def select_primary(
     return primary, leftover, failures
 
 
+def select_one_per_all_success_seed(
+    *,
+    outcomes: list[dict[str, Any]],
+    lengths: dict[int, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """D0 = one complete success episode per 4/4 all-success seed.
+
+    Deterministic pick: min ``attempt_index``, then min ``episode_index``.
+    Other successes from those seeds, and mixed-seed successes, go to leftover.
+    """
+
+    by_seed: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in outcomes:
+        ep = int(row["episode_index"])
+        item = {**row, "length": int(lengths[ep])}
+        by_seed[int(row["seed"])].append(item)
+
+    primary: list[dict[str, Any]] = []
+    leftover: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for seed in sorted(by_seed):
+        rows = by_seed[seed]
+        complete = [r for r in rows if is_complete_success(r, int(r["length"]))]
+        rest = [r for r in rows if not is_complete_success(r, int(r["length"]))]
+        failures.extend(rest)
+        if complete and len(complete) == len(rows):
+            ordered = sorted(
+                complete,
+                key=lambda r: (
+                    int(r.get("attempt_index", r.get("repeat", 10**9))),
+                    int(r["episode_index"]),
+                ),
+            )
+            primary.append(ordered[0])
+            leftover.extend(ordered[1:])
+        else:
+            leftover.extend(complete)
+    primary.sort(key=lambda r: int(r["episode_index"]))
+    leftover.sort(key=lambda r: int(r["episode_index"]))
+    failures.sort(key=lambda r: int(r["episode_index"]))
+    if not primary:
+        raise SystemExit("No 4/4 all-success seeds found for DEWO v8 D0.")
+    return primary, leftover, failures
+
+
 def build_split_rows(
     *,
     dataset_id: str,
@@ -76,6 +122,7 @@ def build_split_rows(
     leftover: list[dict[str, Any]],
     failures: list[dict[str, Any]],
     seed: int,
+    split_method: str = "success_rollout_primary_v1",
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for split, group in (
@@ -93,7 +140,7 @@ def build_split_rows(
                     "episode_outcome": "success" if split != "test" else "failure",
                     "outcome_source": "structured_outcome_ledger",
                     "split": split,
-                    "split_method": "success_rollout_primary_v1",
+                    "split_method": str(split_method),
                     "split_seed": int(seed),
                     "length": int(row["length"]),
                 }
@@ -107,6 +154,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dataset", type=Path, required=True, help="LeRobot rollout_raw root")
     p.add_argument("--dataset-id", required=True)
     p.add_argument("--n", type=int, default=15)
+    p.add_argument(
+        "--mode",
+        choices=("random_n", "one_per_all_success_seed"),
+        default="random_n",
+        help=(
+            "random_n: sample --n complete successes (v2/v7). "
+            "one_per_all_success_seed: locked v8 D0 (one episode per 4/4 seed)."
+        ),
+    )
     p.add_argument("--seed", type=int, default=20260820)
     p.add_argument("--output-json", type=Path, required=True)
     p.add_argument("--output-splits", type=Path, required=True)
@@ -125,15 +181,23 @@ def main(argv: list[str] | None = None) -> int:
     if set(lengths) != {int(r["episode_index"]) for r in outcomes}:
         raise SystemExit("episode_outcomes.jsonl and episodes.jsonl index sets differ")
 
-    primary, leftover, failures = select_primary(
-        outcomes=outcomes, lengths=lengths, n=int(args.n), seed=int(args.seed)
-    )
+    split_method = "success_rollout_primary_v1"
+    if args.mode == "one_per_all_success_seed":
+        primary, leftover, failures = select_one_per_all_success_seed(
+            outcomes=outcomes, lengths=lengths
+        )
+        split_method = "all_success_seed_primary_v8"
+    else:
+        primary, leftover, failures = select_primary(
+            outcomes=outcomes, lengths=lengths, n=int(args.n), seed=int(args.seed)
+        )
     splits = build_split_rows(
         dataset_id=str(args.dataset_id),
         primary=primary,
         leftover=leftover,
         failures=failures,
         seed=int(args.seed),
+        split_method=split_method,
     )
     if len(splits) != len(episodes):
         raise SystemExit(
@@ -143,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "dataset_root": str(root),
         "dataset_id": str(args.dataset_id),
-        "n_primary": int(args.n),
+        "n_primary": len(primary),
+        "selection_mode": str(args.mode),
+        "split_method": split_method,
         "seed": int(args.seed),
         "min_complete_length": MIN_COMPLETE_LENGTH,
         "n_complete_success": len(primary) + len(leftover),
@@ -158,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in splits)
     )
     print(
-        f"wrote {args.output_json} primary={args.n} "
+        f"wrote {args.output_json} mode={args.mode} primary={len(primary)} "
         f"complete_success={len(primary)+len(leftover)} val={len(leftover)} "
         f"test={len(failures)}",
         flush=True,

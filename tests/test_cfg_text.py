@@ -271,6 +271,32 @@ class CfgTextTests(unittest.TestCase):
         self.assertAlmostEqual(fail_probs["base"], 0.4 / 0.6)
         self.assertAlmostEqual(fail_probs["outcome"], 0.0)
 
+    def test_base_schedule_is_always_base(self) -> None:
+        probs = select_cfg_schedule_probs(
+            cfg_schedule="base",
+            outcome_flag=0,
+            channel_probs={"outcome": 0.9, "fast": 0.0, "base": 0.1},
+            primary_channel_probs={"outcome": 0.9, "fast": 0.0, "base": 0.1},
+        )
+        assert probs is not None
+        self.assertEqual(probs["outcome"], 0.0)
+        self.assertEqual(probs["fast"], 0.0)
+        self.assertEqual(probs["base"], 1.0)
+
+        text, channel = apply_ternary_cfg_suffix(
+            "Water the plant.",
+            outcome_flag=0,
+            success_suffix=" Successful execution.",
+            failure_suffix=" Failed execution.",
+            channel_probs={"outcome": 1.0, "fast": 0.0, "base": 0.0},
+            cfg_schedule="base",
+            actions=np.zeros((8, 22), dtype=np.float32),
+            is_training=True,
+            fast_fail_closed=True,
+        )
+        self.assertEqual(channel, "base")
+        self.assertEqual(text, "Water the plant.")
+
 
 if __name__ == "__main__":
     unittest.main()

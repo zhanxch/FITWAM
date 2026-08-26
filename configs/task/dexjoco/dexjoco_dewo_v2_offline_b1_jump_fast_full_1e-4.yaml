@@ -17,8 +17,8 @@ role_balanced_sampling:
   seed: ${seed}
 
 model:
-  # Default: online VAE (no pre-encode). Cache path: USE_VAE_LATENT_CACHE=1 + load_vae=false.
-  load_vae: true
+  # Default: pre-encoded VAE cache (USE_VAE_LATENT_CACHE=1). Opt-out online VAE: load_vae=true.
+  load_vae: false
   fill_vae_latent_cache: false
   proprio_dim: ${data.train.processor.proprio_output_dim}
   state_dit_config: null

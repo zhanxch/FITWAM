@@ -368,6 +368,8 @@ class Wan22Core(torch.nn.Module):
                     action=action,
                     fuse_vae_embedding_in_latents=fuse_flag,
                 )
+                # Video CFG in (s-1) form: s=1 leaves ε_posi. Action infer_action
+                # uses ε_base + s*(ε_posi-ε_base) and treats s=1 as 本体 remap.
                 noise_pred = noise_pred + (text_cfg_scale - 1.0) * (noise_pred_posi - noise_pred_text_nega)
             if action_nega is not None:
                 noise_pred_action_nega = self._model_fn(

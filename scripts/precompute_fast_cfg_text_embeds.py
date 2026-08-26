@@ -7,7 +7,7 @@ action chunk, and writes missing ``*.t5_len{L}.wan22ti2v5b.pt`` caches.
 Example:
   EVE_MANIFEST_PATH=... BASE_DATASET=... ROLLOUT_RAW=... \\
   python scripts/precompute_fast_cfg_text_embeds.py \\
-    task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5
+    task=dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4
 """
 
 from __future__ import annotations

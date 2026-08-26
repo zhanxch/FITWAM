@@ -48,8 +48,20 @@ def main(argv: list[str] | None = None) -> int:
         choices=("expert", "success_rollouts"),
         default="expert",
     )
+    parser.add_argument(
+        "--horizon",
+        choices=("crop33", "full"),
+        default="crop33",
+        help="crop33: 33-frame pair events. full: variable-length rollouts.",
+    )
+    parser.add_argument(
+        "--skip-aux-success",
+        action="store_true",
+        help="Do not write success_auxiliary copies (v6+ pool drops them).",
+    )
     args = parser.parse_args(argv)
     prompt = str(args.prompt)
+    full_horizon = args.horizon == "full"
 
     expert = load_json(args.expert_manifest)
     pair_root = args.pair_dataset.expanduser().resolve()
@@ -75,8 +87,20 @@ def main(argv: list[str] | None = None) -> int:
     for ep in episodes:
         ep_idx = int(ep["episode_index"])
         length = int(ep["length"])
-        if length != NUM_FRAMES:
-            raise ValueError(f"pair episode {ep_idx} length {length} != {NUM_FRAMES}")
+        if full_horizon:
+            if length < NUM_FRAMES:
+                raise ValueError(
+                    f"pair episode {ep_idx} length {length} < {NUM_FRAMES}"
+                )
+            end_frame = length
+            window_rule = "recoverability_pair_full"
+        else:
+            if length != NUM_FRAMES:
+                raise ValueError(
+                    f"pair episode {ep_idx} length {length} != {NUM_FRAMES}"
+                )
+            end_frame = NUM_FRAMES
+            window_rule = "recoverability_pair_33"
         outcome_row = outcomes[ep_idx]
         success = bool(outcome_row.get("success"))
         pair_meta = by_success.get(ep_idx) or by_failure.get(ep_idx)
@@ -92,13 +116,13 @@ def main(argv: list[str] | None = None) -> int:
             "collection_round": 1,
             "task": prompt,
             "start_frame": 0,
-            "end_frame": NUM_FRAMES,
+            "end_frame": end_frame,
             "sample_stride": 1,
             "split": "train",
             "pair_id": pair_meta["pair_id"],
             "core_start_frame": 0,
-            "core_end_frame": NUM_FRAMES,
-            "source_window_rule": "recoverability_pair_33",
+            "core_end_frame": end_frame,
+            "source_window_rule": window_rule,
             "effector": "global",
         }
         if success:
@@ -115,19 +139,20 @@ def main(argv: list[str] | None = None) -> int:
                     "sample_role": "success_event_primary",
                 }
             )
-            samples.append(
-                {
-                    **common,
-                    "sample_id": f"{args.pair_dataset_id}_ep{ep_idx:06d}_success_aux",
-                    "event_id": f"{args.pair_dataset_id}_ep{ep_idx:06d}_success_aux",
-                    "episode_outcome": "success",
-                    "event_outcome": "success",
-                    "event_type": "success_event",
-                    "action_loss": "disabled",
-                    "batch_role": "auxiliary",
-                    "sample_role": "success_auxiliary",
-                }
-            )
+            if not args.skip_aux_success:
+                samples.append(
+                    {
+                        **common,
+                        "sample_id": f"{args.pair_dataset_id}_ep{ep_idx:06d}_success_aux",
+                        "event_id": f"{args.pair_dataset_id}_ep{ep_idx:06d}_success_aux",
+                        "episode_outcome": "success",
+                        "event_outcome": "success",
+                        "event_type": "success_event",
+                        "action_loss": "disabled",
+                        "batch_role": "auxiliary",
+                        "sample_role": "success_auxiliary",
+                    }
+                )
         else:
             samples.append(
                 {
@@ -156,7 +181,14 @@ def main(argv: list[str] | None = None) -> int:
     n_aux_failure = sum(
         1 for row in samples if row.get("event_type") == "failure_event"
     )
-    if n_primary_success_events != n_aux_success or n_aux_success != n_aux_failure:
+    if args.skip_aux_success:
+        if n_primary_success_events != n_aux_failure:
+            raise SystemExit(
+                "Pair counts must match: "
+                f"success_primary={n_primary_success_events} "
+                f"failure={n_aux_failure}"
+            )
+    elif n_primary_success_events != n_aux_success or n_aux_success != n_aux_failure:
         raise SystemExit(
             "Pair counts must match: "
             f"success_primary={n_primary_success_events} "
@@ -187,17 +219,20 @@ def main(argv: list[str] | None = None) -> int:
             "include_s0_success_rollouts": args.primary_source == "success_rollouts",
             "primary_source": args.primary_source,
             "num_pairs": len(pair_index),
+            "horizon": args.horizon,
+            "skip_aux_success": bool(args.skip_aux_success),
         },
     }
     hashed = with_manifest_hash(manifest)
     validate_manifest(hashed, verify_hash=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(hashed, indent=2, sort_keys=True) + "\n")
-    n_rollout_primary = len(samples) - 3 * len(pair_index)
+    n_pair_units = n_primary_success_events + n_aux_success + n_aux_failure
+    n_rollout_primary = len(samples) - n_pair_units
     print(
         f"wrote {args.output} samples={len(samples)} "
         f"pairs={len(pair_index)} primary_source={args.primary_source} "
-        f"episode_primary={n_rollout_primary}",
+        f"horizon={args.horizon} episode_primary={n_rollout_primary}",
         flush=True,
     )
     return 0

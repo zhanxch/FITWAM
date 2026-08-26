@@ -101,7 +101,13 @@ def parse_args() -> argparse.Namespace:
         "--eval-repeat",
         type=int,
         default=0,
-        help="OPEN-stack repeat index for diffusion noise (seed*100000 + repeat*1000 + replan).",
+        help="Legacy repeat index used when --noise-seed-base is omitted.",
+    )
+    gpus.add_argument(
+        "--noise-seed-base",
+        type=int,
+        default=None,
+        help="Independent diffusion noise seed shared across env seeds; each query uses base*1000 + replan index.",
     )
     gpus.add_argument(
         "--launch-servers",
@@ -160,7 +166,50 @@ def parse_args() -> argparse.Namespace:
         "--text-cfg-scale",
         type=float,
         default=None,
-        help="Override action CFG scale; task YAML must provide cfg_base_prompt when scale != 1.",
+        help=(
+            "Action CFG knob. 1.0 = 本体 bypass (adapter off + cfg_base_prompt). "
+            "Values != 1 run the guided mix. v5/v6 mix w=1 is ε_posi; "
+            "v7 mix w=1 is ε_base+(ε_posi-ε_fail), not ε_posi."
+        ),
+    )
+    model.add_argument(
+        "--adaptive-cfg-tau",
+        type=float,
+        default=None,
+        help=(
+            "If set, freeze mix from NFE0 exec RMS: E>tau uses --text-cfg-scale, "
+            "else mix w=0 (本体). Requires text_cfg_scale != 1."
+        ),
+    )
+    model.add_argument(
+        "--cfg-epsilon-l",
+        "--epsilon-l",
+        "--cfg-residual-epsilon",
+        dest="cfg_epsilon_l",
+        type=float,
+        default=None,
+        help=(
+            "Bound the per-token action CFG residual before text-cfg scaling. "
+            "None keeps legacy unbounded guidance; 0 is the base branch."
+        ),
+    )
+    model.add_argument(
+        "--cfg-residual-clip-mode",
+        choices=("rms", "elementwise"),
+        default=None,
+        help="How --cfg-epsilon-l bounds the residual (default: rms).",
+    )
+    model.add_argument(
+        "--backbone-checkpoint",
+        type=str,
+        default=None,
+        help="Frozen base MoT for DEWO v5 (adapter-off CFG branch).",
+    )
+    model.add_argument(
+        "--uncond-adapter",
+        type=str,
+        default=None,
+        help="DEWO v5 uncond-adapter file. If omitted, --checkpoint may be adapter-format.",
     )
     model.add_argument(
         "--load-text-encoder",
@@ -188,6 +237,52 @@ def parse_args() -> argparse.Namespace:
     ev.add_argument("--save-video", dest="save_video", action=argparse.BooleanOptionalAction, default=True)
     ev.add_argument("--save-actions", dest="save_actions", action=argparse.BooleanOptionalAction, default=True)
     ev.add_argument("--action-clip", dest="action_clip", action=argparse.BooleanOptionalAction, default=False)
+    ev.add_argument(
+        "--seed-list",
+        type=str,
+        default=None,
+        help="Comma-separated env seeds (client). Overrides contiguous --seed/--episodes.",
+    )
+    ev.add_argument(
+        "--cfg-gate-mode",
+        choices=("off", "probe", "schedule", "value", "value_growth"),
+        default="off",
+        help=(
+            "Client CFG gate: off | probe (log E, mix w=0) | "
+            "schedule (once at index) | value (drop-edge once-fire) | "
+            "value_growth (relative V growth, per-replan)."
+        ),
+    )
+    ev.add_argument(
+        "--cfg-intervene-schedule",
+        type=Path,
+        default=None,
+        help="JSON schedule for --cfg-gate-mode=schedule.",
+    )
+    ev.add_argument(
+        "--cfg-v-high",
+        type=float,
+        default=None,
+        help="Drop-edge V_prev threshold for --cfg-gate-mode=value.",
+    )
+    ev.add_argument(
+        "--cfg-drop-delta",
+        type=float,
+        default=None,
+        help="Drop-edge V_prev-V_curr threshold for --cfg-gate-mode=value.",
+    )
+    ev.add_argument(
+        "--cfg-growth-tau",
+        type=float,
+        default=None,
+        help="Relative-growth threshold for --cfg-gate-mode=value_growth.",
+    )
+    ev.add_argument(
+        "--cfg-growth-start-replan",
+        type=int,
+        default=None,
+        help="0-based replan index before value_growth may fire.",
+    )
     ev.add_argument("--clip-max-xyz-step", type=float, default=0.05)
     ev.add_argument("--clip-max-dz-down", type=float, default=0.03)
 
@@ -302,6 +397,21 @@ def _build_server_argv(args: argparse.Namespace, server: ServerSpec) -> list[str
     text_cfg_scale = getattr(args, "text_cfg_scale", None)
     if text_cfg_scale is not None:
         argv += ["--text-cfg-scale", str(text_cfg_scale)]
+    adaptive_cfg_tau = getattr(args, "adaptive_cfg_tau", None)
+    if adaptive_cfg_tau is not None:
+        argv += ["--adaptive-cfg-tau", str(adaptive_cfg_tau)]
+    cfg_epsilon_l = getattr(args, "cfg_epsilon_l", None)
+    if cfg_epsilon_l is not None:
+        argv += ["--cfg-epsilon-l", str(cfg_epsilon_l)]
+    cfg_residual_clip_mode = getattr(args, "cfg_residual_clip_mode", None)
+    if cfg_residual_clip_mode is not None:
+        argv += ["--cfg-residual-clip-mode", str(cfg_residual_clip_mode)]
+    backbone_checkpoint = getattr(args, "backbone_checkpoint", None)
+    if backbone_checkpoint:
+        argv += ["--backbone-checkpoint", str(backbone_checkpoint)]
+    uncond_adapter = getattr(args, "uncond_adapter", None)
+    if uncond_adapter:
+        argv += ["--uncond-adapter", str(uncond_adapter)]
     argv += _bool_flag("load-text-encoder", args.load_text_encoder)
     return argv
 
@@ -325,6 +435,9 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
         "--output-dir", str(shard_out_dir),
         "--video-fps", str(args.video_fps),
     ]
+    noise_seed_base = getattr(args, "noise_seed_base", None)
+    if noise_seed_base is not None:
+        argv += ["--noise-seed-base", str(int(noise_seed_base))]
     if args.text_embedding_cache_dir is not None:
         argv += [
             "--text-embedding-cache-dir",
@@ -344,6 +457,30 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
     if args.action_clip:
         argv += ["--clip-max-xyz-step", str(args.clip_max_xyz_step)]
         argv += ["--clip-max-dz-down", str(args.clip_max_dz_down)]
+    seed_list = getattr(args, "seed_list", None)
+    if seed_list:
+        argv += ["--seed-list", str(seed_list)]
+    cfg_gate_mode = getattr(args, "cfg_gate_mode", None)
+    if cfg_gate_mode and str(cfg_gate_mode) != "off":
+        argv += ["--cfg-gate-mode", str(cfg_gate_mode)]
+    cfg_v_high = getattr(args, "cfg_v_high", None)
+    if cfg_v_high is not None:
+        argv += ["--cfg-v-high", str(cfg_v_high)]
+    cfg_drop_delta = getattr(args, "cfg_drop_delta", None)
+    if cfg_drop_delta is not None:
+        argv += ["--cfg-drop-delta", str(cfg_drop_delta)]
+    cfg_growth_tau = getattr(args, "cfg_growth_tau", None)
+    if cfg_growth_tau is not None:
+        argv += ["--cfg-growth-tau", str(cfg_growth_tau)]
+    cfg_growth_start_replan = getattr(args, "cfg_growth_start_replan", None)
+    if cfg_growth_start_replan is not None:
+        argv += ["--cfg-growth-start-replan", str(int(cfg_growth_start_replan))]
+    cfg_intervene_schedule = getattr(args, "cfg_intervene_schedule", None)
+    if cfg_intervene_schedule is not None:
+        argv += [
+            "--cfg-intervene-schedule",
+            str(Path(cfg_intervene_schedule).expanduser().resolve()),
+        ]
     return argv
 
 
@@ -429,10 +566,30 @@ def _combined_summary_metadata(
             if args.inference_seed is None
             else int(args.inference_seed)
         ),
+        "noise_seed_base": (
+            None
+            if getattr(args, "noise_seed_base", None) is None
+            else int(args.noise_seed_base)
+        ),
         "text_cfg_scale": (
             None
             if getattr(args, "text_cfg_scale", None) is None
             else float(args.text_cfg_scale)
+        ),
+        "adaptive_cfg_tau": (
+            None
+            if getattr(args, "adaptive_cfg_tau", None) is None
+            else float(args.adaptive_cfg_tau)
+        ),
+        "cfg_epsilon_l": (
+            None
+            if getattr(args, "cfg_epsilon_l", None) is None
+            else float(args.cfg_epsilon_l)
+        ),
+        "cfg_residual_clip_mode": (
+            None
+            if getattr(args, "cfg_residual_clip_mode", None) is None
+            else str(args.cfg_residual_clip_mode)
         ),
         "model_provenance": model_provenance,
         "task": (

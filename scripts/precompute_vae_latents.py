@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,34 @@ def _resolve_shard(cfg: DictConfig, *, dist_rank: int, dist_world: int) -> tuple
     return rank, world
 
 
+def _group_indices_by_episode(samples_meta, indices: list[int]) -> OrderedDict:
+    """Group Eve windows by (dataset_root, episode_index), preserving first-seen order."""
+    groups: OrderedDict[tuple[str, int] | None, list[int]] = OrderedDict()
+    for idx in indices:
+        key = None
+        if isinstance(samples_meta, list) and 0 <= idx < len(samples_meta):
+            sample_ref = samples_meta[idx]
+            if isinstance(sample_ref, dict):
+                root = sample_ref.get("dataset_root")
+                episode_index = sample_ref.get("episode_index")
+                if root not in {None, ""} and episode_index is not None:
+                    key = (str(root), int(episode_index))
+        groups.setdefault(key, []).append(idx)
+    return groups
+
+
+def _cache_key_from_meta(samples_meta, idx: int) -> tuple[str | None, int | None]:
+    if not isinstance(samples_meta, list) or not (0 <= idx < len(samples_meta)):
+        return None, None
+    sample_ref = samples_meta[idx]
+    if not isinstance(sample_ref, dict):
+        return None, None
+    unit = sample_ref.get("unit", {}) if isinstance(sample_ref.get("unit"), dict) else {}
+    sample_id = str(unit.get("sample_id", unit.get("event_id", f"idx_{idx}")))
+    window_start = int(sample_ref.get("window_start", -1))
+    return sample_id, window_start
+
+
 def _build_dataset(node_cfg: DictConfig, *, force_decode_video: bool):
     # Precompute must decode pixels even if drop_video is configured for training.
     overrides = {
@@ -143,7 +172,53 @@ def _build_dataset(node_cfg: DictConfig, *, force_decode_video: bool):
     if force_decode_video:
         overrides["drop_video_when_latents_cached"] = False
     cfg = OmegaConf.merge(node_cfg, OmegaConf.create(overrides))
-    return instantiate(cfg)
+    dataset = instantiate(cfg)
+    # VAE precompute only needs pixels; skip T5 cache I/O and FAST tokenization.
+    if hasattr(dataset, "force_skip_text"):
+        dataset.force_skip_text = True
+    return dataset
+
+
+def _write_window_latent(
+    *,
+    dataset,
+    vae,
+    cache_dir: Path,
+    device: str,
+    dtype: torch.dtype,
+    idx: int,
+    sample_id: str | None,
+    window_start: int | None,
+    overwrite: bool,
+) -> str:
+    sample = dataset[idx]
+    sample_id = str(sample.get("eve_sample_id", sample_id or f"idx_{idx}"))
+    window_start = int(sample.get("eve_window_start", window_start if window_start is not None else -1))
+    if window_start < 0:
+        raise ValueError(f"Sample {idx} missing eve_window_start")
+    out_path = vae_latent_cache_path(cache_dir, sample_id, window_start)
+    if out_path.exists() and not overwrite:
+        return "skipped"
+    video = sample["video"]
+    if not torch.is_tensor(video) or video.ndim != 4 or int(video.shape[-1]) < 64:
+        raise ValueError(
+            f"Sample {idx} ({sample_id}) has invalid video for VAE encode: "
+            f"{None if video is None else tuple(getattr(video, 'shape', ()))}"
+        )
+    latents = _encode_video(vae, video, device=device, dtype=dtype)
+    tmp = out_path.with_suffix(".pt.tmp")
+    torch.save(
+        {
+            "input_latents": latents,
+            "sample_id": sample_id,
+            "window_start": window_start,
+            "video_shape": list(video.shape),
+            "latent_shape": list(latents.shape),
+        },
+        tmp,
+    )
+    os.replace(tmp, out_path)
+    return "wrote"
 
 
 def _encode_split(
@@ -163,58 +238,80 @@ def _encode_split(
     if max_samples is not None:
         indices = indices[: max(0, int(max_samples))]
     wrote = skipped = errors = 0
-    iterator = indices
-    if rank == 0:
-        iterator = tqdm(indices, desc=f"encode rank{rank}", leave=True)
 
     # Fast resume: resolve cache keys from Eve metadata without decoding video.
     samples_meta = getattr(dataset, "_samples", None)
-
-    for idx in iterator:
-        sample_id = None
-        window_start = None
-        if isinstance(samples_meta, list) and 0 <= idx < len(samples_meta):
-            sample_ref = samples_meta[idx]
-            unit = sample_ref.get("unit", {}) if isinstance(sample_ref, dict) else {}
-            sample_id = str(
-                unit.get("sample_id", unit.get("event_id", f"idx_{idx}"))
+    groups = _group_indices_by_episode(samples_meta, indices)
+    can_prefetch = hasattr(dataset, "prefetch_episode_video") and hasattr(
+        dataset, "enable_video_decode_cache"
+    )
+    if can_prefetch:
+        dataset.enable_video_decode_cache(True)
+        if rank == 0:
+            n_eps = sum(1 for key in groups if key is not None)
+            logger.info(
+                "VAE episode prefetch enabled: episodes=%d windows=%d",
+                n_eps,
+                len(indices),
             )
-            window_start = int(sample_ref.get("window_start", -1))
-            if window_start >= 0:
-                out_path = vae_latent_cache_path(cache_dir, sample_id, window_start)
-                if out_path.exists() and not overwrite:
-                    skipped += 1
-                    continue
 
-        sample = dataset[idx]
-        sample_id = str(sample.get("eve_sample_id", sample_id or f"idx_{idx}"))
-        window_start = int(sample.get("eve_window_start", window_start if window_start is not None else -1))
-        if window_start < 0:
-            raise ValueError(f"Sample {idx} missing eve_window_start")
-        out_path = vae_latent_cache_path(cache_dir, sample_id, window_start)
-        if out_path.exists() and not overwrite:
-            skipped += 1
-            continue
-        video = sample["video"]
-        if not torch.is_tensor(video) or video.ndim != 4 or int(video.shape[-1]) < 64:
-            raise ValueError(
-                f"Sample {idx} ({sample_id}) has invalid video for VAE encode: "
-                f"{None if video is None else tuple(getattr(video, 'shape', ()))}"
-            )
-        latents = _encode_video(vae, video, device=device, dtype=dtype)
-        tmp = out_path.with_suffix(".pt.tmp")
-        torch.save(
-            {
-                "input_latents": latents,
-                "sample_id": sample_id,
-                "window_start": window_start,
-                "video_shape": list(video.shape),
-                "latent_shape": list(latents.shape),
-            },
-            tmp,
-        )
-        os.replace(tmp, out_path)
-        wrote += 1
+    progress = None
+    if rank == 0:
+        progress = tqdm(total=len(indices), desc=f"encode rank{rank}", leave=True)
+
+    try:
+        for ep_key, ep_indices in groups.items():
+            pending: list[tuple[int, str | None, int | None]] = []
+            for idx in ep_indices:
+                sample_id, window_start = _cache_key_from_meta(samples_meta, idx)
+                if window_start is not None and window_start >= 0 and sample_id is not None:
+                    out_path = vae_latent_cache_path(cache_dir, sample_id, window_start)
+                    if out_path.exists() and not overwrite:
+                        skipped += 1
+                        if progress is not None:
+                            progress.update(1)
+                        continue
+                pending.append((idx, sample_id, window_start))
+            if not pending:
+                continue
+            if can_prefetch and ep_key is not None:
+                try:
+                    dataset.prefetch_episode_video(ep_key[0], ep_key[1])
+                except Exception as err:
+                    logger.warning(
+                        "VAE episode prefetch failed for %s: %s; "
+                        "falling back to per-window decode",
+                        ep_key,
+                        err,
+                    )
+            try:
+                for idx, sample_id, window_start in pending:
+                    status = _write_window_latent(
+                        dataset=dataset,
+                        vae=vae,
+                        cache_dir=cache_dir,
+                        device=device,
+                        dtype=dtype,
+                        idx=idx,
+                        sample_id=sample_id,
+                        window_start=window_start,
+                        overwrite=overwrite,
+                    )
+                    if status == "skipped":
+                        skipped += 1
+                    else:
+                        wrote += 1
+                    if progress is not None:
+                        progress.update(1)
+            finally:
+                if can_prefetch:
+                    dataset.clear_video_decode_cache()
+    finally:
+        if progress is not None:
+            progress.close()
+        if can_prefetch:
+            dataset.enable_video_decode_cache(False)
+
     return {"wrote": wrote, "skipped": skipped, "errors": errors, "total_seen": len(indices)}
 
 

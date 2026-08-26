@@ -37,8 +37,8 @@ class _RobotVideoDataset:
             kwargs.get("drop_video_when_latents_cached", False)
         )
 
-    def _maybe_attach_vae_latents(self, data, *, sample_id, window_start):
-        del sample_id, window_start
+    def _maybe_attach_vae_latents(self, data, *, sample_id, window_start, **kwargs):
+        del sample_id, window_start, kwargs
         return data
 
 
@@ -263,6 +263,55 @@ class EveManifestLoaderTest(unittest.TestCase):
         self.assertEqual(
             [(sample["window_start"], sample["window_end"]) for sample in dataset._samples],
             [(0, 7), (1, 8)],
+        )
+
+    def test_episode_sample_stride_overrides_baked_manifest_stride(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.episode_sample_stride = 24
+        dataset.event_sample_stride = None
+        self.assertEqual(
+            dataset._unit_stride({"sample_type": "episode", "sample_stride": 1}),
+            24,
+        )
+        self.assertEqual(
+            dataset._unit_stride({"sample_type": "event", "sample_stride": 1}),
+            1,
+        )
+
+        with TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "dataset")
+            manifest = self._manifest(root)
+            manifest["samples"][0]["sample_stride"] = 1
+            manifest["samples"][0]["end_frame"] = 80
+            episode_index = {(str(Path(root).resolve()), 3): (0, 80)}
+            with (
+                mock.patch.object(manifest_dataset, "_load_json", return_value=manifest),
+                mock.patch.object(
+                    manifest_dataset, "_load_eve_action_schema", return_value=None
+                ),
+                mock.patch.object(
+                    EveManifestRobotVideoDataset,
+                    "_build_episode_index",
+                    return_value=episode_index,
+                ),
+            ):
+                dense = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=33,
+                )
+                sparse = EveManifestRobotVideoDataset(
+                    manifest_path=str(Path(tmp) / "manifest.json"),
+                    num_frames=33,
+                    episode_sample_stride=24,
+                )
+
+        self.assertEqual(len(dense._samples), 48)
+        self.assertEqual(len(sparse._samples), 2)
+        self.assertEqual(
+            [sample["window_start"] for sample in sparse._samples],
+            [0, 24],
         )
 
     def test_overrides_replace_explicit_legacy_dataset_dirs(self) -> None:
@@ -749,6 +798,272 @@ class EveManifestLoaderTest(unittest.TestCase):
         self.assertEqual(data["event_weight"], 0.6)
         self.assertEqual(data["pair_weight"], 0.4)
         self.assertEqual(data["pair_id"], "pair-7")
+
+    def _filter_dataset(self) -> EveManifestRobotVideoDataset:
+        dataset = EveManifestRobotVideoDataset.__new__(EveManifestRobotVideoDataset)
+        dataset.unit_filter = "recoverability_events"
+        return dataset
+
+    def test_recoverability_filter_keeps_success_event_primary_and_failure(self) -> None:
+        dataset = self._filter_dataset()
+        primary = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        failure = {
+            "sample_type": "event",
+            "episode_outcome": "failure",
+            "event_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertEqual(dataset._sampling_role(primary), "primary")
+        self.assertEqual(dataset._sampling_role(failure), "auxiliary")
+        self.assertTrue(dataset._passes_unit_filter(primary))
+        self.assertTrue(dataset._passes_unit_filter(failure))
+
+    def test_recoverability_filter_drops_episode_and_aux_success(self) -> None:
+        dataset = self._filter_dataset()
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        aux_success = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertEqual(dataset._sampling_role(aux_success), "auxiliary_success")
+        self.assertFalse(dataset._passes_unit_filter(episode))
+        self.assertFalse(dataset._passes_unit_filter(aux_success))
+
+    def test_recoverability_filter_off_keeps_episodes(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(EveManifestRobotVideoDataset)
+        dataset.unit_filter = None
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        self.assertTrue(dataset._passes_unit_filter(episode))
+
+    def _v6_pool_dataset(self) -> EveManifestRobotVideoDataset:
+        dataset = EveManifestRobotVideoDataset.__new__(EveManifestRobotVideoDataset)
+        dataset.unit_filter = "dewo_v6_pool"
+        return dataset
+
+    def test_dewo_v6_pool_keeps_success_episode_success_event_and_failure(self) -> None:
+        dataset = self._v6_pool_dataset()
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        primary = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        failure = {
+            "sample_type": "event",
+            "episode_outcome": "failure",
+            "event_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertTrue(dataset._passes_unit_filter(episode))
+        self.assertTrue(dataset._passes_unit_filter(primary))
+        self.assertTrue(dataset._passes_unit_filter(failure))
+
+    def test_dewo_v6_pool_drops_aux_success_and_failure_episode(self) -> None:
+        dataset = self._v6_pool_dataset()
+        aux_success = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        failure_episode = {
+            "sample_type": "episode",
+            "episode_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertEqual(dataset._sampling_role(aux_success), "auxiliary_success")
+        self.assertFalse(dataset._passes_unit_filter(aux_success))
+        self.assertFalse(dataset._passes_unit_filter(failure_episode))
+
+    def test_dewo_v6_pool_loss_weights_and_cfg_schedules(self) -> None:
+        dataset = self._v6_pool_dataset()
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        primary = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        failure = {
+            "sample_type": "event",
+            "episode_outcome": "failure",
+            "event_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertEqual(dataset._v6_action_loss_weight(episode), 1.0)
+        self.assertEqual(dataset._v6_video_loss_weight(episode), 1.0)
+        self.assertEqual(
+            dataset._cfg_schedule(episode, unit_filter="dewo_v6_pool"),
+            "base",
+        )
+        self.assertEqual(dataset._v6_action_loss_weight(primary), 1.0)
+        self.assertEqual(dataset._v6_video_loss_weight(primary), 0.0)
+        self.assertEqual(
+            dataset._cfg_schedule(primary, unit_filter="dewo_v6_pool"),
+            "primary",
+        )
+        self.assertEqual(dataset._v6_action_loss_weight(failure), 0.0)
+        self.assertEqual(dataset._v6_video_loss_weight(failure), 1.0)
+        self.assertEqual(
+            dataset._cfg_schedule(failure, unit_filter="dewo_v6_pool"),
+            "aux_failure",
+        )
+
+    def _v7_pool_dataset(self) -> EveManifestRobotVideoDataset:
+        dataset = EveManifestRobotVideoDataset.__new__(EveManifestRobotVideoDataset)
+        dataset.unit_filter = "dewo_v7_pool"
+        return dataset
+
+    def _v8_pool_dataset(self) -> EveManifestRobotVideoDataset:
+        dataset = EveManifestRobotVideoDataset.__new__(EveManifestRobotVideoDataset)
+        dataset.unit_filter = "dewo_v8_pool"
+        return dataset
+
+    def test_dewo_v8_pool_matches_v6_weights_and_value_target(self) -> None:
+        dataset = self._v8_pool_dataset()
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        primary = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        failure = {
+            "sample_type": "event",
+            "episode_outcome": "failure",
+            "event_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertTrue(dataset._passes_unit_filter(episode))
+        self.assertTrue(dataset._passes_unit_filter(primary))
+        self.assertTrue(dataset._passes_unit_filter(failure))
+        self.assertEqual(dataset._v6_action_loss_weight(failure), 0.0)
+        self.assertEqual(dataset._v6_video_loss_weight(failure), 1.0)
+        self.assertEqual(dataset._v8_value_target(episode), 1.0)
+        self.assertEqual(dataset._v8_value_target(primary), 1.0)
+        self.assertEqual(dataset._v8_value_target(failure), 0.0)
+        self.assertEqual(
+            dataset._cfg_schedule(episode, unit_filter="dewo_v8_pool"),
+            "base",
+        )
+
+    def test_dewo_v7_pool_fail_has_action_bc_not_video_bc(self) -> None:
+        dataset = self._v7_pool_dataset()
+        episode = {
+            "sample_type": "episode",
+            "episode_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        primary = {
+            "sample_type": "event",
+            "episode_outcome": "success",
+            "event_outcome": "success",
+            "batch_role": "primary",
+            "action_loss": "enabled",
+        }
+        failure = {
+            "sample_type": "event",
+            "episode_outcome": "failure",
+            "event_outcome": "failure",
+            "batch_role": "auxiliary",
+            "action_loss": "disabled",
+        }
+        self.assertTrue(dataset._passes_unit_filter(episode))
+        self.assertTrue(dataset._passes_unit_filter(primary))
+        self.assertTrue(dataset._passes_unit_filter(failure))
+        self.assertEqual(dataset._v7_action_loss_weight(episode), 1.0)
+        self.assertEqual(dataset._v7_video_loss_weight(episode), 1.0)
+        self.assertEqual(
+            dataset._cfg_schedule(episode, unit_filter="dewo_v7_pool"),
+            "base",
+        )
+        self.assertEqual(dataset._v7_action_loss_weight(primary), 1.0)
+        self.assertEqual(dataset._v7_video_loss_weight(primary), 0.0)
+        self.assertEqual(dataset._v7_action_loss_weight(failure), 1.0)
+        self.assertEqual(dataset._v7_video_loss_weight(failure), 0.0)
+        self.assertEqual(
+            dataset._cfg_schedule(failure, unit_filter="dewo_v7_pool"),
+            "aux_failure",
+        )
+        self.assertEqual(dataset._outcome_flag(failure), 1)
+
+    def test_get_eve_v6_pool_writes_video_loss_weight(self) -> None:
+        dataset = EveManifestRobotVideoDataset.__new__(
+            EveManifestRobotVideoDataset
+        )
+        dataset.unit_filter = "dewo_v6_pool"
+        dataset.manifest_path = "/tmp/manifest.json"
+        dataset.global_sample_stride = 1
+        dataset._samples = [
+            {
+                "unit": {
+                    "sample_type": "episode",
+                    "sample_id": "ep-1",
+                    "dataset_id": "robot",
+                    "collection_round": 1,
+                    "episode_outcome": "success",
+                    "batch_role": "primary",
+                    "action_loss": "enabled",
+                },
+                "episode_index": 1,
+                "global_frame_idx": 0,
+                "window_start": 0,
+                "window_end": 8,
+            }
+        ]
+        dataset.vae_latent_cache_dir = None
+        dataset.drop_video_when_latents_cached = False
+        dataset._get = lambda *args, **kwargs: {}
+
+        data = dataset._get_eve(0)
+
+        self.assertEqual(float(data["action_loss_weight"]), 1.0)
+        self.assertEqual(float(data["video_loss_weight"]), 1.0)
 
 
 if __name__ == "__main__":

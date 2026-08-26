@@ -15,6 +15,9 @@ KEY_CONTEXT_MASK = "context_mask"
 KEY_NEGATIVE_PROMPT = "negative_prompt"
 KEY_NEGATIVE_CONTEXT = "negative_context"
 KEY_NEGATIVE_CONTEXT_MASK = "negative_context_mask"
+KEY_FAILURE_PROMPT = "failure_prompt"
+KEY_FAILURE_CONTEXT = "failure_context"
+KEY_FAILURE_CONTEXT_MASK = "failure_context_mask"
 
 # Returned by get_action after denormalization.
 KEY_ACTION = "action"
@@ -73,6 +76,26 @@ def validate_policy_observation(observation: dict[str, Any]) -> None:
     if has_text and has_negative_prompt:
         raise ValueError("Cached context input requires cached negative context, not a negative prompt.")
 
+    has_failure_context = (
+        KEY_FAILURE_CONTEXT in observation or KEY_FAILURE_CONTEXT_MASK in observation
+    )
+    has_failure_prompt = KEY_FAILURE_PROMPT in observation
+    if has_failure_context and not (
+        KEY_FAILURE_CONTEXT in observation and KEY_FAILURE_CONTEXT_MASK in observation
+    ):
+        raise ValueError(
+            f"Provide both '{KEY_FAILURE_CONTEXT}' and "
+            f"'{KEY_FAILURE_CONTEXT_MASK}' together."
+        )
+    if has_failure_context and has_failure_prompt:
+        raise ValueError(
+            f"Provide either '{KEY_FAILURE_PROMPT}' or cached failure text tensors, not both."
+        )
+    if has_prompt and has_failure_context:
+        raise ValueError("Prompt input requires a failure prompt, not cached failure context.")
+    if has_text and has_failure_prompt:
+        raise ValueError("Cached context input requires cached failure context, not a failure prompt.")
+
 
 def to_inference_tensors(observation: dict[str, Any], *, device: torch.device, dtype: torch.dtype) -> dict[str, Any]:
     """Convert msgpack/numpy payloads to torch tensors for model.infer_action."""
@@ -117,9 +140,20 @@ def to_inference_tensors(observation: dict[str, Any], *, device: torch.device, d
             if not isinstance(negative_mask, torch.Tensor):
                 negative_mask = torch.as_tensor(negative_mask, dtype=torch.bool)
             out[KEY_NEGATIVE_CONTEXT_MASK] = negative_mask
+        if KEY_FAILURE_CONTEXT in observation:
+            failure_context = observation[KEY_FAILURE_CONTEXT]
+            if not isinstance(failure_context, torch.Tensor):
+                failure_context = torch.as_tensor(failure_context, dtype=torch.float32)
+            out[KEY_FAILURE_CONTEXT] = failure_context
+            failure_mask = observation[KEY_FAILURE_CONTEXT_MASK]
+            if not isinstance(failure_mask, torch.Tensor):
+                failure_mask = torch.as_tensor(failure_mask, dtype=torch.bool)
+            out[KEY_FAILURE_CONTEXT_MASK] = failure_mask
     else:
         out[KEY_PROMPT] = str(observation[KEY_PROMPT])
         if KEY_NEGATIVE_PROMPT in observation:
             out[KEY_NEGATIVE_PROMPT] = str(observation[KEY_NEGATIVE_PROMPT])
+        if KEY_FAILURE_PROMPT in observation:
+            out[KEY_FAILURE_PROMPT] = str(observation[KEY_FAILURE_PROMPT])
 
     return out

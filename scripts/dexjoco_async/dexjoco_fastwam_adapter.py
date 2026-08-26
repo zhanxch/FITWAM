@@ -23,6 +23,9 @@ KEY_CONTEXT_MASK = "context_mask"
 KEY_NEGATIVE_PROMPT = "negative_prompt"
 KEY_NEGATIVE_CONTEXT = "negative_context"
 KEY_NEGATIVE_CONTEXT_MASK = "negative_context_mask"
+KEY_FAILURE_PROMPT = "failure_prompt"
+KEY_FAILURE_CONTEXT = "failure_context"
+KEY_FAILURE_CONTEXT_MASK = "failure_context_mask"
 KEY_ACTION = "action"
 
 DEFAULT_PROMPT = (
@@ -490,6 +493,7 @@ class DexJoCoTaskConfig:
     env_name: str
     prompt: str
     cfg_base_prompt: str | None
+    cfg_failure_prompt: str | None
     dual_arm: bool
     camera_key: str
     camera_mapping: dict[str, str]
@@ -508,6 +512,11 @@ class DexJoCoTaskConfig:
                 None
                 if cfg.get("cfg_base_prompt") is None
                 else str(cfg["cfg_base_prompt"])
+            ),
+            cfg_failure_prompt=(
+                None
+                if cfg.get("cfg_failure_prompt") is None
+                else str(cfg["cfg_failure_prompt"])
             ),
             dual_arm=str(cfg.get("robot_type", "single_arm")) == "dual_arm",
             camera_key=str(base_key),
@@ -603,6 +612,7 @@ class DexJoCoFastWAMAdapter:
         camera_mapping: dict[str, str],
         task_prompt: str,
         cfg_base_prompt: str | None = None,
+        cfg_failure_prompt: str | None = None,
     ) -> dict[str, Any]:
         policy_obs: dict[str, Any] = {
             KEY_INPUT_IMAGE: self._build_input_image(
@@ -616,10 +626,15 @@ class DexJoCoFastWAMAdapter:
         base_instruction = (
             None if cfg_base_prompt is None else self.task_prompt(cfg_base_prompt)
         )
+        fail_instruction = (
+            None if cfg_failure_prompt is None else self.task_prompt(cfg_failure_prompt)
+        )
         if self.use_prompt or self.text_embedding_cache_dir is None:
             policy_obs[KEY_PROMPT] = instruction
             if base_instruction is not None:
                 policy_obs[KEY_NEGATIVE_PROMPT] = base_instruction
+            if fail_instruction is not None:
+                policy_obs[KEY_FAILURE_PROMPT] = fail_instruction
         else:
             context, context_mask = load_text_context_arrays(
                 instruction,
@@ -636,6 +651,14 @@ class DexJoCoFastWAMAdapter:
                 )
                 policy_obs[KEY_NEGATIVE_CONTEXT] = negative_context
                 policy_obs[KEY_NEGATIVE_CONTEXT_MASK] = negative_context_mask
+            if fail_instruction is not None:
+                failure_context, failure_context_mask = load_text_context_arrays(
+                    fail_instruction,
+                    text_embedding_cache_dir=self.text_embedding_cache_dir,
+                    context_len=self.context_len,
+                )
+                policy_obs[KEY_FAILURE_CONTEXT] = failure_context
+                policy_obs[KEY_FAILURE_CONTEXT_MASK] = failure_context_mask
         return policy_obs
 
     def _extract_proprio(self, env_obs: dict[str, Any]) -> np.ndarray:
@@ -782,6 +805,7 @@ class DexJoCoFastWAMEvalEnv:
             camera_mapping=self.task.camera_mapping,
             task_prompt=self.task.prompt,
             cfg_base_prompt=self.task.cfg_base_prompt,
+            cfg_failure_prompt=self.task.cfg_failure_prompt,
         )
 
     def _step_env(self, env_action: np.ndarray) -> None:

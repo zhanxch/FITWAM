@@ -372,6 +372,30 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             self.assertEqual(argv.count("--inference-seed"), 1)
             self.assertEqual(argv[argv.index("--inference-seed") + 1], "2718")
 
+    def test_multi_gpu_servers_forward_adaptive_cfg_tau(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = SimpleNamespace(
+                server_script=root / "server.py",
+                server_num_workers=8,
+                mock=False,
+                run_dir=root,
+                checkpoint="step_000001.pt",
+                dataset_stats_path=None,
+                norm_stats_meta_dir=None,
+                action_horizon=None,
+                num_inference_steps=None,
+                inference_seed=2718,
+                text_cfg_scale=2.0,
+                adaptive_cfg_tau=0.05,
+                load_text_encoder=False,
+                api_token=None,
+            )
+            server = SimpleNamespace(device="cuda", bind_host="0.0.0.0", port=5570)
+            argv = ORCHESTRATOR._build_server_argv(args, server)
+        self.assertEqual(argv[argv.index("--text-cfg-scale") + 1], "2.0")
+        self.assertEqual(argv[argv.index("--adaptive-cfg-tau") + 1], "0.05")
+
     def test_combined_summary_records_inference_seed(self):
         args = SimpleNamespace(
             client_host="127.0.0.1",
@@ -399,6 +423,14 @@ class DexJoCoInferenceSeedRoutingTest(unittest.TestCase):
             metadata["model_provenance"]["checkpoint_sha256"],
             "a" * 64,
         )
+        self.assertIsNone(metadata["adaptive_cfg_tau"])
+        args.adaptive_cfg_tau = 0.05
+        metadata = ORCHESTRATOR._combined_summary_metadata(
+            args,
+            gpus=[0, 1, 2, 3],
+            ports=[5570, 5571, 5572, 5573],
+        )
+        self.assertEqual(metadata["adaptive_cfg_tau"], 0.05)
         args.inference_seed = None
         metadata = ORCHESTRATOR._combined_summary_metadata(
             args,

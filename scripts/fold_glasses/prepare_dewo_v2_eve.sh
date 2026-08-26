@@ -245,8 +245,8 @@ export B1_VIDEO_TRIM_META=${TRIM_META_ROOT}/collection_summary.json
 export B1_VIDEO_EXPERIMENT_ROOT=${EXP_ROOT}
 export VAE_LATENT_CACHE_DIR=${VAE_LATENT_CACHE_DIR}
 export REQUIRE_VAE_LATENT_CACHE=1
-export DEWO_TASK=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5
-export DEWO_VARIANT=B1-jump-fast-lora
+export DEWO_TASK=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_full_1e-4
+export DEWO_VARIANT=B1-jump-fast-full-1e-4-scratch
 export FITWAM_WANDB_GROUP=fold_glasses_dewo_v2_opensource
 EOF
 log "wrote ${env_file}"
@@ -255,8 +255,8 @@ proto_json="${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.json"
 if [[ ! -f "${proto_json}" ]]; then
   cat > "${proto_json}" <<EOF
 {
-  "protocol": "fold_glasses_dewo_v2_jump_fast_lora_opensource",
-  "variant": "B1-jump-fast-lora",
+  "protocol": "fold_glasses_dewo_v2_jump_fast_full_opensource",
+  "variant": "B1-jump-fast-full-1e-4-scratch",
   "stack": "opensource_224_zscore",
   "manifest": "${b1_manifest}",
   "val_manifest": "${val_manifest}",
@@ -278,7 +278,7 @@ set +a
 # Text/FAST caches are built before VAE pre-encode; do not require latents yet.
 export REQUIRE_VAE_LATENT_CACHE=0
 "${ENV_PREFIX}/bin/python" scripts/precompute_text_embeds.py \
-  "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5" \
+  "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_full_1e-4" \
   2>&1 | tee -a "${LOG_DIR}/precompute_text_embeds.log"
 
 FAST_PRECOMPUTE_GPUS="${FAST_PRECOMPUTE_GPUS:-${GPUS:?Set GPUS or FAST_PRECOMPUTE_GPUS}}"
@@ -287,7 +287,7 @@ IFS=',' read -r -a fast_gpu_array <<< "${FAST_PRECOMPUTE_GPUS}"
 CUDA_VISIBLE_DEVICES="${FAST_PRECOMPUTE_GPUS}" \
   torchrun --standalone --nproc_per_node="${#fast_gpu_array[@]}" \
   scripts/precompute_fast_cfg_text_embeds.py \
-  "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5" \
+  "task=dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_full_1e-4" \
   "+fast_cfg_batch_size=${FAST_CFG_BATCH_SIZE:-64}" \
   2>&1 | tee -a "${LOG_DIR}/precompute_fast_cfg_text_embeds.log"
 # Restore train-time contract written into the env file.
@@ -313,5 +313,5 @@ echo "export TEXT_EMBEDDING_CACHE_SHA256=${text_sha}" >> "${env_file}"
 
 log "DONE. Next (tmux: VAE pre-encode then train on opensource stack):"
 log "  source ${env_file}"
-log "  TASK=fold_glasses GPUS=<ids> bash scripts/dewo_v2/train_jump_fast_lora.sh"
+log "  TASK=fold_glasses INIT=scratch|s0 GPUS=<ids> bash scripts/dewo_v2/train.sh"
 log "  tmux attach -t fold_dewo_v2_train"

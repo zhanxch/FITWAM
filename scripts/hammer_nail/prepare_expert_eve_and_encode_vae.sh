@@ -42,8 +42,8 @@ if [[ -z "${GPUS:-}" ]]; then
   echo "[hammer-nail-expert-vae] ERROR: set GPUS" >&2
   exit 2
 fi
-VAE_ENCODE_VAL="${VAE_ENCODE_VAL:-true}"
-DEWO_TASK="${DEWO_TASK:-dexjoco/dexjoco_hammer_nail_offline_b1_jump_fast_lora_3e-5}"
+VAE_ENCODE_VAL="${VAE_ENCODE_VAL:-false}"
+DEWO_TASK="${DEWO_TASK:-dexjoco/dexjoco_hammer_nail_offline_b1_jump_fast_full_1e-4_s0}"
 mkdir -p "${EXP_ROOT}" "${LOG_DIR}" "${TEXT_CACHE}" "${VAE_LATENT_CACHE_DIR}" "${EXP_ROOT}/protocol"
 
 log() { echo "[hammer-nail-expert-vae $(date -Is)] $*" | tee -a "${LOG_DIR}/prepare_expert_vae.log"; }

@@ -74,13 +74,21 @@ from .datasets.utils import (
 from .datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
+    decode_video_span,
     encode_video_frames,
     get_safe_default_codec,
     get_video_info,
+    select_closest_video_frames,
 )
 import traceback
 
 CODEBASE_VERSION = "v2.1"
+
+
+def _as_timestamp_seconds(value) -> float:
+    if torch.is_tensor(value):
+        return float(value.detach().cpu().reshape(-1)[0].item())
+    return float(value)
 
 
 class LeRobotDatasetMetadata:
@@ -473,6 +481,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.is_compute_episode_stats_image = is_compute_episode_stats_image
         self.delta_indices = None
         self.during_training = True
+        self._video_decode_cache = None
 
         # Unused attributes
         self.image_writer = None
@@ -734,12 +743,58 @@ class LeRobotDataset(torch.utils.data.Dataset):
         the main process and a subprocess fails to access it.
         """
         item = {}
+        cache = getattr(self, "_video_decode_cache", None)
         for vid_key, query_ts in query_timestamps.items():
-            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
+            video_path = str(self.root / self.meta.get_video_file_path(ep_idx, vid_key))
+            if isinstance(cache, dict) and video_path in cache:
+                loaded_frames, loaded_ts = cache[video_path]
+                frames = select_closest_video_frames(
+                    loaded_frames,
+                    loaded_ts,
+                    query_ts,
+                    self.tolerance_s,
+                    video_path=video_path,
+                    backend=self.video_backend,
+                )
+            else:
+                frames = decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
             item[vid_key] = frames.squeeze(0)
 
         return item
+
+    def enable_video_decode_cache(self, enabled: bool = True) -> None:
+        self._video_decode_cache = {} if enabled else None
+
+    def clear_video_decode_cache(self) -> None:
+        cache = getattr(self, "_video_decode_cache", None)
+        if isinstance(cache, dict):
+            cache.clear()
+
+    def prefetch_episode_video(self, ep_idx: int) -> None:
+        """Decode each camera of `ep_idx` once so overlapping windows can slice in memory."""
+        if getattr(self, "_video_decode_cache", None) is None:
+            self._video_decode_cache = {}
+        ep_idx = int(ep_idx)
+        if self.episodes is not None:
+            local_ep = self.episodes.index(ep_idx)
+        else:
+            local_ep = int(ep_idx)
+        ep_start = int(self.episode_data_index["from"][local_ep].item())
+        ep_end = int(self.episode_data_index["to"][local_ep].item())
+        if ep_end <= ep_start:
+            return
+        first_ts = _as_timestamp_seconds(self.hf_dataset[ep_start]["timestamp"])
+        last_ts = _as_timestamp_seconds(self.hf_dataset[ep_end - 1]["timestamp"])
+        for vid_key in self.meta.video_keys:
+            video_path = str(self.root / self.meta.get_video_file_path(ep_idx, vid_key))
+            frames, loaded_ts = decode_video_span(
+                video_path,
+                first_ts,
+                last_ts,
+                self.tolerance_s,
+                self.video_backend,
+            )
+            self._video_decode_cache[video_path] = (frames, loaded_ts)
 
     def _add_padding_keys(self, item: dict, padding: dict[str, list[bool]]) -> dict:
         for key, val in padding.items():
@@ -1073,6 +1128,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj.episode_data_index = None
+        obj.during_training = True
+        obj._video_decode_cache = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.video_codec = video_codec
         obj.is_compute_episode_stats_image = is_compute_episode_stats_image
@@ -1157,6 +1214,14 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def set_during_training(self, during_training: bool):
         for dataset in self._datasets:
             dataset.during_training = during_training
+
+    def enable_video_decode_cache(self, enabled: bool = True) -> None:
+        for dataset in self._datasets:
+            dataset.enable_video_decode_cache(enabled)
+
+    def clear_video_decode_cache(self) -> None:
+        for dataset in self._datasets:
+            dataset.clear_video_decode_cache()
 
     @property
     def repo_id_to_index(self):

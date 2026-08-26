@@ -10,12 +10,26 @@ cd "${ROOT_DIR}"
 source "${ROOT_DIR}/scripts/dewo_v2/lib.sh"
 
 dewo_v2_require_task
+CALLER_DEWO_TASK="${DEWO_TASK:-}"
+CALLER_CFG_SUCCESS_SUFFIX="${CFG_SUCCESS_SUFFIX:-}"
+CALLER_CFG_FAILURE_SUFFIX="${CFG_FAILURE_SUFFIX:-}"
+CALLER_CFG_PRIMARY="${CFG_PRIMARY:-}"
+CALLER_CFG_AUX_SUCCESS="${CFG_AUX_SUCCESS:-}"
+CALLER_CFG_AUX_FAIL="${CFG_AUX_FAIL:-}"
 dewo_v2_load_task "${TASK}"
+if [[ -n "${CALLER_DEWO_TASK}" ]]; then
+  export DEWO_TASK="${CALLER_DEWO_TASK}"
+fi
+[[ -z "${CALLER_CFG_SUCCESS_SUFFIX}" ]] || export CFG_SUCCESS_SUFFIX="${CALLER_CFG_SUCCESS_SUFFIX}"
+[[ -z "${CALLER_CFG_FAILURE_SUFFIX}" ]] || export CFG_FAILURE_SUFFIX="${CALLER_CFG_FAILURE_SUFFIX}"
+[[ -z "${CALLER_CFG_PRIMARY}" ]] || export CFG_PRIMARY="${CALLER_CFG_PRIMARY}"
+[[ -z "${CALLER_CFG_AUX_SUCCESS}" ]] || export CFG_AUX_SUCCESS="${CALLER_CFG_AUX_SUCCESS}"
+[[ -z "${CALLER_CFG_AUX_FAIL}" ]] || export CFG_AUX_FAIL="${CALLER_CFG_AUX_FAIL}"
 
 PRIMARY_KIND="${PRIMARY_KIND:-expert}"
 PRIMARY_N="${PRIMARY_N:-15}"
 PRIMARY_SEED="${PRIMARY_SEED:-20260820}"
-if [[ "${PRIMARY_KIND}" == "success_rollouts" ]]; then
+if [[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
   PRIMARY_DATASET="${PRIMARY_DATASET:-${ROLLOUT_RAW:-}}"
   if [[ -z "${PRIMARY_DATASET}" ]]; then
     echo "[dewo-v2-pair] ERROR: PRIMARY_KIND=success_rollouts needs PRIMARY_DATASET or ROLLOUT_RAW" >&2
@@ -89,7 +103,7 @@ norm_sha="$(python -c "import hashlib,sys; from pathlib import Path; print(hashl
 mkdir -p "${EVE_ROOT}/splits" "${EVE_ROOT}/manifests" "${EVE_ROOT}/protocol"
 PAIR_ID="${TASK}_pair_events"
 PRIMARY_MANIFEST_FLAGS=()
-if [[ "${PRIMARY_KIND}" == "success_rollouts" ]]; then
+if [[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
   PRIMARY_ID="${TASK}_s0_success_rollouts"
   PRIMARY_MANIFEST_FLAGS=(--primary-source success_rollouts)
 else
@@ -98,7 +112,16 @@ else
 fi
 
 if [[ ! -f "${EVE_ROOT}/splits/episode_splits.jsonl" ]]; then
-  if [[ "${PRIMARY_KIND}" == "success_rollouts" ]]; then
+  if [[ "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
+    log "selecting one complete success per 4/4 all-success seed as D0 (v8)"
+    "${ENV_PREFIX}/bin/python" scripts/dewo_v2/select_success_rollout_primary.py \
+      --dataset "${BASE_DATASET}" \
+      --dataset-id "${PRIMARY_ID}" \
+      --mode one_per_all_success_seed \
+      --seed "${PRIMARY_SEED}" \
+      --output-json "${EVE_ROOT}/protocol/primary_success_episodes.json" \
+      --output-splits "${EVE_ROOT}/splits/episode_splits.jsonl"
+  elif [[ "${PRIMARY_KIND}" == "success_rollouts" ]]; then
     log "selecting ${PRIMARY_N} complete success rollouts as primary (no expert)"
     "${ENV_PREFIX}/bin/python" scripts/dewo_v2/select_success_rollout_primary.py \
       --dataset "${BASE_DATASET}" \
@@ -120,7 +143,7 @@ if [[ ! -f "${EVE_ROOT}/splits/episode_splits.jsonl" ]]; then
 fi
 
 if [[ ! -f "${EVE_ROOT}/episode_meta.jsonl" ]]; then
-  if [[ "${PRIMARY_KIND}" == "success_rollouts" ]]; then
+  if [[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
     log "init-base S0 success rollouts (force-success; failures are split=test)"
     source_type="policy_rollout"
     source_policy="s0_success_rollout"
@@ -156,7 +179,12 @@ log "build primary train manifest id=${PRIMARY_ID} kind=${PRIMARY_KIND}"
   --splits train
 
 pair_manifest="${EVE_ROOT}/manifests/offline_b1_jump_fast_pair.json"
-log "rewrite-manifest: ${PRIMARY_KIND} primary + dual-role pair events"
+PAIR_HORIZON="${PAIR_HORIZON:-crop33}"
+PAIR_MANIFEST_FLAGS=()
+if [[ "${PAIR_HORIZON}" == "full" ]]; then
+  PAIR_MANIFEST_FLAGS+=(--horizon full --skip-aux-success)
+fi
+log "rewrite-manifest: ${PRIMARY_KIND} primary + dual-role pair events horizon=${PAIR_HORIZON}"
 "${ENV_PREFIX}/bin/python" scripts/fold_glasses/build_dewo_v2_pair_manifest.py \
   --expert-manifest "${primary_manifest}" \
   --pair-dataset "${PAIR_DATASET}" \
@@ -164,7 +192,8 @@ log "rewrite-manifest: ${PRIMARY_KIND} primary + dual-role pair events"
   --prompt "${SUCCESS_PROMPT}" \
   --recipe "${TASK}_dewo_v2_recoverability_pairs" \
   --output "${pair_manifest}" \
-  "${PRIMARY_MANIFEST_FLAGS[@]}"
+  "${PRIMARY_MANIFEST_FLAGS[@]}" \
+  "${PAIR_MANIFEST_FLAGS[@]}"
 
 val_manifest="${EVE_ROOT}/manifests/offline_selection_primary_success.json"
 log "build stride-1 val selection manifest (${PRIMARY_KIND})"
@@ -205,11 +234,12 @@ export NORM_STATS_BUNDLE_SHA256=${norm_sha}
 export TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE}
 export CFG_TASK_CONFIG_DIR=${CFG_TASK_CONFIG_DIR}
 export B1_VIDEO_EXPERIMENT_ROOT=${EXP_ROOT}
-# VAE latent cache is opt-in (USE_VAE_LATENT_CACHE=1). Default train uses online VAE.
+# Default train reads pre-encoded VAE latents from prepare (USE_VAE_LATENT_CACHE=1).
+export USE_VAE_LATENT_CACHE=1
 export VAE_LATENT_CACHE_DIR=${VAE_LATENT_CACHE_DIR}
-export REQUIRE_VAE_LATENT_CACHE=0
+export REQUIRE_VAE_LATENT_CACHE=1
 export DEWO_TASK=${DEWO_TASK}
-export DEWO_VARIANT=B1-jump-fast-lora-pair
+export DEWO_VARIANT=B1-jump-fast-pair
 export DEWO_PROTOCOL=${DEWO_PROTOCOL}
 export DEWO_OUTPUT_DIR=${DEWO_OUTPUT_DIR}
 export FITWAM_WANDB_GROUP=${TASK}_dewo_v2_pair
@@ -227,13 +257,38 @@ EOF
   echo "export BASE_DATASET=${BASE_DATASET}"
   echo "export PRIMARY_KIND=${PRIMARY_KIND}"
   echo "export ROLLOUT_RAW=${ROLLOUT_RAW:-${PRIMARY_DATASET:-}}"
+  echo "export DEWO_TASK=${DEWO_TASK}"
+  echo "export TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE}"
+  [[ -z "${CFG_SUCCESS_SUFFIX:-}" ]] || echo "export CFG_SUCCESS_SUFFIX=${CFG_SUCCESS_SUFFIX@Q}"
+  [[ -z "${CFG_FAILURE_SUFFIX:-}" ]] || echo "export CFG_FAILURE_SUFFIX=${CFG_FAILURE_SUFFIX@Q}"
+  if [[ -n "${CFG_PRIMARY:-}" ]]; then
+    IFS=',' read -r _o _f _b <<< "${CFG_PRIMARY}"
+    echo "export CFG_PRIMARY=${CFG_PRIMARY}"
+    echo "export CFG_PRIMARY_OUTCOME=${_o}"
+    echo "export CFG_PRIMARY_FAST=${_f}"
+    echo "export CFG_PRIMARY_BASE=${_b}"
+  fi
+  if [[ -n "${CFG_AUX_SUCCESS:-}" ]]; then
+    IFS=',' read -r _o _f _b <<< "${CFG_AUX_SUCCESS}"
+    echo "export CFG_AUX_SUCCESS=${CFG_AUX_SUCCESS}"
+    echo "export CFG_AUX_SUCCESS_OUTCOME=${_o}"
+    echo "export CFG_AUX_SUCCESS_FAST=${_f}"
+    echo "export CFG_AUX_SUCCESS_BASE=${_b}"
+  fi
+  if [[ -n "${CFG_AUX_FAIL:-}" ]]; then
+    IFS=',' read -r _o _f _b <<< "${CFG_AUX_FAIL}"
+    echo "export CFG_AUX_FAIL=${CFG_AUX_FAIL}"
+    echo "export CFG_AUX_FAIL_OUTCOME=${_o}"
+    echo "export CFG_AUX_FAIL_FAST=${_f}"
+    echo "export CFG_AUX_FAIL_BASE=${_b}"
+  fi
 } >> "${env_file}"
 log "wrote ${env_file}"
 
 cat > "${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.json" <<EOF
 {
   "protocol": "${TASK}_dewo_v2_recoverability_pairs",
-  "variant": "B1-jump-fast-lora-pair",
+  "variant": "B1-jump-fast-pair",
   "stack": "opensource_224_zscore",
   "manifest": "${pair_manifest}",
   "val_manifest": "${val_manifest}",
@@ -241,7 +296,7 @@ cat > "${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.json" <<EOF
   "pretrained_norm_stats": "${PRETRAINED_NORM_STATS}",
   "source_config": "${SOURCE_CONFIG}",
   "checkpoint": "${CKPT}",
-  "include_s0_success_rollouts": $([[ "${PRIMARY_KIND}" == "success_rollouts" ]] && echo true || echo false),
+  "include_s0_success_rollouts": $([[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]] && echo true || echo false),
   "primary_kind": "${PRIMARY_KIND}",
   "cfg_recipe": "${EXP_ROOT}/protocol/cfg_recipe.json",
   "cfg": {
@@ -259,10 +314,63 @@ set -a
 # shellcheck disable=SC1090
 source "${env_file}"
 set +a
-export REQUIRE_VAE_LATENT_CACHE=0
 "${ENV_PREFIX}/bin/python" scripts/precompute_text_embeds.py \
   "task=${DEWO_TASK}" \
   2>&1 | tee -a "${LOG_DIR}/precompute_text_embeds.log"
+
+VAE_ENCODE_VAL="${VAE_ENCODE_VAL:-false}"
+if [[ "${SKIP_VAE_PREENCODE:-0}" == "1" || "${USE_VAE_LATENT_CACHE:-1}" == "0" ]]; then
+  log "SKIP VAE pre-encode (USE_VAE_LATENT_CACHE=${USE_VAE_LATENT_CACHE:-1} SKIP_VAE_PREENCODE=${SKIP_VAE_PREENCODE:-0})"
+else
+  GPUS="${GPUS:?Set GPUS for VAE pre-encode}"
+  IFS=',' read -r -a gpu_arr <<< "${GPUS}"
+  nproc="${#gpu_arr[@]}"
+  if [[ "${nproc}" -lt 1 ]]; then
+    log "ERROR: empty GPUS=${GPUS}"
+    exit 2
+  fi
+  log "VAE pre-encode pair windows on GPUs ${GPUS} encode_val=${VAE_ENCODE_VAL}"
+  pids=()
+  if [[ "${nproc}" -gt 1 ]]; then
+    world="${nproc}"
+    for gpu_i in "${!gpu_arr[@]}"; do
+      gpu_id="${gpu_arr[$gpu_i]}"
+      shard_rank="${gpu_i}"
+      (
+        export CUDA_VISIBLE_DEVICES="${gpu_id}"
+        export WORLD_SIZE=1
+        unset RANK LOCAL_RANK MASTER_ADDR MASTER_PORT GROUP_RANK LOCAL_WORLD_SIZE
+        "${ENV_PREFIX}/bin/python" scripts/precompute_vae_latents.py \
+          "task=${DEWO_TASK}" \
+          "+vae_latent_cache_dir=${VAE_LATENT_CACHE_DIR}" \
+          "+vae_shard_rank=${shard_rank}" \
+          "+vae_shard_world=${world}" \
+          "+encode_val=${VAE_ENCODE_VAL}" \
+          2>&1 | tee -a "${LOG_DIR}/precompute_vae_latents.shard${shard_rank}.log"
+      ) &
+      pids+=("$!")
+    done
+    fail=0
+    for pid in "${pids[@]}"; do
+      if ! wait "${pid}"; then
+        fail=1
+      fi
+    done
+    if [[ "${fail}" -ne 0 ]]; then
+      log "ERROR: one or more VAE shard workers failed"
+      exit 2
+    fi
+  else
+    export CUDA_VISIBLE_DEVICES="${gpu_arr[0]}"
+    "${ENV_PREFIX}/bin/python" scripts/precompute_vae_latents.py \
+      "task=${DEWO_TASK}" \
+      "+vae_latent_cache_dir=${VAE_LATENT_CACHE_DIR}" \
+      "+encode_val=${VAE_ENCODE_VAL}" \
+      2>&1 | tee -a "${LOG_DIR}/precompute_vae_latents.log"
+  fi
+  n_vae="$(find "${VAE_LATENT_CACHE_DIR}" -name '*.pt' 2>/dev/null | wc -l | tr -d ' ')"
+  log "VAE pre-encode done files=${n_vae} cache=${VAE_LATENT_CACHE_DIR}"
+fi
 
 # FAST text-emb: only needed when some CFG channel has fast>0.
 # Expert/primary never uses FAST (CFG_PRIMARY_FAST must be 0); default aux still does.
@@ -285,9 +393,6 @@ else
     "+fast_cfg_batch_size=${FAST_CFG_BATCH_SIZE:-64}" \
     2>&1 | tee -a "${LOG_DIR}/precompute_fast_cfg_text_embeds.log"
 fi
-# Keep REQUIRE=0: default train path is online VAE (no pre-encode).
-export REQUIRE_VAE_LATENT_CACHE=0
-
 log "exporting torch-free base + success contexts for DexJoCo CFG eval"
 "${ENV_PREFIX}/bin/python" scripts/export_text_embed_cache_npz.py \
   --cache-dir "${TEXT_CACHE}" \
@@ -306,7 +411,7 @@ PY
 )"
 echo "export TEXT_EMBEDDING_CACHE_SHA256=${text_sha}" >> "${env_file}"
 
-log "DONE. Next (online VAE by default; no VAE pre-encode):"
+log "DONE. Next (pre-encoded VAE cache by default):"
 log "  source ${env_file}"
-log "  TASK=${TASK} GPUS=<ids> bash scripts/dewo_v2/train_jump_fast_lora.sh"
-log "  # opt-in cache: USE_VAE_LATENT_CACHE=1 TASK=... bash scripts/dewo_v2/train_jump_fast_lora.sh"
+log "  TASK=${TASK} INIT=scratch|s0 GPUS=<ids> bash scripts/dewo_v2/train.sh"
+log "  # opt-out online VAE: USE_VAE_LATENT_CACHE=0 TASK=... bash scripts/dewo_v2/train.sh"

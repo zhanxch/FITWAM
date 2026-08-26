@@ -1,5 +1,7 @@
 import hashlib
 import os
+from collections import OrderedDict
+from pathlib import Path
 from typing import Optional, Any
 import time
 import numpy as np
@@ -38,6 +40,7 @@ def _as_bool(value: Any, *, name: str) -> bool:
 
 
 DEFAULT_PROMPT = "A video recorded from a robot's point of view executing the following instruction: {task}"
+_TEXT_CONTEXT_MEM_CACHE_MAX = 256
 
 class RobotVideoDataset(torch.utils.data.Dataset):
     def __init__(
@@ -182,6 +185,11 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         self.drop_video_when_latents_cached = _as_bool(
             drop_video_when_latents_cached, name="drop_video_when_latents_cached"
         )
+        self.force_skip_text = False
+        self._text_context_mem_cache: OrderedDict[str, tuple[torch.Tensor, torch.Tensor]] = (
+            OrderedDict()
+        )
+        self._text_embedding_cache_dir_ready = False
         if self.require_vae_latent_cache and self.vae_latent_cache_dir is None:
             raise ValueError(
                 "require_vae_latent_cache=True requires vae_latent_cache_dir / "
@@ -406,35 +414,54 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             task_text = task_text.replace(strip_marker, "").strip()
             task_text = " ".join(task_text.split())
 
-        # Use raw action chunk for FAST conditioning (before any further mutation).
-        action_for_cfg = action.detach().cpu().numpy() if torch.is_tensor(action) else action
-        base_task_text = task_text
-        video_task_text, cfg_channel = self._apply_outcome_text_cfg(
-            base_task_text,
-            outcome_flag,
-            actions=action_for_cfg,
-            cfg_schedule=cfg_schedule,
-        )
-        instruction = DEFAULT_PROMPT.format(task=video_task_text)
-        action_instruction = (
-            DEFAULT_PROMPT.format(task=base_task_text)
-            if cfg_channel == "fast"
-            else instruction
-        )
-
-        context, context_mask = self._get_cached_text_context(instruction)
-        # NOTE: to keep consistent with wan2.2's behavior
-        context[~context_mask] = 0.0
-        context_mask = torch.ones_like(context_mask)
-        if cfg_channel == "fast":
-            action_context, action_context_mask = self._get_cached_text_context(
-                action_instruction
-            )
-            action_context[~action_context_mask] = 0.0
-            action_context_mask = torch.ones_like(action_context_mask)
-        else:
+        if bool(getattr(self, "force_skip_text", False)):
+            instruction = DEFAULT_PROMPT.format(task=task_text)
+            action_instruction = instruction
+            cfg_channel = "base"
+            context = torch.zeros(self.context_len, 1, dtype=torch.float32)
+            context_mask = torch.ones(self.context_len, dtype=torch.bool)
             action_context = context
             action_context_mask = context_mask
+            base_context = context
+            base_context_mask = context_mask
+        else:
+            # Use raw action chunk for FAST conditioning (before any further mutation).
+            action_for_cfg = action.detach().cpu().numpy() if torch.is_tensor(action) else action
+            base_task_text = task_text
+            video_task_text, cfg_channel = self._apply_outcome_text_cfg(
+                base_task_text,
+                outcome_flag,
+                actions=action_for_cfg,
+                cfg_schedule=cfg_schedule,
+            )
+            instruction = DEFAULT_PROMPT.format(task=video_task_text)
+            action_instruction = (
+                DEFAULT_PROMPT.format(task=base_task_text)
+                if cfg_channel == "fast"
+                else instruction
+            )
+            base_instruction = DEFAULT_PROMPT.format(task=base_task_text)
+
+            context, context_mask = self._get_cached_text_context(instruction)
+            # NOTE: to keep consistent with wan2.2's behavior
+            context[~context_mask] = 0.0
+            context_mask = torch.ones_like(context_mask)
+            if cfg_channel == "fast":
+                action_context, action_context_mask = self._get_cached_text_context(
+                    action_instruction
+                )
+                action_context[~action_context_mask] = 0.0
+                action_context_mask = torch.ones_like(action_context_mask)
+            else:
+                action_context = context
+                action_context_mask = context_mask
+            if cfg_channel == "base":
+                base_context = context
+                base_context_mask = context_mask
+            else:
+                base_context, base_context_mask = self._get_cached_text_context(base_instruction)
+                base_context[~base_context_mask] = 0.0
+                base_context_mask = torch.ones_like(base_context_mask)
 
         data = {
             "video": video,
@@ -446,6 +473,8 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             "action_prompt": action_instruction,
             "action_context": action_context,
             "action_context_mask": action_context_mask,
+            "base_context": base_context,
+            "base_context_mask": base_context_mask,
             "cfg_channel": cfg_channel,
             "image_is_pad": image_is_pad,
             "action_is_pad": sample["action_is_pad"],
@@ -461,23 +490,36 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         *,
         sample_id: str,
         window_start: int,
+        cache_path: Path | None = None,
+        skip_exists_check: bool = False,
     ) -> dict:
-        if self.vae_latent_cache_dir is None:
-            if self.require_vae_latent_cache:
-                raise ValueError("require_vae_latent_cache=True but vae_latent_cache_dir is unset.")
-            return data
-        cache_path = vae_latent_cache_path(
-            self.vae_latent_cache_dir,
-            sample_id=str(sample_id),
-            window_start=int(window_start),
-        )
-        if not cache_path.exists():
-            if self.require_vae_latent_cache:
-                raise FileNotFoundError(
-                    f"Missing VAE latent cache for sample_id={sample_id!r} "
-                    f"window_start={window_start}: {cache_path}"
-                )
-            return data
+        if skip_exists_check:
+            if cache_path is None:
+                if self.require_vae_latent_cache:
+                    raise FileNotFoundError(
+                        f"Missing VAE latent cache for sample_id={sample_id!r} "
+                        f"window_start={window_start}"
+                    )
+                return data
+        elif cache_path is None:
+            if self.vae_latent_cache_dir is None:
+                if self.require_vae_latent_cache:
+                    raise ValueError(
+                        "require_vae_latent_cache=True but vae_latent_cache_dir is unset."
+                    )
+                return data
+            cache_path = vae_latent_cache_path(
+                self.vae_latent_cache_dir,
+                sample_id=str(sample_id),
+                window_start=int(window_start),
+            )
+            if not cache_path.exists():
+                if self.require_vae_latent_cache:
+                    raise FileNotFoundError(
+                        f"Missing VAE latent cache for sample_id={sample_id!r} "
+                        f"window_start={window_start}: {cache_path}"
+                    )
+                return data
         payload = torch.load(cache_path, map_location="cpu")
         latents = payload["input_latents"] if isinstance(payload, dict) else payload
         if not torch.is_tensor(latents):
@@ -492,11 +534,46 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             data["video"] = torch.zeros(3, t_video, 16, 16, dtype=torch.float32)
         return data
 
+    def enable_video_decode_cache(self, enabled: bool = True) -> None:
+        multi = getattr(self.lerobot_dataset, "multi_dataset", None)
+        if multi is None:
+            return
+        multi.enable_video_decode_cache(enabled)
+
+    def clear_video_decode_cache(self) -> None:
+        multi = getattr(self.lerobot_dataset, "multi_dataset", None)
+        if multi is None:
+            return
+        multi.clear_video_decode_cache()
+
+    def prefetch_episode_video(self, dataset_root: str, episode_index: int) -> None:
+        """Decode one LeRobot episode's cameras into the in-memory span cache."""
+        target = str(Path(dataset_root).expanduser().resolve())
+        multi = getattr(self.lerobot_dataset, "multi_dataset", None)
+        if multi is None:
+            raise RuntimeError("Cannot prefetch episode video without a MultiLeRobotDataset.")
+        for dataset in multi._datasets:
+            if str(Path(dataset.root).expanduser().resolve()) == target:
+                dataset.prefetch_episode_video(int(episode_index))
+                return
+        raise KeyError(f"No LeRobot dataset root matching {dataset_root!r}")
+
     def _get_cached_text_context(self, prompt: str):
         if self.text_embedding_cache_dir is None:
             raise ValueError("text_embedding_cache_dir is not set.")
+        mem = getattr(self, "_text_context_mem_cache", None)
+        if mem is None:
+            self._text_context_mem_cache = mem = OrderedDict()
+        cached = mem.get(prompt)
+        if cached is not None:
+            mem.move_to_end(prompt)
+            context, context_mask = cached
+            return context.clone(), context_mask.clone()
+
         cache_dir = self.text_embedding_cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
+        if not getattr(self, "_text_embedding_cache_dir_ready", False):
+            os.makedirs(cache_dir, exist_ok=True)
+            self._text_embedding_cache_dir_ready = True
         hashed = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         cache_path = os.path.join(cache_dir, f"{hashed}.t5_len{self.context_len}.wan22ti2v5b.pt")
         if not os.path.exists(cache_path):
@@ -524,7 +601,10 @@ class RobotVideoDataset(torch.utils.data.Dataset):
                 f"Cached mask_len mismatch: expected {self.context_len}, got {context_mask.shape[0]} in {cache_path}"
             )
 
-        return context, context_mask
+        mem[prompt] = (context, context_mask)
+        while len(mem) > _TEXT_CONTEXT_MEM_CACHE_MAX:
+            mem.popitem(last=False)
+        return context.clone(), context_mask.clone()
 
     def __getitem__(self, idx):
         try:

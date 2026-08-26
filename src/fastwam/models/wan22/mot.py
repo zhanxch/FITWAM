@@ -261,8 +261,12 @@ class MoT(nn.Module):
         video_t_mod: torch.Tensor,
         video_context_payload: Optional[dict],
         video_attention_mask: torch.Tensor,
-    ) -> list[dict[str, torch.Tensor]]:
+        return_tokens: bool = False,
+    ) -> list[dict[str, torch.Tensor]] | tuple[list[dict[str, torch.Tensor]], torch.Tensor]:
         """Prefill video branch once and cache per-layer K/V for action denoising.
+
+        ``return_tokens=True`` also returns the final video tokens after the
+        last layer (v9 value head). Default stays cache-only.
 
         Args:
             video_tokens: Video tokens before layer 0, shape [B, Sv, D].
@@ -338,6 +342,8 @@ class MoT(nn.Module):
                 context_payload=video_context_payload,
             )
             kv_cache.append({"k": k, "v": v})
+        if return_tokens:
+            return kv_cache, x
         return kv_cache
 
     def forward_action_with_video_cache(
@@ -527,7 +533,9 @@ class MoT(nn.Module):
                     f"mask={attention_mask.shape[0]} vs tokens={total_seq}"
                 )
 
-            mixed = self._mixed_attention(q_cat=q_cat, k_cat=k_cat, v_cat=v_cat, attention_mask=attention_mask)
+            mixed = self._mixed_attention(
+                q_cat=q_cat, k_cat=k_cat, v_cat=v_cat, attention_mask=attention_mask
+            )
 
             start = 0
             for name, seq_len in zip(self.expert_order, seq_lens):

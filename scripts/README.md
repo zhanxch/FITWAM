@@ -105,9 +105,9 @@ TASK=water_plant GPUS=4,5,6,7 bash scripts/dewo_v2/collect_opensource_4x50.sh
 
 任务表：`scripts/dewo_v2/tasks.py`。兼容包装在 `scripts/fold_glasses/`、`scripts/hammer_nail/`、`scripts/water_plant/`，只设置 `TASK=`。
 
-## Video LoRA
+## Full DiT（无 LoRA）
 
-DEWO v2 用 Hydra `dexjoco_dewo_v2_offline_b1_jump_fast_lora_3e-5`（224 / z-score），不要再走已删除的 384 `train_2cam` 任务。
+DEWO v2 只用全参 Hydra：`dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4`（scratch）或 `dexjoco_dewo_v2_offline_b1_jump_fast_full_s0`（从 S0 续训）。没有 LoRA 方案。不要再走已删除的 384 `train_2cam` 任务。
 
 ## 其他
 

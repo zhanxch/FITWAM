@@ -67,3 +67,7 @@ state_scheduler:
 loss:
   lambda_action: 1.0
   lambda_state: 1.0
+
+# Null = no adapter (default). DEWO v5 sets enabled=true on the task yaml
+# (CFG-condition residual; parameter names stay uncond_down / uncond_up).
+uncond_adapter: null

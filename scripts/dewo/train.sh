@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(realpath -e -- "$(dirname -- "${BASH_SOURCE[0]}")")"
+ROOT_DIR="$(realpath -e -- "${SCRIPT_DIR}/../..")"
 cd "${ROOT_DIR}"
 
 DEWO_TASK="${DEWO_TASK:-}"
-: "${DEWO_TASK:?Set DEWO_TASK to a Hydra task config, for example dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_lora_3e-5}"
+: "${DEWO_TASK:?Set DEWO_TASK to a Hydra task config, for example dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4}"
+if [[ "${DEWO_TASK}" == *lora* || "${DEWO_TASK}" == *LoRA* ]]; then
+  echo "ERROR: LoRA Hydra tasks are removed. Use dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4 or _full_s0." >&2
+  exit 2
+fi
 : "${EVE_MANIFEST_PATH:?Set EVE_MANIFEST_PATH to the DEWO training manifest}"
 : "${EVE_VAL_MANIFEST_PATH:?Set EVE_VAL_MANIFEST_PATH to the validation manifest}"
 : "${INIT_WEIGHTS:?Set INIT_WEIGHTS to the initialization checkpoint}"
@@ -128,7 +133,7 @@ echo "[dewo] task=${DEWO_TASK} gpus=${CUDA_VISIBLE_DEVICES} run_id=${RUN_ID}"
 echo "[dewo] train_manifest=${EVE_MANIFEST_PATH}"
 echo "[dewo] init=${FASTWAM_RESUME}"
 
-bash scripts/train_zero1.sh "${NPROC_PER_NODE}" \
+bash "${ROOT_DIR}/scripts/train_zero1.sh" "${NPROC_PER_NODE}" \
   "task=${DEWO_TASK}" \
   "output_dir=${DEWO_OUTPUT_DIR}/${RUN_ID}" \
   "wandb.name=${WANDB_RUN_NAME}" \

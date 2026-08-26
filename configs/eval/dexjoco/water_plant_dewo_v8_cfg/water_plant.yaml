@@ -1,0 +1,11 @@
+# Frozen DEWO v8 inference prompts. Mix subtracts ε_base (same as v6).
+# The positive branch is Successful (action CFG); cfg_base_prompt is the
+# task-only S0 channel. Video stays base. Drop-edge value gate is a client
+# option (`--cfg-gate-mode value`), not σ(V−τ).
+env_name: water_plant
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Grasp the watering can and apply water to the plant. Successful execution."
+cfg_base_prompt: "Grasp the watering can and apply water to the plant."
+robot_type: single_arm

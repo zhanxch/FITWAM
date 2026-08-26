@@ -41,6 +41,7 @@ def normalize_cfg_channel_probs(
 CFG_SCHEDULE_PRIMARY = "primary"
 CFG_SCHEDULE_AUX_SUCCESS = "aux_success"
 CFG_SCHEDULE_AUX_FAILURE = "aux_failure"
+CFG_SCHEDULE_BASE = "base"
 
 
 def select_cfg_schedule_probs(
@@ -57,9 +58,14 @@ def select_cfg_schedule_probs(
     - primary: action-loss samples; outcome/base only, never FAST
     - aux_success: video-only success events
     - aux_failure: video-only failure events
+
+    DEWO v6 also uses:
+    - base: always the task prompt (D0 alignment; no success/failure suffix)
     """
 
     schedule = None if cfg_schedule in {None, ""} else str(cfg_schedule)
+    if schedule == CFG_SCHEDULE_BASE:
+        return {"outcome": 0.0, "fast": 0.0, "base": 1.0}
     if schedule == CFG_SCHEDULE_PRIMARY:
         selected = (
             primary_channel_probs if primary_channel_probs is not None else channel_probs
@@ -78,7 +84,7 @@ def select_cfg_schedule_probs(
         )
     else:
         raise ValueError(
-            "cfg_schedule must be primary, aux_success, aux_failure, or empty, "
+            "cfg_schedule must be primary, aux_success, aux_failure, base, or empty, "
             f"got {cfg_schedule!r}"
         )
 
@@ -123,7 +129,16 @@ def _get_fast_processor(model_id: str = "physical-intelligence/fast"):
     if _FAST_PROCESSOR is None:
         from transformers import AutoProcessor
 
-        _FAST_PROCESSOR = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        # Prefer local hub cache so training does not depend on a live proxy /
+        # hf-mirror. Fall back to online only if the snapshot is missing.
+        try:
+            _FAST_PROCESSOR = AutoProcessor.from_pretrained(
+                model_id, trust_remote_code=True, local_files_only=True
+            )
+        except Exception:
+            _FAST_PROCESSOR = AutoProcessor.from_pretrained(
+                model_id, trust_remote_code=True
+            )
     return _FAST_PROCESSOR
 
 

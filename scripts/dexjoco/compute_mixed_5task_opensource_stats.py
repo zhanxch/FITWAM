@@ -9,6 +9,7 @@ but concatenates the five official expert LeRobot datasets. Does not use the loc
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -16,8 +17,11 @@ import numpy as np
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-ROOT = Path("/data_all/xiangchengzhan/FastWAM")
-OPEN = Path("/data_all/xiangchengzhan/FastWAM-infer-in-DexJoco")
+SCRIPT_ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("FASTWAM_ROOT", str(SCRIPT_ROOT))).expanduser().resolve()
+OPEN = Path(
+    os.environ.get("FASTWAM_OPEN_REPO", str(ROOT.parent / "FastWAM-infer-in-DexJoco"))
+).expanduser().resolve()
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
@@ -95,6 +99,13 @@ def _compare(mixed: dict) -> None:
 
 
 def main() -> int:
+    print(f"[mixed-stats] fastwam_root={ROOT}", flush=True)
+    print(f"[mixed-stats] open_repo={OPEN}", flush=True)
+    source_dir = ROOT / "src" / "fastwam"
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"FastWAM source directory missing: {source_dir}")
+    if not OPEN.is_dir():
+        raise FileNotFoundError(f"OPEN repository missing: {OPEN}")
     dirs = [str(EXPERT_ROOT / t) for t in TASKS]
     for d in dirs:
         if not Path(d).is_dir():

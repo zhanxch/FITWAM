@@ -1,54 +1,68 @@
 # @package _global_
-# Water-plant DEWO v2 on the opensource stack (checkpoints/dexjoco).
-# Data/CFG come from the shared dewo_v2 recipe (hammer_nail CFG defaults,
-# overridable via CFG_* env vars).
+# DEWO v5: freeze S0; train a bounded residual for action CFG.
+# Video text is always the S0 base prompt. Action text gets CFG dropout.
+# Video K/V residual is trained by action loss + identity lock, not video BC.
+# Weights are adapter-only (`dewo_v5_uncond_adapter_v1`). INIT=s0 only.
 
 defaults:
   - override /data: dewo_v2_eve_jump_fast_cfg
-  - override /model: fastwam_video_lora
+  - override /model: fastwam
   - _self_
 
-output_dir: ./runs/dexjoco_water_plant_dewo_v2/${oc.env:RUN_ID}
+output_dir: ${oc.env:DEWO_OUTPUT_DIR,./runs/dexjoco_dewo_v5}/${oc.env:RUN_ID}
 
-batch_size: 4
+train_mode: dewo_v5_uncond_adapter
+
+batch_size: 16
 num_workers: 4
 role_balanced_sampling:
   enabled: true
-  primary_per_batch: 2
+  primary_per_batch: 16
+  auxiliary_roles: []
+  ignore_roles:
+    - auxiliary
+    - auxiliary_success
   seed: ${seed}
 
 model:
-  load_vae: true
-  fill_vae_latent_cache: true
-  vae_latent_cache_dir: ${oc.env:VAE_LATENT_CACHE_DIR,null}
+  load_vae: false
+  fill_vae_latent_cache: false
   proprio_dim: ${data.train.processor.proprio_output_dim}
   state_dit_config: null
   skip_dit_load_from_pretrain: true
   action_dit_pretrained_path: null
-  video_lora:
+  video_dit_config:
+    use_gradient_checkpointing: true
+  action_dit_config:
+    use_gradient_checkpointing: true
+  loss:
+    lambda_video: 0.0
+    lambda_action: 1.0
+    lambda_state: 1.0
+  uncond_adapter:
     enabled: true
-    rank: 32
-    alpha: 32
+    rank: ${oc.decode:${oc.env:ADAPTER_RANK,16}}
+    alpha: ${oc.decode:${oc.env:ADAPTER_ALPHA,16}}
+    pin_video_context_to_base: true
+    identity_lock_lambda: 0.1
     target_modules:
-      - self_attn.q
-      - self_attn.k
-      - self_attn.v
-      - self_attn.o
-      - ffn.0
-      - ffn.2
-    checkpoint: null
+      - cross_attn.k
+      - cross_attn.v
+    experts:
+      - video
+      - action
 
 lr_scheduler_type: cosine
-learning_rate: 3.0e-5
+learning_rate: 1.0e-4
 num_epochs: 100
-max_steps: 15000
+max_steps: 1500
 log_every: 10
-save_every: 2500
-save_weights_every: 0
-save_weight_steps: [2500, 5000, 7500, 10000, 12500, 15000]
-save_state_every: 2500
+save_every: 500
+save_weights_every: 500
+save_weight_steps: []
+save_state_every: 0
 state_keep_last: 1
-eval_every: 2500
+eval_every: 0
 eval_num_inference_steps: 10
 eval_num_samples: 8
 eval_seed: 20260812
@@ -64,8 +78,8 @@ resume: ${oc.env:FASTWAM_RESUME}
 resume_experts: null
 
 experiment_provenance:
-  protocol: water_plant_dewo_v2_jump_fast_lora_opensource
-  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-lora}
+  protocol: ${oc.env:DEWO_PROTOCOL,dewo_v5_uncond_adapter_isolated}
+  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-v5-uncond-adapter}
   stack: opensource_224_zscore
   source_checkpoint_sha256: ${oc.env:FASTWAM_RESUME_SHA256}
   source_config_sha256: ${oc.env:FASTWAM_SOURCE_CONFIG_SHA256}
@@ -81,5 +95,5 @@ wandb:
   workspace: ${oc.env:WANDB_ENTITY,null}
   project: ${oc.env:WANDB_PROJECT,fitwam}
   name: ${oc.env:WANDB_RUN_NAME}
-  group: water_plant_dewo_v2_opensource
+  group: ${oc.env:FITWAM_WANDB_GROUP,dewo_v5_opensource}
   mode: online

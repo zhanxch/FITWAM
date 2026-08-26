@@ -33,6 +33,7 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
         seed: int = 0,
         primary_role: str = "success",
         auxiliary_roles: str | Sequence[str] | None = None,
+        ignore_roles: str | Sequence[str] | None = None,
     ) -> None:
         self.roles = tuple(roles)
         self.batch_size = self._positive_int("batch_size", batch_size)
@@ -56,12 +57,36 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
         self.rank = int(rank)
         self.seed = int(seed)
         self.primary_role = self._role_name("primary_role", primary_role)
+        self.ignore_roles = self._normalize_ignore_roles(ignore_roles)
         self.auxiliary_roles = self._normalize_auxiliary_roles(auxiliary_roles)
+        if self.primary_role in self.ignore_roles:
+            raise ValueError("`ignore_roles` cannot contain `primary_role`.")
+        if self.auxiliary_roles is not None:
+            overlap = sorted(set(self.auxiliary_roles) & set(self.ignore_roles))
+            if overlap:
+                raise ValueError(
+                    "`ignore_roles` cannot overlap `auxiliary_roles`: "
+                    f"{overlap!r}."
+                )
 
-        if self.primary_per_batch >= self.batch_size:
+        if self.primary_per_batch > self.batch_size:
             raise ValueError(
-                "`primary_per_batch` must be smaller than `batch_size` so that "
-                "every batch contains at least one auxiliary sample."
+                "`primary_per_batch` cannot exceed `batch_size`, got "
+                f"primary_per_batch={self.primary_per_batch} batch_size={self.batch_size}."
+            )
+        if self.auxiliary_roles and self.primary_per_batch >= self.batch_size:
+            raise ValueError(
+                "`primary_per_batch` must be smaller than `batch_size` when "
+                "auxiliary roles are requested."
+            )
+        if (
+            self.auxiliary_roles is not None
+            and len(self.auxiliary_roles) == 0
+            and self.primary_per_batch != self.batch_size
+        ):
+            raise ValueError(
+                "Empty `auxiliary_roles` requires `primary_per_batch == batch_size` "
+                "(all-primary batches)."
             )
         if not 0 <= self.rank < self.num_replicas:
             raise ValueError(
@@ -87,7 +112,9 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             len(self._primary_indices) / primary_global
         )
         for role, indices in self._auxiliary_indices_by_role.items():
-            draws = self._auxiliary_draws_by_role[role] * self.num_replicas
+            draws = self._auxiliary_draws_by_role.get(role, 0) * self.num_replicas
+            if draws < 1:
+                continue
             self.num_batches_per_epoch = max(
                 self.num_batches_per_epoch,
                 math.ceil(len(indices) / draws),
@@ -117,9 +144,7 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             normalized = (self._role_name("auxiliary_roles", auxiliary_roles),)
         else:
             normalized = tuple(auxiliary_roles)
-            if not normalized or any(
-                not isinstance(role, str) or not role for role in normalized
-            ):
+            if any(not isinstance(role, str) or not role for role in normalized):
                 raise ValueError(
                     "`auxiliary_roles` must contain non-empty role strings."
                 )
@@ -129,12 +154,33 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             )
         return normalized
 
+    def _normalize_ignore_roles(
+        self, ignore_roles: str | Sequence[str] | None
+    ) -> tuple[str, ...]:
+        if ignore_roles is None:
+            return ()
+        if isinstance(ignore_roles, str):
+            if not ignore_roles.strip():
+                return ()
+            return (self._role_name("ignore_roles", ignore_roles),)
+        return tuple(
+            dict.fromkeys(
+                self._role_name("ignore_roles", role) for role in ignore_roles
+            )
+        )
+
     def _is_auxiliary(self, role: str) -> bool:
+        if role in self.ignore_roles:
+            return False
+        if self.auxiliary_per_batch == 0:
+            return False
         if self.auxiliary_roles is None:
             return role != self.primary_role
         return role in self.auxiliary_roles
 
     def _partition_auxiliary_indices(self) -> dict[str, tuple[int, ...]]:
+        if self.auxiliary_per_batch == 0:
+            return {}
         if self.auxiliary_roles is None or len(self.auxiliary_roles) <= 1:
             key = (
                 self.auxiliary_roles[0]
@@ -151,6 +197,8 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
 
     def _draws_per_auxiliary_role(self) -> dict[str, int]:
         roles = tuple(self._auxiliary_indices_by_role)
+        if not roles or self.auxiliary_per_batch == 0:
+            return {}
         if len(roles) <= 1:
             return {roles[0]: self.auxiliary_per_batch}
         if self.auxiliary_per_batch % len(roles) != 0:
@@ -171,6 +219,20 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             raise ValueError(
                 f"No samples have the primary role {self.primary_role!r}."
             )
+        if self.auxiliary_per_batch == 0:
+            if self.auxiliary_roles is not None:
+                recognized = {
+                    self.primary_role,
+                    *self.auxiliary_roles,
+                    *self.ignore_roles,
+                }
+                unknown = sorted(set(self.roles) - recognized)
+                if unknown:
+                    raise ValueError(
+                        "Dataset roles are not covered by `primary_role`, "
+                        f"`auxiliary_roles`, and `ignore_roles`: {unknown!r}."
+                    )
+            return
         if not self._auxiliary_indices:
             expected = (
                 "a role different from the primary role"
@@ -180,12 +242,16 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
             raise ValueError(f"No samples have an auxiliary role ({expected}).")
 
         if self.auxiliary_roles is not None:
-            recognized = {self.primary_role, *self.auxiliary_roles}
+            recognized = {
+                self.primary_role,
+                *self.auxiliary_roles,
+                *self.ignore_roles,
+            }
             unknown = sorted(set(self.roles) - recognized)
             if unknown:
                 raise ValueError(
-                    "Dataset roles are not covered by `primary_role` and "
-                    f"`auxiliary_roles`: {unknown!r}."
+                    "Dataset roles are not covered by `primary_role`, "
+                    f"`auxiliary_roles`, and `ignore_roles`: {unknown!r}."
                 )
             missing = [
                 role
@@ -313,19 +379,25 @@ class RoleBalancedBatchSampler(Sampler[list[int]]):
         )
         auxiliary_parts: list[list[list[int]]] = []
         for role, indices in self._auxiliary_indices_by_role.items():
+            draws = self._auxiliary_draws_by_role.get(role, 0)
+            if draws < 1:
+                continue
             pool = self._rank_pool(indices, rng)
             auxiliary_parts.append(
                 self._draw_global_batches(
                     pool,
-                    self._auxiliary_draws_by_role[role],
+                    draws,
                     self.num_batches_per_epoch,
                     rng,
                 )
             )
-        auxiliary_batches = [
-            [index for part in auxiliary_parts for index in part[batch_index]]
-            for batch_index in range(self.num_batches_per_epoch)
-        ]
+        if not auxiliary_parts:
+            auxiliary_batches = [[] for _ in range(self.num_batches_per_epoch)]
+        else:
+            auxiliary_batches = [
+                [index for part in auxiliary_parts for index in part[batch_index]]
+                for batch_index in range(self.num_batches_per_epoch)
+            ]
         return primary_batches, auxiliary_batches
 
     def __iter__(self) -> Iterator[list[int]]:

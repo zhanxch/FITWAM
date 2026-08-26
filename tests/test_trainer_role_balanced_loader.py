@@ -353,6 +353,19 @@ class TrainerRoleBalancedLoaderTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "batch contract disagrees"):
             trainer._configure_role_balanced_deepspeed_batch_contract()
 
+    def test_loader_enables_persistent_prefetch_when_num_workers_positive(self):
+        trainer = _trainer(enabled=True)
+        trainer.num_workers = 4
+        loader = _build_role_loader(trainer, _Dataset())
+        self.assertTrue(loader.kwargs["persistent_workers"])
+        self.assertEqual(loader.kwargs["prefetch_factor"], 4)
+
+    def test_loader_omits_persistent_prefetch_when_num_workers_zero(self):
+        trainer = _trainer(enabled=True)
+        loader = _build_role_loader(trainer, _Dataset())
+        self.assertNotIn("persistent_workers", loader.kwargs)
+        self.assertNotIn("prefetch_factor", loader.kwargs)
+
     def test_eve_sampling_roles_follow_manifest_and_keep_failures_auxiliary(self):
         role = EveManifestRobotVideoDataset._sampling_role
 

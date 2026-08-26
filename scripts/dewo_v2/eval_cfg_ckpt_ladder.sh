@@ -11,7 +11,9 @@ source "${ROOT_DIR}/scripts/dewo_v2/lib.sh"
 
 dewo_v2_require_task
 dewo_v2_require_gpus
+CALLER_REPEATS="${REPEATS:-}"
 dewo_v2_load_task "${TASK}"
+[[ -z "${CALLER_REPEATS}" ]] || export REPEATS="${CALLER_REPEATS}"
 
 RUN_DIR="${RUN_DIR:?Set RUN_DIR to the DEWO v2 training run directory}"
 WEIGHTS_DIR="${WEIGHTS_DIR:-${RUN_DIR}/checkpoints/weights}"
@@ -30,7 +32,7 @@ log() { echo "[dewo-cfg-ladder $(date -Is)] $*" | tee -a "${MASTER_LOG}"; }
 
 log "task=${TASK} run_dir=${RUN_DIR}"
 log "steps(reverse)=${CKPT_STEPS}"
-log "gpus=${GPUS} wait_idle=${WAIT_IDLE} cfg_scale=${CFG_SCALE}"
+log "gpus=${GPUS} wait_idle=${WAIT_IDLE} cfg_scale=${CFG_SCALE} repeats=${REPEATS:-4} min_success=${MIN_SUCCESS:-<none>}"
 log "ladder_root=${LADDER_ROOT}"
 
 port_offset=0
@@ -50,14 +52,27 @@ for step in ${CKPT_STEPS}; do
   GPUS="${GPUS}" \
   WAIT_IDLE="${WAIT_IDLE}" \
   CFG_SCALE="${CFG_SCALE}" \
+  ADAPTIVE_CFG_TAU="${ADAPTIVE_CFG_TAU:-}" \
+  SCREEN_EVAL_REPEAT="${SCREEN_EVAL_REPEAT:-}" \
+  REPEATS="${REPEATS:-4}" \
   BASE_PORT="$((BASE_PORT + port_offset))" \
   OUT_ROOT="${out}" \
   TEXT_EMBEDDING_CACHE_DIR="${TEXT_EMBEDDING_CACHE_DIR}" \
   PRETRAINED_NORM_STATS="${PRETRAINED_NORM_STATS:-${STATS}}" \
+  BACKBONE_CKPT="${BACKBONE_CKPT:-}" \
+  UNCOND_ADAPTER="${UNCOND_ADAPTER:-}" \
   bash "${ROOT_DIR}/scripts/dewo_v2/eval_cfg_official_4x50.sh" \
     2>&1 | tee -a "${MASTER_LOG}"
   port_offset=$((port_offset + 100))
   log "===== done ${tag} ====="
+  if [[ -n "${MIN_SUCCESS:-}" && -f "${out}/aggregate.json" ]]; then
+    rate="$(python -c "import json; print(json.load(open('${out}/aggregate.json'))['pooled_success_rate'])")"
+    log "${tag} pooled=${rate} min_success=${MIN_SUCCESS}"
+    below="$(python -c "print(int(float('${rate}') < float('${MIN_SUCCESS}')))")"
+    if [[ "${below}" == "1" ]]; then
+      log "${tag} below ${MIN_SUCCESS}; skip extra repeats, next ckpt"
+    fi
+  fi
 done
 
 python - "${LADDER_ROOT}" "${CFG_SCALE}" "${TASK}" <<'PY' | tee -a "${MASTER_LOG}"

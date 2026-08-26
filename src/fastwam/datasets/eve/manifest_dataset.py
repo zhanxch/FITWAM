@@ -87,6 +87,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         event_sample_stride: Optional[int] = None,
         episode_sample_stride: Optional[int] = None,
         max_load_retry: int = 3,
+        unit_filter: Optional[str] = None,
+        value_gamma: float = 0.99,
         **kwargs,
     ):
         self.manifest_path = str(Path(manifest_path).expanduser().resolve())
@@ -94,6 +96,23 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         self.dataset_root_overrides = dict(dataset_root_overrides or {})
         self.strict_manifest_references = bool(strict_manifest_references)
         self.manifest_splits = None if manifest_splits is None else set(manifest_splits)
+        self.unit_filter = kwargs.pop("unit_filter", unit_filter)
+        if self.unit_filter in {None, "", "all"}:
+            self.unit_filter = None
+        elif str(self.unit_filter) not in {
+            "recoverability_events",
+            "dewo_v6_pool",
+            "dewo_v7_pool",
+            "dewo_v8_pool",
+            "dewo_v9_pool",
+        }:
+            raise ValueError(
+                "`unit_filter` must be null, 'all', 'recoverability_events', "
+                "'dewo_v6_pool', 'dewo_v7_pool', 'dewo_v8_pool', or 'dewo_v9_pool', "
+                f"got {self.unit_filter!r}."
+            )
+        else:
+            self.unit_filter = str(self.unit_filter)
         self.manifest_collection_iters = (
             None
             if manifest_collection_iters is None
@@ -140,6 +159,7 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         self.requested_val_set_proportion = kwargs.pop("val_set_proportion", 0.0)
         kwargs["val_set_proportion"] = 0.0
         self.global_sample_stride = int(global_sample_stride)
+        self.value_gamma = float(value_gamma)
 
         super().__init__(
             *args,
@@ -176,7 +196,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
 
         logger.info(
             "EveManifestRobotVideoDataset: manifest=%s units=%d windows=%d "
-            "roles=%s dataset_dirs=%d",
+            "roles=%s dataset_dirs=%d episode_sample_stride=%s "
+            "event_sample_stride=%s",
             self.manifest_path,
             len(self.manifest.get("samples", [])),
             len(self._samples),
@@ -185,7 +206,10 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
                 for role, indices in self._sampling_role_indices.items()
             },
             len(dataset_dirs),
+            self.episode_sample_stride,
+            self.event_sample_stride,
         )
+
     def _build_episode_index(self) -> dict[tuple[str, int], tuple[int, int]]:
         episode_index: dict[tuple[str, int], tuple[int, int]] = {}
         frame_offset = 0
@@ -209,13 +233,61 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         return _resolve_root(root)
 
     def _unit_stride(self, unit: dict[str, Any]) -> int:
+        # Recipe-level strides (Hydra) override the Eve schema default
+        # `sample_stride: 1` written into every unit. Per-unit stride is the
+        # fallback when the recipe leaves episode/event stride unset.
+        sample_type = unit.get("sample_type")
+        if sample_type == "event" and self.event_sample_stride is not None:
+            return max(int(self.event_sample_stride), 1)
+        if sample_type == "episode" and self.episode_sample_stride is not None:
+            return max(int(self.episode_sample_stride), 1)
         if "sample_stride" in unit and unit["sample_stride"] is not None:
             return max(int(unit["sample_stride"]), 1)
-        if unit.get("sample_type") == "event" and self.event_sample_stride is not None:
-            return max(int(self.event_sample_stride), 1)
-        if unit.get("sample_type") == "episode" and self.episode_sample_stride is not None:
-            return max(int(self.episode_sample_stride), 1)
         return 1
+
+    def _passes_unit_filter(self, unit: dict[str, Any]) -> bool:
+        """Keep the Eve units needed by a named training recipe.
+
+        ``recoverability_events`` keeps success-event primaries (D+) and
+        failure events (D_fail). Ordinary success episodes and aux_success
+        duplicates are dropped.
+
+        ``dewo_v6_pool`` / ``dewo_v7_pool`` / ``dewo_v8_pool`` /
+        ``dewo_v9_pool`` keep success episodes (D0), success-event
+        primaries (D+), and failure events (D_fail). aux_success copies
+        and full failure episodes are dropped. Sampling is a single
+        shuffle. Loss weights differ: v7 turns on action BC for D_fail
+        and turns off its video BC. v8 uses v6 loss weights plus a
+        binary value-head target. v9 uses the same pool with a progress
+        return \(G_t=\gamma^{T-t}\) (fail frames 0); it does not floor
+        \(V\) near the event.
+        """
+
+        filt = getattr(self, "unit_filter", None)
+        if filt is None:
+            return True
+        if filt == "recoverability_events":
+            if unit.get("sample_type") != "event":
+                return False
+            return self._sampling_role(unit) in {"primary", "auxiliary"}
+        if filt in {"dewo_v6_pool", "dewo_v7_pool", "dewo_v8_pool", "dewo_v9_pool"}:
+            return self._passes_dewo_v6_pool_filter(unit)
+        raise ValueError(f"Unknown Eve `unit_filter` {filt!r}.")
+
+    def _passes_dewo_v6_pool_filter(self, unit: dict[str, Any]) -> bool:
+        role = self._sampling_role(unit)
+        if role == "auxiliary_success":
+            return False
+        sample_type = unit.get("sample_type")
+        if sample_type == "episode":
+            is_failure = (
+                unit.get("episode_outcome") == "failure"
+                or unit.get("event_outcome") == "failure"
+            )
+            return not is_failure
+        if sample_type == "event":
+            return role in {"primary", "auxiliary"}
+        return False
 
     def _include_unit(self, unit: dict[str, Any]) -> bool:
         if self.manifest_splits is not None and str(unit.get("split", "train")) not in self.manifest_splits:
@@ -226,6 +298,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
                 collection_iter = unit.get("collection_round")
             if collection_iter is None or int(collection_iter) not in self.manifest_collection_iters:
                 return False
+        if not self._passes_unit_filter(unit):
+            return False
         return True
 
     @staticmethod
@@ -364,13 +438,70 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         return "auxiliary_success"
 
     @classmethod
-    def _cfg_schedule(cls, unit: dict[str, Any]) -> str:
+    def _cfg_schedule(
+        cls,
+        unit: dict[str, Any],
+        unit_filter: Optional[str] = None,
+    ) -> str:
+        if unit_filter in {"dewo_v6_pool", "dewo_v7_pool", "dewo_v8_pool", "dewo_v9_pool"} and unit.get("sample_type") == "episode":
+            return "base"
         role = cls._sampling_role(unit)
         if role == "primary":
             return "primary"
         if role == "auxiliary":
             return "aux_failure"
         return "aux_success"
+
+    @classmethod
+    def _v6_action_loss_weight(cls, unit: dict[str, Any]) -> float:
+        return 1.0 if cls._sampling_role(unit) == "primary" else 0.0
+
+    @classmethod
+    def _v6_video_loss_weight(cls, unit: dict[str, Any]) -> float:
+        role = cls._sampling_role(unit)
+        if role == "auxiliary":
+            return 1.0
+        if unit.get("sample_type") == "episode" and role == "primary":
+            return 1.0
+        return 0.0
+
+    @classmethod
+    def _v7_action_loss_weight(cls, unit: dict[str, Any]) -> float:
+        return 1.0 if cls._sampling_role(unit) in {"primary", "auxiliary"} else 0.0
+
+    @classmethod
+    def _v7_video_loss_weight(cls, unit: dict[str, Any]) -> float:
+        role = cls._sampling_role(unit)
+        if unit.get("sample_type") == "episode" and role == "primary":
+            return 1.0
+        return 0.0
+
+    @classmethod
+    def _v8_value_target(cls, unit: dict[str, Any]) -> float:
+        """D0/D+ → 1, truncated D_fail near M → 0. Shared prefixes stay one-label."""
+
+        return 0.0 if cls._sampling_role(unit) == "auxiliary" else 1.0
+
+    @classmethod
+    def _v9_value_target(
+        cls,
+        unit: dict[str, Any],
+        window_start: int,
+        *,
+        gamma: float,
+    ) -> float:
+        """Progress return on success; 0 on the fail cliff. No event floor."""
+
+        from fastwam.models.wan22.value_head import progress_return
+
+        failed = cls._sampling_role(unit) == "auxiliary"
+        horizon = int(unit.get("end_frame") or 0)
+        return progress_return(
+            int(window_start),
+            horizon,
+            gamma=float(gamma),
+            failed=failed,
+        )
 
     def _apply_action_loss_window(
         self,
@@ -407,6 +538,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         sample_id = str(unit.get("sample_id", unit.get("event_id", "")))
         window_start = int(sample_ref["window_start"])
         skip_video = bool(getattr(self, "force_skip_video", False))
+        known_vae_cache_path = None
+        skip_vae_exists_check = False
         if (
             not skip_video
             and getattr(self, "vae_latent_cache_dir", None) is not None
@@ -414,21 +547,55 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         ):
             from fastwam.datasets.vae_latent_cache import vae_latent_cache_path
 
-            skip_video = vae_latent_cache_path(
+            candidate = vae_latent_cache_path(
                 self.vae_latent_cache_dir,
                 sample_id=sample_id,
                 window_start=window_start,
-            ).exists()
+            )
+            skip_video = candidate.exists()
+            skip_vae_exists_check = True
+            known_vae_cache_path = candidate if skip_video else None
         data = self._get(
             sample_ref["global_frame_idx"],
             outcome_flag_override=outcome_flag,
             skip_video=skip_video,
-            cfg_schedule=self._cfg_schedule(unit),
+            cfg_schedule=self._cfg_schedule(
+                unit, unit_filter=getattr(self, "unit_filter", None)
+            ),
         )
 
-        data["action_loss_weight"] = torch.tensor(
-            self._action_loss_weight(unit), dtype=torch.float32
-        )
+        unit_filter = getattr(self, "unit_filter", None)
+        if unit_filter == "dewo_v6_pool":
+            action_w = self._v6_action_loss_weight(unit)
+            video_w = self._v6_video_loss_weight(unit)
+        elif unit_filter == "dewo_v8_pool":
+            action_w = self._v6_action_loss_weight(unit)
+            video_w = self._v6_video_loss_weight(unit)
+        elif unit_filter == "dewo_v9_pool":
+            action_w = self._v6_action_loss_weight(unit)
+            video_w = self._v6_video_loss_weight(unit)
+        elif unit_filter == "dewo_v7_pool":
+            action_w = self._v7_action_loss_weight(unit)
+            video_w = self._v7_video_loss_weight(unit)
+        else:
+            action_w = self._action_loss_weight(unit)
+            video_w = None
+        data["action_loss_weight"] = torch.tensor(action_w, dtype=torch.float32)
+        if video_w is not None:
+            data["video_loss_weight"] = torch.tensor(video_w, dtype=torch.float32)
+        if unit_filter == "dewo_v8_pool":
+            data["value_target"] = torch.tensor(
+                self._v8_value_target(unit), dtype=torch.float32
+            )
+        elif unit_filter == "dewo_v9_pool":
+            data["value_target"] = torch.tensor(
+                self._v9_value_target(
+                    unit,
+                    window_start,
+                    gamma=float(getattr(self, "value_gamma", 0.99)),
+                ),
+                dtype=torch.float32,
+            )
         data["outcome_flag"] = torch.tensor(outcome_flag, dtype=torch.long)
         event_weight = unit.get("event_weight")
         pair_weight = unit.get("pair_weight")
@@ -461,6 +628,8 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             data,
             sample_id=sample_id,
             window_start=window_start,
+            cache_path=known_vae_cache_path,
+            skip_exists_check=skip_vae_exists_check,
         )
         return data
 

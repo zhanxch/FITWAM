@@ -4,6 +4,7 @@ import logging
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -204,6 +205,15 @@ def _send_batch_to_device(value, device):
     return value
 
 
+def _optional_role_tuple(value) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        return (text,) if text else ()
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
 def _infer_auxiliary_roles(
     roles: Sequence[str],
     *,
@@ -234,6 +244,15 @@ class Wan22Trainer:
         self.cfg = cfg
         self.output_dir = str(cfg.output_dir)
         self.learning_rate = float(cfg.learning_rate)
+        self.train_mode = str(cfg.get("train_mode", "full_dit")).strip()
+        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+
+        if self.train_mode not in {"full_dit", *UNCOND_ADAPTER_TRAIN_MODES}:
+            raise ValueError(
+                f"Unsupported train_mode={self.train_mode}. "
+                "Expected one of: "
+                f"{sorted({'full_dit', *UNCOND_ADAPTER_TRAIN_MODES})}."
+            )
         self.weight_decay = float(cfg.weight_decay)
         self.batch_size = int(cfg.batch_size)
         self.num_workers = int(cfg.num_workers)
@@ -296,19 +315,31 @@ class Wan22Trainer:
             if configured_role_seed is None
             else int(configured_role_seed)
         )
-        if self.role_balanced_sampling_enabled:
-            if self.batch_size < 2 or self.batch_size % 2 != 0:
-                raise ValueError(
-                    "Role-balanced sampling requires an even per-rank "
-                    f"`batch_size>=2`, got {self.batch_size}."
+        self.role_balanced_auxiliary_roles = None
+        self.role_balanced_ignore_roles: tuple[str, ...] = ()
+        if role_cfg is not None:
+            configured_aux = role_cfg.get("auxiliary_roles", None)
+            if configured_aux is not None:
+                self.role_balanced_auxiliary_roles = _optional_role_tuple(
+                    configured_aux
                 )
-            expected_primary = self.batch_size // 2
-            if self.role_balanced_primary_per_batch != expected_primary:
+            self.role_balanced_ignore_roles = _optional_role_tuple(
+                role_cfg.get("ignore_roles", None)
+            )
+        if self.role_balanced_sampling_enabled:
+            if not 1 <= self.role_balanced_primary_per_batch <= self.batch_size:
                 raise ValueError(
-                    "Role-balanced sampling requires "
-                    f"`primary_per_batch={expected_primary}` for "
-                    f"`batch_size={self.batch_size}` "
-                    f"(got {self.role_balanced_primary_per_batch})."
+                    "`primary_per_batch` must be in [1, batch_size], got "
+                    f"primary_per_batch={self.role_balanced_primary_per_batch} "
+                    f"for batch_size={self.batch_size}."
+                )
+            if (
+                self.role_balanced_primary_per_batch < self.batch_size
+                and self.batch_size < 2
+            ):
+                raise ValueError(
+                    "Role-balanced sampling with auxiliary slots requires "
+                    f"`batch_size>=2`, got {self.batch_size}."
                 )
         
         self.resume = cfg.resume
@@ -353,15 +384,49 @@ class Wan22Trainer:
         # Freeze non-trainable modules before optimizer/deepspeed initialization.
         # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
         self._apply_dit_only_train_mode(self.model)
-        trainable_params = [param for param in self.model.parameters() if param.requires_grad]
-        if not trainable_params:
-            raise ValueError("No trainable parameters found after applying training mode.")
-        self.optimizer = torch.optim.AdamW(
-            trainable_params,
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-            betas=(0.9, 0.95),
-        )
+        train_mode = getattr(self, "train_mode", "full_dit")
+        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+
+        if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
+            if train_mode in {"dewo_v8_uncond_adapter", "dewo_v9_uncond_adapter"}:
+                from fastwam.models.wan22.dewo_v8_train_mode import (
+                    collect_dewo_v8_param_groups,
+                )
+
+                self.optimizer = torch.optim.AdamW(
+                    collect_dewo_v8_param_groups(
+                        self.model,
+                        lr=self.learning_rate,
+                        weight_decay=self.weight_decay,
+                        value_lr_scale=(
+                            1.0 if train_mode == "dewo_v9_uncond_adapter" else 0.1
+                        ),
+                    ),
+                    betas=(0.9, 0.95),
+                )
+            else:
+                from fastwam.models.wan22.dewo_v5_train_mode import (
+                    collect_dewo_v5_param_groups,
+                )
+
+                self.optimizer = torch.optim.AdamW(
+                    collect_dewo_v5_param_groups(
+                        self.model,
+                        lr=self.learning_rate,
+                        weight_decay=self.weight_decay,
+                    ),
+                    betas=(0.9, 0.95),
+                )
+        else:
+            trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+            if not trainable_params:
+                raise ValueError("No trainable parameters found after applying training mode.")
+            self.optimizer = torch.optim.AdamW(
+                trainable_params,
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+                betas=(0.9, 0.95),
+            )
         self.train_loader = self._build_loader(self.train_dataset, worker_init_fn=worker_init_fn)
         total_train_steps = self._estimate_total_train_steps()
         self.max_steps = total_train_steps
@@ -656,6 +721,77 @@ class Wan22Trainer:
             f"at global_step={self.global_step}."
         )
 
+    def _dump_rank_finite_check(self, loss, loss_dict, sample=None) -> None:
+        """Write per-rank diagnostics; non-main ranks do not emit logger.warning."""
+
+        rank = int(getattr(self.accelerator, "process_index", 0))
+        path = Path(self.output_dir) / f"finite_check_rank{rank}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "phase": "enter",
+                            "rank": rank,
+                            "global_step": int(self.global_step),
+                            "batch_in_epoch": int(self.batch_in_epoch),
+                        }
+                    )
+                    + "\n"
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
+            loss_t = torch.as_tensor(loss).detach().float().reshape(-1)
+            finite = bool(torch.isfinite(loss_t).all().item()) if loss_t.numel() else False
+            loss_raw = float(loss_t[0].item()) if loss_t.numel() else None
+            metrics = {}
+            for key in sorted(loss_dict):
+                try:
+                    value = float(loss_dict[key])
+                except (TypeError, ValueError):
+                    metrics[str(key)] = str(loss_dict[key])
+                    continue
+                metrics[str(key)] = value if math.isfinite(value) else str(value)
+            payload = {
+                "rank": rank,
+                "global_step": int(self.global_step),
+                "batch_in_epoch": int(self.batch_in_epoch),
+                "finite": finite,
+                "loss": loss_raw if (loss_raw is not None and math.isfinite(loss_raw)) else str(loss_raw),
+                "metrics": metrics,
+            }
+            if isinstance(sample, dict):
+                for key in (
+                    "action_loss_weight",
+                    "video_loss_weight",
+                    "value_target",
+                    "outcome_flag",
+                ):
+                    tensor = sample.get(key)
+                    if tensor is None or not torch.is_tensor(tensor):
+                        continue
+                    values = tensor.detach().float().reshape(-1).cpu()
+                    payload[key] = [
+                        float(item) if math.isfinite(float(item)) else str(float(item))
+                        for item in values.tolist()
+                    ]
+                pair_id = sample.get("pair_id")
+                if pair_id is not None:
+                    if isinstance(pair_id, (list, tuple)):
+                        payload["pair_id"] = [str(item) for item in pair_id]
+                    else:
+                        payload["pair_id"] = str(pair_id)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload) + "\n")
+                handle.flush()
+        except Exception as exc:
+            err_path = Path(self.output_dir) / f"finite_check_rank{rank}.err"
+            err_path.write_text(
+                f"step={self.global_step} batch={self.batch_in_epoch} err={type(exc).__name__}: {exc}\n",
+                encoding="utf-8",
+            )
+
     def _next_train_sample(self, data_iter):
         try:
             sample = next(data_iter)
@@ -671,7 +807,21 @@ class Wan22Trainer:
                 f"preparing batch_in_epoch={self.batch_in_epoch}."
             ) from exc
 
+    def _train_dataloader_kwargs(self, worker_init_fn=None) -> dict:
+        kwargs = {
+            "num_workers": self.num_workers,
+            "pin_memory": torch.cuda.is_available(),
+            "worker_init_fn": worker_init_fn,
+            "collate_fn": collate_robot_video_batch,
+        }
+        # persistent_workers / prefetch_factor are invalid when num_workers=0.
+        if self.num_workers > 0:
+            kwargs["persistent_workers"] = True
+            kwargs["prefetch_factor"] = 4
+        return kwargs
+
     def _build_loader(self, dataset, worker_init_fn=None):
+        loader_kwargs = self._train_dataloader_kwargs(worker_init_fn)
         if getattr(self, "role_balanced_sampling_enabled", False):
             from .utils.role_balanced_sampler import RoleBalancedBatchSampler
 
@@ -686,6 +836,16 @@ class Wan22Trainer:
                     "`dataset.sampling_roles` must align one-to-one with dataset "
                     f"windows: roles={len(roles)} dataset={len(dataset)}."
                 )
+            aux_roles = getattr(self, "role_balanced_auxiliary_roles", None)
+            if aux_roles is None:
+                if self.role_balanced_primary_per_batch == self.batch_size:
+                    aux_roles = ()
+                else:
+                    aux_roles = _infer_auxiliary_roles(roles, primary_role="primary")
+            ignore_roles = getattr(self, "role_balanced_ignore_roles", ())
+            if ignore_roles:
+                skip = set(ignore_roles)
+                aux_roles = tuple(role for role in aux_roles if role not in skip)
             self.train_sampler = RoleBalancedBatchSampler(
                 roles=roles,
                 batch_size=self.batch_size,
@@ -694,15 +854,23 @@ class Wan22Trainer:
                 rank=self.accelerator.process_index,
                 seed=self.role_balanced_seed,
                 primary_role="primary",
-                auxiliary_roles=_infer_auxiliary_roles(roles, primary_role="primary"),
+                auxiliary_roles=aux_roles,
+                ignore_roles=ignore_roles,
+            )
+            aux_slots = self.batch_size - self.role_balanced_primary_per_batch
+            aux_roles = getattr(self.train_sampler, "auxiliary_roles", None)
+            logger.info(
+                "Role-balanced batch: size=%d primary=%d aux_slots=%d aux_roles=%s draws=%s",
+                self.batch_size,
+                self.role_balanced_primary_per_batch,
+                aux_slots,
+                aux_roles,
+                getattr(self.train_sampler, "_auxiliary_draws_by_role", None),
             )
             return DataLoader(
                 dataset,
                 batch_sampler=self.train_sampler,
-                num_workers=self.num_workers,
-                pin_memory=torch.cuda.is_available(),
-                worker_init_fn=worker_init_fn,
-                collate_fn=collate_robot_video_batch,
+                **loader_kwargs,
             )
 
         self.train_sampler = ResumableEpochSampler(
@@ -716,10 +884,7 @@ class Wan22Trainer:
             batch_size=self.batch_size,
             shuffle=False,
             sampler=self.train_sampler,
-            num_workers=self.num_workers,
-            pin_memory=torch.cuda.is_available(),
-            worker_init_fn=worker_init_fn,
-            collate_fn=collate_robot_video_batch,
+            **loader_kwargs,
         )
 
     def _prepare_training_components(self) -> None:
@@ -896,12 +1061,26 @@ class Wan22Trainer:
         model = self.accelerator.unwrap_model(self.model)
         self._apply_dit_only_train_mode(model)
 
-    @staticmethod
-    def _apply_dit_only_train_mode(model):
+    def _apply_dit_only_train_mode(self, model):
         if getattr(model, "video_lora_enabled", False):
             from fastwam.models.wan22.video_lora import apply_video_lora_training_mode
 
             apply_video_lora_training_mode(model)
+            return
+        train_mode = getattr(self, "train_mode", "full_dit")
+        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+
+        if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
+            if train_mode in {"dewo_v8_uncond_adapter", "dewo_v9_uncond_adapter"}:
+                from fastwam.models.wan22.dewo_v8_train_mode import (
+                    apply_dewo_v8_uncond_adapter_mode,
+                )
+
+                apply_dewo_v8_uncond_adapter_mode(model)
+                return
+            from fastwam.models.wan22.dewo_v5_train_mode import apply_dewo_v5_uncond_adapter_mode
+
+            apply_dewo_v5_uncond_adapter_mode(model)
             return
 
         model.eval()
@@ -1359,7 +1538,21 @@ class Wan22Trainer:
         )
         if temp_path.exists():
             temp_path.unlink()
-        model.save_checkpoint(str(temp_path), optimizer=None, step=self.global_step)
+        train_mode = getattr(self, "train_mode", "full_dit")
+        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+
+        if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
+            from fastwam.models.wan22.uncond_adapter import uncond_adapter_payload
+
+            source = None if self.resume is None else str(self.resume)
+            payload = uncond_adapter_payload(
+                model,
+                step=self.global_step,
+                source_checkpoint=source,
+            )
+            torch.save(payload, temp_path)
+        else:
+            model.save_checkpoint(str(temp_path), optimizer=None, step=self.global_step)
         os.replace(temp_path, ckpt_path)
         return str(ckpt_path)
 
@@ -1619,6 +1812,20 @@ class Wan22Trainer:
 
                 with self.accelerator.autocast():
                     loss, loss_dict = train_model.training_loss(sample)
+                if int(self.global_step) < 16:
+                    self._dump_rank_finite_check(loss, loss_dict, sample)
+                    local_finite = bool(
+                        torch.isfinite(torch.as_tensor(loss).detach()).all().item()
+                    )
+                    logger.warning(
+                        "train finite-check rank=%s step=%s batch=%s finite=%s loss=%s dict=%s",
+                        getattr(self.accelerator, "process_index", "?"),
+                        self.global_step,
+                        self.batch_in_epoch,
+                        local_finite,
+                        "ok" if local_finite else "NONFINITE",
+                        {key: loss_dict.get(key) for key in sorted(loss_dict)},
+                    )
                 self._raise_if_non_finite(
                     loss,
                     value_name="loss",
@@ -1651,6 +1858,10 @@ class Wan22Trainer:
                     global_grad_norm = float(self.accelerator.gather(grad_norm_tensor).mean().item())
 
                     current_lr = float(self.optimizer.param_groups[0]["lr"])
+                    lr_detail = " ".join(
+                        f"lr_{str(group.get('name', idx))}={float(group['lr']):.2e}"
+                        for idx, group in enumerate(self.optimizer.param_groups)
+                    )
 
                     if self.log_every > 0 and self.global_step % self.log_every == 0 and self.accelerator.is_main_process:
                         eta_str, steps_per_sec = self._estimate_eta()
@@ -1663,8 +1874,8 @@ class Wan22Trainer:
                         if global_loss_metrics:
                             detail_str = " ".join([f"{k}={v:.4f}" for k, v in sorted(global_loss_metrics.items())])
                             description += detail_str + " "
-                        description += "lr=%.2e speed=%.2f step/s, %.2f samples/s eta=%s" % (
-                            current_lr,
+                        description += "%s speed=%.2f step/s, %.2f samples/s eta=%s" % (
+                            lr_detail,
                             steps_per_sec,
                             steps_per_sec * self.batch_size * self.accelerator.num_processes,
                             eta_str,
@@ -1679,6 +1890,8 @@ class Wan22Trainer:
                             "performance/steps_per_sec": steps_per_sec,
                             "performance/samples_per_sec": steps_per_sec * self.batch_size * self.accelerator.num_processes,
                         }
+                        for idx, group in enumerate(self.optimizer.param_groups):
+                            wandb_payload[f"train/lr_{group.get('name', idx)}"] = float(group["lr"])
                         for key, value in global_loss_metrics.items():
                             wandb_payload[f"train/{key}"] = value
                         self._local_metrics_log(wandb_payload)

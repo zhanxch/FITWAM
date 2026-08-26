@@ -68,6 +68,19 @@ class DewoV2TaskTests(unittest.TestCase):
             text,
         )
         self.assertIn("cfg_base_prompt:", text)
+        self.assertNotIn("cfg_failure_prompt:", text)
+
+    def test_eval_yaml_includes_failure_prompt_when_suffix_set(self) -> None:
+        task = get_task("water_plant")
+        text = eval_task_yaml(
+            task,
+            CfgRecipe(failure_suffix=" Failed execution."),
+        )
+        self.assertIn("cfg_failure_prompt:", text)
+        self.assertIn(
+            "Grasp the watering can and apply water to the plant. Failed execution.",
+            text,
+        )
 
     def test_unknown_task(self) -> None:
         with self.assertRaises(KeyError):

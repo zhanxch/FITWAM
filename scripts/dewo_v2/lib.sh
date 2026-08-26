@@ -8,9 +8,24 @@
 # Task identity lives in scripts/dewo_v2/tasks.py.
 # load_task pins the opensource 224 / z-score stack (OPEN yaml + artifacts stats).
 #
-# VAE policy (default = online encode, no pre-encode):
-#   USE_VAE_LATENT_CACHE=1  opt back into pre-encode / require-cache path
-#   Otherwise: SKIP_VAE_PREENCODE=1, REQUIRE=0, FILL=0, unset VAE_LATENT_CACHE_DIR
+# VAE policy (default = pre-encode + read cache at train):
+#   USE_VAE_LATENT_CACHE=0  opt out to online VAE encode per step
+#   Default: SKIP_VAE_PREENCODE=0, REQUIRE=1, FILL=0
+# Val encode is off unless VAE_ENCODE_VAL=true (train eval_every=0).
+#
+# Training recipes: INIT=scratch|s0. DEWO_VERSION=v2 (default), v5, v6, v7, v8, or v9.
+# v5 freezes the whole base and trains a CFG-condition adapter on ordinary
+# success text; CFG mixes adapter-off + base text (S0) with adapter-on + success.
+# v6 keeps the v5 frozen-adapter shell. One shuffle pool: D0 success episodes
+# (base alignment) + D+ success-event windows (Successful, action BC) +
+# D_fail failure events (Failed, video BC). Residual is still ε_+ − ε_0.
+# v7 same pool as v6, but D_fail action BC defines ε_- and the mix is
+# ε_0 + w(ε_+ − ε_-). No Recovered suffix, no 12:4.
+# v8 same pool and mix as v6, plus a frozen-VAE value head that drop-edge
+# gates sparse CFG. D0 is one episode per 4/4 all-success seed.
+# v9 same pool/mix as v8, but V is pooled VideoDiT tokens vs progress
+# return G_t=γ^{T-t} (fail=0). Gate is drop-only (no v_high floor).
+# Pair data is full-horizon success stitch + fail cliff, not 33-frame crops.
 #
 # CFG knobs (hammer_nail defaults unless overridden):
 #   CFG_PRIMARY=0.5,0.0,0.5          # outcome,fast,base — primary.fast MUST be 0
@@ -41,6 +56,19 @@ dewo_v2_require_task() {
   fi
 }
 
+# LoRA Hydra tasks / INIT=lora are removed. Full DiT only (scratch | s0).
+dewo_v2_assert_not_lora() {
+  local label="${1:-value}"
+  local value="${2:-}"
+  if [[ "${value}" == *lora* || "${value}" == *LoRA* ]]; then
+    echo "[dewo-v2] ERROR: ${label}=${value} is a LoRA path." >&2
+    echo "  LoRA recipes are removed. Use INIT=scratch or INIT=s0 (full DiT)." >&2
+    echo "  Hydra: dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4 (scratch)" >&2
+    echo "         dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_s0 (from S0)" >&2
+    return 2
+  fi
+}
+
 dewo_v2_load_task() {
   local task="${1:?task name required, e.g. water_plant}"
   local root="${ROOT_DIR:?ROOT_DIR must be set before sourcing lib.sh}"
@@ -53,6 +81,7 @@ dewo_v2_load_task() {
   local _saved_init="${INIT_WEIGHTS:-}"
   local _saved_src_ckpt="${SOURCE_CHECKPOINT:-}"
   local _saved_base="${BASE_DATASET:-}"
+  local _saved_repeats="${REPEATS:-}"
   eval "$(python "${root}/scripts/dewo_v2/tasks.py" export-env --task "${task}")"
   [[ -z "${_saved_ckpt}" ]] || export CKPT="${_saved_ckpt}"
   [[ -z "${_saved_stats}" ]] || export STATS="${_saved_stats}"
@@ -61,6 +90,7 @@ dewo_v2_load_task() {
   [[ -z "${_saved_init}" ]] || export INIT_WEIGHTS="${_saved_init}"
   [[ -z "${_saved_src_ckpt}" ]] || export SOURCE_CHECKPOINT="${_saved_src_ckpt}"
   [[ -z "${_saved_base}" ]] || export BASE_DATASET="${_saved_base}"
+  [[ -z "${_saved_repeats}" ]] || export REPEATS="${_saved_repeats}"
   if [[ -n "${_saved_stats}" && -z "${_saved_norm}" ]]; then
     export PRETRAINED_NORM_STATS="${_saved_stats}"
   fi
@@ -140,7 +170,7 @@ dewo_v2_align_opensource_stack() {
   SOURCE_CONFIG="${SOURCE_CONFIG:-${open_cfg}}"
   FASTWAM_SOURCE_CONFIG="${FASTWAM_SOURCE_CONFIG:-${SOURCE_CONFIG}}"
 
-  if [[ "${PRIMARY_KIND:-}" != "success_rollouts" ]]; then
+  if [[ "${PRIMARY_KIND:-}" != "success_rollouts" && "${PRIMARY_KIND:-}" != "all_success_seeds" ]]; then
     if [[ -z "${BASE_DATASET:-}" || "${BASE_DATASET}" == *"${task}_fastwam"* ]]; then
       BASE_DATASET="${expert}"
     fi
@@ -158,21 +188,23 @@ dewo_v2_align_opensource_stack() {
   export SOURCE_CONFIG FASTWAM_SOURCE_CONFIG BASE_DATASET SOURCE_DATASET STATS PRETRAINED_NORM_STATS
 }
 
-# Apply default VAE policy after sourcing prepare env (which may still export REQUIRE=1).
-# Opt-in cache path: USE_VAE_LATENT_CACHE=1.
+# Apply default VAE policy after sourcing prepare env.
+# Default: pre-encode at prepare/train and read cache. Opt out: USE_VAE_LATENT_CACHE=0.
 dewo_v2_apply_vae_policy() {
-  if [[ "${USE_VAE_LATENT_CACHE:-0}" == "1" ]]; then
-    export SKIP_VAE_PREENCODE="${SKIP_VAE_PREENCODE:-0}"
-    export FILL_VAE_LATENT_CACHE="${FILL_VAE_LATENT_CACHE:-0}"
-    export REQUIRE_VAE_LATENT_CACHE=1
-    echo "[dewo-v2] VAE policy: USE_VAE_LATENT_CACHE=1 (pre-encode train/val manifests; require cache)"
+  if [[ "${USE_VAE_LATENT_CACHE:-1}" == "0" ]]; then
+    export USE_VAE_LATENT_CACHE=0
+    export SKIP_VAE_PREENCODE=1
+    export FILL_VAE_LATENT_CACHE=0
+    export REQUIRE_VAE_LATENT_CACHE=0
+    unset VAE_LATENT_CACHE_DIR || true
+    echo "[dewo-v2] VAE policy: online encode (USE_VAE_LATENT_CACHE=0 opt-out)"
     return 0
   fi
-  export SKIP_VAE_PREENCODE=1
-  export FILL_VAE_LATENT_CACHE=0
-  export REQUIRE_VAE_LATENT_CACHE=0
-  unset VAE_LATENT_CACHE_DIR || true
-  echo "[dewo-v2] VAE policy: online encode (no pre-encode; set USE_VAE_LATENT_CACHE=1 to opt in)"
+  export USE_VAE_LATENT_CACHE=1
+  export SKIP_VAE_PREENCODE="${SKIP_VAE_PREENCODE:-0}"
+  export FILL_VAE_LATENT_CACHE="${FILL_VAE_LATENT_CACHE:-0}"
+  export REQUIRE_VAE_LATENT_CACHE=1
+  echo "[dewo-v2] VAE policy: pre-encode cache (set USE_VAE_LATENT_CACHE=0 for online VAE)"
 }
 
 # Return 0 if any CFG channel has FAST weight > 0 (needs FAST text-emb precompute).

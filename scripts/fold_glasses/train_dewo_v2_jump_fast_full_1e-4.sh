@@ -14,7 +14,7 @@ set +a
 
 export TASK="${TASK:-fold_glasses}"
 export TMUX_SESSION="${TMUX_SESSION:-fold_dewo_v2_full_1e-4}"
-export DEWO_TASK="${DEWO_TASK:-dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_full_1e-4}"
+export DEWO_TASK="dexjoco/dexjoco_fold_glasses_offline_b1_jump_fast_full_1e-4"
 export DEWO_VARIANT="${DEWO_VARIANT:-B1-jump-fast-full-1e-4-scratch}"
 export DEWO_OUTPUT_DIR="${DEWO_OUTPUT_DIR:-./runs/dexjoco_fold_glasses_dewo_v2}"
 export RUN_ID="${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)_B1-jump-fast-full-1e-4-scratch}"
@@ -24,4 +24,4 @@ export FILL_VAE_LATENT_CACHE="${FILL_VAE_LATENT_CACHE:-0}"
 export REQUIRE_VAE_LATENT_CACHE="${REQUIRE_VAE_LATENT_CACHE:-1}"
 export DEWO_HYDRA_OVERRIDES="${DEWO_HYDRA_OVERRIDES:-eval_every=0 resume=null}"
 
-exec bash "${ROOT_DIR}/scripts/dewo_v2/train_jump_fast_lora.sh"
+exec bash "${ROOT_DIR}/scripts/dewo_v2/train_run.sh"

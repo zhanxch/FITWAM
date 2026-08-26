@@ -65,8 +65,62 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override EVALUATION.seed for deterministic diffusion sampling.",
     )
-    parser.add_argument("--text-cfg-scale", type=float, default=None)
+    parser.add_argument(
+        "--text-cfg-scale",
+        type=float,
+        default=None,
+        help=(
+            "Action CFG knob. 1.0 = 本体 bypass (adapter off + cfg_base_prompt). "
+            "Values != 1 run the guided mix. v5/v6 mix w=1 is ε_posi; "
+            "v7 mix w=1 is ε_base+(ε_posi-ε_fail), not ε_posi."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-cfg-tau",
+        type=float,
+        default=None,
+        help=(
+            "If set, freeze mix from NFE0 exec RMS: E>tau uses --text-cfg-scale, "
+            "else mix w=0 (本体). Requires text_cfg_scale != 1."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-epsilon-l",
+        "--epsilon-l",
+        "--cfg-residual-epsilon",
+        dest="cfg_epsilon_l",
+        type=float,
+        default=None,
+        help=(
+            "Bound the per-token action CFG residual before text-cfg scaling. "
+            "None keeps legacy unbounded guidance; 0 is the base branch."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-residual-clip-mode",
+        choices=("rms", "elementwise"),
+        default=None,
+        help="How --cfg-epsilon-l bounds the residual (default: rms).",
+    )
     parser.add_argument("--negative-prompt", type=str, default=None)
+    parser.add_argument(
+        "--failure-prompt",
+        type=str,
+        default=None,
+        help="Failure-conditioned prompt for DEWO v7 CFG (prompt-mode servers).",
+    )
+    parser.add_argument(
+        "--backbone-checkpoint",
+        type=str,
+        default=None,
+        help="Frozen base MoT for DEWO v5 CFG (adapter-off branch).",
+    )
+    parser.add_argument(
+        "--uncond-adapter",
+        type=str,
+        default=None,
+        help="DEWO v5 uncond-adapter weights. If omitted, --checkpoint may be the adapter file.",
+    )
     parser.add_argument(
         "--load-text-encoder",
         dest="load_text_encoder",
@@ -111,6 +165,12 @@ def main() -> None:
             inference_seed=args.inference_seed,
             text_cfg_scale=getattr(args, "text_cfg_scale", None),
             negative_prompt=getattr(args, "negative_prompt", None),
+            failure_prompt=getattr(args, "failure_prompt", None),
+            backbone_checkpoint=getattr(args, "backbone_checkpoint", None),
+            uncond_adapter=getattr(args, "uncond_adapter", None),
+            adaptive_cfg_tau=getattr(args, "adaptive_cfg_tau", None),
+            cfg_epsilon_l=getattr(args, "cfg_epsilon_l", None),
+            cfg_residual_clip_mode=getattr(args, "cfg_residual_clip_mode", None),
         )
         policy = FastWAMPolicyAsync(
             model=base_policy.model,
@@ -121,10 +181,15 @@ def main() -> None:
             num_video_frames=base_policy.num_video_frames,
             text_cfg_scale=base_policy.text_cfg_scale,
             negative_prompt=base_policy.negative_prompt,
+            failure_prompt=getattr(base_policy, "failure_prompt", None),
             sigma_shift=base_policy.sigma_shift,
             seed=base_policy.seed,
             rand_device=base_policy.rand_device,
             tiled=base_policy.tiled,
+            adaptive_cfg_tau=getattr(base_policy, "adaptive_cfg_tau", None),
+            cfg_exec_horizon=getattr(base_policy, "cfg_exec_horizon", 24),
+            cfg_epsilon_l=getattr(base_policy, "cfg_epsilon_l", None),
+            cfg_residual_clip_mode=getattr(base_policy, "cfg_residual_clip_mode", "rms"),
             model_provenance=getattr(base_policy, "model_provenance", None),
         )
         print(f"  Run dir: {_resolve_run_dir(run_dir)}", flush=True)

@@ -195,6 +195,7 @@ class RoleBalancedBatchSamplerTest(unittest.TestCase):
                 ["success", "auxiliary"],
                 batch_size=2,
                 success_per_batch=2,
+                auxiliary_roles=("auxiliary",),
             ),
             lambda: RoleBalancedBatchSampler(
                 ["auxiliary"],
@@ -256,6 +257,85 @@ class RoleBalancedBatchSamplerTest(unittest.TestCase):
             self.assertEqual(batch_roles.count("primary"), 2)
             self.assertEqual(batch_roles.count("auxiliary_success"), 1)
             self.assertEqual(batch_roles.count("auxiliary"), 1)
+
+    def test_six_one_one_on_batch_16(self) -> None:
+        roles = (
+            ["primary"] * 36
+            + ["auxiliary_success"] * 8
+            + ["auxiliary"] * 8
+        )
+        sampler = RoleBalancedBatchSampler(
+            roles,
+            batch_size=16,
+            primary_per_batch=12,
+            seed=7,
+            primary_role="primary",
+            auxiliary_roles=("auxiliary_success", "auxiliary"),
+        )
+        batches = list(sampler)
+        self.assertTrue(batches)
+        for batch in batches:
+            batch_roles = [roles[index] for index in batch]
+            self.assertEqual(len(batch), 16)
+            self.assertEqual(batch_roles.count("primary"), 12)
+            self.assertEqual(batch_roles.count("auxiliary_success"), 2)
+            self.assertEqual(batch_roles.count("auxiliary"), 2)
+
+    def test_ignore_roles_excludes_failure_from_v5_batches(self) -> None:
+        roles = (
+            ["primary"] * 36
+            + ["auxiliary_success"] * 8
+            + ["auxiliary"] * 8
+        )
+        sampler = RoleBalancedBatchSampler(
+            roles,
+            batch_size=16,
+            primary_per_batch=14,
+            seed=7,
+            primary_role="primary",
+            auxiliary_roles=("auxiliary_success",),
+            ignore_roles=("auxiliary",),
+        )
+        batches = list(sampler)
+        self.assertTrue(batches)
+        for batch in batches:
+            batch_roles = [roles[index] for index in batch]
+            self.assertEqual(len(batch), 16)
+            self.assertEqual(batch_roles.count("primary"), 14)
+            self.assertEqual(batch_roles.count("auxiliary_success"), 2)
+            self.assertEqual(batch_roles.count("auxiliary"), 0)
+
+    def test_empty_auxiliary_roles_require_all_primary(self) -> None:
+        with self.assertRaises(ValueError):
+            RoleBalancedBatchSampler(
+                ["primary"] * 8 + ["auxiliary"] * 8,
+                batch_size=4,
+                primary_per_batch=3,
+                primary_role="primary",
+                auxiliary_roles=(),
+                ignore_roles=("auxiliary",),
+            )
+
+    def test_all_primary_batches_ignore_aux_roles(self) -> None:
+        roles = (
+            ["primary"] * 32
+            + ["auxiliary_success"] * 8
+            + ["auxiliary"] * 8
+        )
+        sampler = RoleBalancedBatchSampler(
+            roles,
+            batch_size=8,
+            primary_per_batch=8,
+            seed=3,
+            primary_role="primary",
+            auxiliary_roles=(),
+            ignore_roles=("auxiliary", "auxiliary_success"),
+        )
+        batches = list(sampler)
+        self.assertTrue(batches)
+        for batch in batches:
+            self.assertEqual(len(batch), 8)
+            self.assertTrue(all(roles[index] == "primary" for index in batch))
 
 
 if __name__ == "__main__":

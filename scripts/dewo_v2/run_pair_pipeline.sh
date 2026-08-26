@@ -14,6 +14,8 @@ source "${ROOT_DIR}/scripts/dewo_v2/lib.sh"
 dewo_v2_require_task
 dewo_v2_require_gpus
 dewo_v2_load_task "${TASK}"
+dewo_v2_activate_fastwam
+export PATH="${ENV_PREFIX}/bin:${PATH}"
 
 OPEN_REPO="${OPEN_REPO:-${ROOT_DIR}/../FastWAM-infer-in-DexJoco}"
 OPEN_REPO="$(cd "${OPEN_REPO}" && pwd)"
@@ -85,7 +87,7 @@ if [[ "${RUN_TRAIN}" == "1" ]]; then
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
   set +a
-  log "train INIT=${INIT:-scratch} VAE_CACHE=${USE_VAE_LATENT_CACHE:-0}"
+  log "train INIT=${INIT:-scratch} VAE_CACHE=${USE_VAE_LATENT_CACHE:-1}"
   RUN_INLINE=1 GPUS="${GPUS}" \
     bash scripts/dewo_v2/train.sh \
     2>&1 | tee -a "${MASTER_LOG}"

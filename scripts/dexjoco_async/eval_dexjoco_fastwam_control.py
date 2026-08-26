@@ -129,11 +129,79 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--seed-list",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated env seeds to evaluate (overrides contiguous "
+            "--seed/--episodes). Used for failure-only CFG rescue screens."
+        ),
+    )
+    parser.add_argument(
         "--eval-repeat",
         type=int,
         default=0,
-        help="OPEN-stack repeat index for diffusion noise: seed*100000 + repeat*1000 + replan.",
+        help="Legacy repeat index used when --noise-seed-base is omitted.",
     )
+    parser.add_argument(
+        "--cfg-gate-mode",
+        choices=("off", "probe", "schedule", "value", "value_growth"),
+        default="off",
+        help=(
+            "off: no per-replan CFG override. "
+            "probe: every replan uses a huge adaptive tau (mix w=0 / 本体) but "
+            "still logs NFE0 gate energy. "
+            "schedule: force guided CFG once at the replan index from "
+            "--cfg-intervene-schedule (key eval_repeat:seed); other replans probe. "
+            "value: drop-edge once-fire (V_prev-V_curr > delta). Not σ(V−τ). "
+            "value_growth: per-replan; from --cfg-growth-start-replan fire CFG "
+            "when (V-V_prev)/|V_prev| < --cfg-growth-tau. Not once-fire."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-intervene-schedule",
+        type=Path,
+        default=None,
+        help=(
+            "JSON map {\"<eval_repeat>:<seed>\": <replan_index>, ...} for "
+            "--cfg-gate-mode=schedule. Missing keys stay in probe (本体) mode."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-v-high",
+        type=float,
+        default=None,
+        help=(
+            "Optional drop-edge floor: V_prev must be >= this to fire. "
+            "Unset = drop-only (v9). v8 checkpoints still default from the model."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-drop-delta",
+        type=float,
+        default=0.15,
+        help="Drop-edge: fire when V_prev - V_curr exceeds this (`--cfg-gate-mode=value`).",
+    )
+    parser.add_argument(
+        "--cfg-growth-tau",
+        type=float,
+        default=0.05,
+        help=(
+            "Relative-growth gate: fire when (V-V_prev)/|V_prev| < this "
+            "(`--cfg-gate-mode=value_growth`). Prefer a small --text-cfg-scale."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-growth-start-replan",
+        type=int,
+        default=2,
+        help=(
+            "0-based replan index before which value_growth never fires "
+            "(default 2 = third node / t=48 with replan_steps=24)."
+        ),
+    )
+    parser.add_argument("--noise-seed-base", type=int, default=None,
+        help="Independent diffusion noise seed shared across env seeds; each query uses base*1000 + replan index.")
     parser.add_argument("--replan-steps", type=int, required=True)
     parser.add_argument(
         "--action-horizon",
@@ -242,6 +310,11 @@ def _new_metrics(args: argparse.Namespace, *, action_horizon: int, action_dim: i
         "hold_last_actions": 0,
         "inference_count": 0,
         "_inference_latencies_s": [],
+        "_cfg_mix_weights": [],
+        "_cfg_gate_exec_rms": [],
+        "_cfg_values": [],
+        "_cfg_value_rels": [],
+        "_cfg_gate_g": [],
         "_control_periods_s": [],
         "_action_delta_l2_sum": 0.0,
         "_action_delta_l2_count": 0,
@@ -261,6 +334,44 @@ def _finalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     out["inference_latency_mean_s"] = float(np.mean(latencies)) if latencies else None
     out["inference_latency_p95_s"] = float(np.percentile(latencies, 95)) if latencies else None
     out["inference_latency_max_s"] = float(np.max(latencies)) if latencies else None
+    mix_weights = np.asarray(metrics["_cfg_mix_weights"], dtype=np.float64)
+    gate_rms = np.asarray(metrics["_cfg_gate_exec_rms"], dtype=np.float64)
+    cfg_values = np.asarray(metrics["_cfg_values"], dtype=np.float64)
+    cfg_gate_g = np.asarray(metrics["_cfg_gate_g"], dtype=np.float64)
+    finite_mix = mix_weights[np.isfinite(mix_weights)]
+    finite_gate = gate_rms[np.isfinite(gate_rms)]
+    finite_values = cfg_values[np.isfinite(cfg_values)]
+    finite_gate_g = cfg_gate_g[np.isfinite(cfg_gate_g)]
+    out["cfg_guided_chunk_fraction"] = (
+        float(np.mean(finite_mix > 0.0)) if finite_mix.size else None
+    )
+    out["cfg_mix_weight_mean"] = (
+        float(np.mean(finite_mix)) if finite_mix.size else None
+    )
+    out["cfg_gate_exec_rms_mean"] = (
+        float(np.mean(finite_gate)) if finite_gate.size else None
+    )
+    out["cfg_gate_exec_rms_p50"] = (
+        float(np.percentile(finite_gate, 50)) if finite_gate.size else None
+    )
+    out["cfg_gate_exec_rms_p90"] = (
+        float(np.percentile(finite_gate, 90)) if finite_gate.size else None
+    )
+    out["cfg_gate_observations"] = int(finite_gate.size)
+    out["cfg_value_mean"] = (
+        float(np.mean(finite_values)) if finite_values.size else None
+    )
+    out["cfg_value_min"] = (
+        float(np.min(finite_values)) if finite_values.size else None
+    )
+    out["cfg_value_max"] = (
+        float(np.max(finite_values)) if finite_values.size else None
+    )
+    out["cfg_value_observations"] = int(finite_values.size)
+    out["cfg_gate_g_fire_fraction"] = (
+        float(np.mean(finite_gate_g >= 1.0)) if finite_gate_g.size else None
+    )
+    out["cfg_gate_g_observations"] = int(finite_gate_g.size)
     out["control_period_mean_s"] = float(np.mean(periods)) if periods else None
     out["control_period_p95_s"] = float(np.percentile(periods, 95)) if periods else None
     out["action_delta_l2_mean"] = (
@@ -320,8 +431,61 @@ def _apply_low_pass(
     return action, filtered.copy()
 
 
-def opensource_diffusion_seed(env_seed: int, *, repeat: int = 0, replan_index: int = 0) -> int:
-    """Match FastWAM-infer-in-DexJoco ``rollout_episode`` noise_seed."""
+# Huge tau ⇒ adaptive path never fires guided mix, but still returns gate energy.
+CFG_PROBE_ADAPTIVE_TAU = 1e9
+
+
+def _load_cfg_intervene_schedule(path: Path | None) -> dict[str, int]:
+    if path is None:
+        return {}
+    payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"CFG intervene schedule must be a JSON object: {path}")
+    # Allow {"by_key": {...}} wrappers from the partition script.
+    raw = payload.get("by_key", payload)
+    if not isinstance(raw, dict):
+        raise ValueError(f"CFG intervene schedule by_key must be an object: {path}")
+    out: dict[str, int] = {}
+    for key, value in raw.items():
+        out[str(key)] = int(value)
+    return out
+
+
+def _cfg_adaptive_tau_for_replan(
+    args: argparse.Namespace,
+    *,
+    seed: int,
+    replan_index: int,
+) -> float | None:
+    mode = str(getattr(args, "cfg_gate_mode", "off") or "off")
+    if mode == "off":
+        return None
+    if mode == "probe":
+        return float(CFG_PROBE_ADAPTIVE_TAU)
+    if mode == "schedule":
+        schedule = getattr(args, "_cfg_intervene_schedule", None)
+        if schedule is None:
+            schedule = _load_cfg_intervene_schedule(
+                getattr(args, "cfg_intervene_schedule", None)
+            )
+            args._cfg_intervene_schedule = schedule
+        key = f"{int(getattr(args, 'eval_repeat', 0))}:{int(seed)}"
+        target = schedule.get(key)
+        if target is not None and int(replan_index) == int(target):
+            # tau=0 ⇒ any positive gate energy takes the guided mix once.
+            return 0.0
+        return float(CFG_PROBE_ADAPTIVE_TAU)
+    if mode in {"value", "value_growth", "growth"}:
+        # Mix weight is decided on the server from the value head.
+        return None
+    raise ValueError(f"Unknown --cfg-gate-mode={mode}")
+
+
+def opensource_diffusion_seed(env_seed: int, *, repeat: int = 0, replan_index: int = 0,
+                              noise_seed_base: int | None = None) -> int:
+    """Return deterministic diffusion noise, optionally independent of env seed."""
+    if noise_seed_base is not None:
+        return int(noise_seed_base) * 1_000 + int(replan_index)
     return int(env_seed) * 100_000 + int(repeat) * 1_000 + int(replan_index)
 
 
@@ -332,17 +496,56 @@ def _predict_chunk(
     *,
     start_step: int,
     noise_seed: int,
+    adaptive_cfg_tau: float | None = None,
+    extra_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
+    options: dict[str, Any] = {"seed": int(noise_seed)}
+    # Per-replan override: probe uses a huge tau (always mix w=0 but logs E);
+    # schedule mode forces guided with tau=0 at the chosen replan index.
+    if adaptive_cfg_tau is not None:
+        options["adaptive_cfg_tau"] = float(adaptive_cfg_tau)
+    if extra_options:
+        options.update(extra_options)
     response = client.get_action(
         _copy_for_async(policy_obs),
-        options={"seed": int(noise_seed)},
+        options=options,
     )
     chunk = adapter.parse_policy_response(response)
+    action_payload = response[0] if isinstance(response, (list, tuple)) else response
+    if not isinstance(action_payload, dict):
+        action_payload = {}
     return {
         "start_step": int(start_step),
         "chunk": chunk.astype(np.float32),
         "latency_s": float(time.perf_counter() - t0),
+        # These fields are returned by FastWAM only when adaptive CFG is on;
+        # NaN keeps the action-log arrays aligned for legacy/base evals.
+        "cfg_mix_weight": (
+            float(np.asarray(action_payload["cfg_mix_weight"]))
+            if "cfg_mix_weight" in action_payload
+            else float("nan")
+        ),
+        "cfg_gate_exec_rms": (
+            float(np.asarray(action_payload["cfg_gate_exec_rms"]))
+            if "cfg_gate_exec_rms" in action_payload
+            else float("nan")
+        ),
+        "cfg_value": (
+            float(np.asarray(action_payload["cfg_value"]))
+            if "cfg_value" in action_payload
+            else float("nan")
+        ),
+        "cfg_value_rel": (
+            float(np.asarray(action_payload["cfg_value_rel"]))
+            if "cfg_value_rel" in action_payload
+            else float("nan")
+        ),
+        "cfg_gate_g": (
+            float(np.asarray(action_payload["cfg_gate_g"]))
+            if "cfg_gate_g" in action_payload
+            else float("nan")
+        ),
     }
 
 
@@ -375,6 +578,13 @@ def _append_prediction(
     chunks.append(prediction)
     metrics["inference_count"] += 1
     metrics["_inference_latencies_s"].append(float(prediction["latency_s"]))
+    metrics["_cfg_mix_weights"].append(float(prediction.get("cfg_mix_weight", float("nan"))))
+    metrics["_cfg_gate_exec_rms"].append(
+        float(prediction.get("cfg_gate_exec_rms", float("nan")))
+    )
+    metrics["_cfg_values"].append(float(prediction.get("cfg_value", float("nan"))))
+    metrics["_cfg_value_rels"].append(float(prediction.get("cfg_value_rel", float("nan"))))
+    metrics["_cfg_gate_g"].append(float(prediction.get("cfg_gate_g", float("nan"))))
     cutoff = current_step - action_horizon
     chunks[:] = [item for item in chunks if int(item["start_step"]) >= cutoff]
 
@@ -430,22 +640,62 @@ def run_episode(
         next_submit_step = 0
         replan_index = 0
         eval_repeat = int(getattr(args, "eval_repeat", 0))
+        noise_seed_base = getattr(args, "noise_seed_base", None)
         low_pass_state: np.ndarray | None = None
         last_action: np.ndarray | None = None
+        value_prev: float | None = None
+        value_fired = False
 
         def _next_chunk(*, start_step: int) -> dict[str, Any]:
-            nonlocal replan_index
+            nonlocal replan_index, value_prev, value_fired
             noise_seed = opensource_diffusion_seed(
-                seed, repeat=eval_repeat, replan_index=replan_index
+                seed, repeat=eval_repeat, replan_index=replan_index,
+                noise_seed_base=noise_seed_base
             )
+            adaptive_tau = _cfg_adaptive_tau_for_replan(
+                args, seed=seed, replan_index=replan_index
+            )
+            extra_options: dict[str, Any] | None = None
+            gate_mode = str(getattr(args, "cfg_gate_mode", "off") or "off")
+            if gate_mode == "value":
+                extra_options = {
+                    "cfg_gate_mode": "value",
+                    "cfg_gate_fired": bool(value_fired),
+                    "cfg_drop_delta": float(getattr(args, "cfg_drop_delta", 0.15)),
+                }
+                cfg_v_high = getattr(args, "cfg_v_high", None)
+                if cfg_v_high is not None:
+                    extra_options["cfg_v_high"] = float(cfg_v_high)
+                if value_prev is not None:
+                    extra_options["cfg_value_prev"] = float(value_prev)
+            elif gate_mode in {"value_growth", "growth"}:
+                # Pass the current replan index before incrementing so the
+                # server sees 0,1,2,... matching start_replan defaults.
+                extra_options = {
+                    "cfg_gate_mode": "value_growth",
+                    "cfg_replan_index": int(replan_index),
+                    "cfg_growth_tau": float(getattr(args, "cfg_growth_tau", 0.05)),
+                    "cfg_growth_start_replan": int(
+                        getattr(args, "cfg_growth_start_replan", 2)
+                    ),
+                }
+                if value_prev is not None:
+                    extra_options["cfg_value_prev"] = float(value_prev)
             replan_index += 1
-            return _predict_chunk(
+            pred = _predict_chunk(
                 infer_client,
                 adapter,
                 env.build_policy_obs(adapter),
                 start_step=start_step,
                 noise_seed=noise_seed,
+                adaptive_cfg_tau=adaptive_tau,
+                extra_options=extra_options,
             )
+            if pred["cfg_value"] == pred["cfg_value"]:
+                value_prev = float(pred["cfg_value"])
+            if pred["cfg_gate_g"] == pred["cfg_gate_g"] and float(pred["cfg_gate_g"]) >= 1.0:
+                value_fired = True
+            return pred
 
         frames: list[np.ndarray] = []
         executed_actions: list[np.ndarray] = []
@@ -604,6 +854,7 @@ def run_episode(
         result: dict[str, Any] = {
             "episode": episode,
             "seed": seed,
+            "noise_seed_base": (None if noise_seed_base is None else int(noise_seed_base)),
             "steps": steps,
             "success": bool(success),
             "metrics": _finalize_metrics(metrics),
@@ -632,6 +883,15 @@ def run_episode(
                 "policy_query_steps": np.asarray(policy_query_steps, dtype=np.int32),
                 "policy_arrival_steps": np.asarray(policy_arrival_steps, dtype=np.int32),
                 "policy_latencies": np.asarray(policy_latencies, dtype=np.float32),
+                "cfg_mix_weights": np.asarray(
+                    metrics["_cfg_mix_weights"], dtype=np.float32
+                ),
+                "cfg_gate_exec_rms": np.asarray(
+                    metrics["_cfg_gate_exec_rms"], dtype=np.float32
+                ),
+                "cfg_values": np.asarray(metrics["_cfg_values"], dtype=np.float32),
+                "cfg_value_rels": np.asarray(metrics["_cfg_value_rels"], dtype=np.float32),
+                "cfg_gate_g": np.asarray(metrics["_cfg_gate_g"], dtype=np.float32),
                 "policy_chunks": (
                     np.stack(policy_chunks, axis=0)
                     if policy_chunks
@@ -669,9 +929,16 @@ def evaluate_task(
     episode_results: list[dict[str, Any]] = []
     num_success = 0
 
-    for ep in range(int(args.episodes)):
-        ep_seed = int(args.seed) + ep
-        print(f"  episode {ep + 1}/{args.episodes} seed={ep_seed}", flush=True)
+    seed_list_raw = getattr(args, "seed_list", None)
+    if seed_list_raw:
+        seeds = [int(x.strip()) for x in str(seed_list_raw).split(",") if x.strip()]
+        if not seeds:
+            raise ValueError("--seed-list is empty")
+    else:
+        seeds = [int(args.seed) + ep for ep in range(int(args.episodes))]
+
+    for ep, ep_seed in enumerate(seeds):
+        print(f"  episode {ep + 1}/{len(seeds)} seed={ep_seed}", flush=True)
         t0 = time.perf_counter()
         stats = run_episode(task_cfg, adapter, args, episode=ep, seed=ep_seed)
         stats["elapsed_s"] = float(time.perf_counter() - t0)
@@ -701,11 +968,12 @@ def evaluate_task(
         "env_name": task.env_name,
         "prompt": task.prompt,
         "cfg_base_prompt": task.cfg_base_prompt,
+        "cfg_failure_prompt": task.cfg_failure_prompt,
         "dual_arm": task.dual_arm,
         "camera_key": task.camera_key,
-        "episodes": int(args.episodes),
+        "episodes": int(len(seeds)),
         "successes": int(num_success),
-        "success_rate": float(num_success / args.episodes if args.episodes else 0.0),
+        "success_rate": float(num_success / len(seeds) if seeds else 0.0),
         "metric_means": {
             "inference_latency_mean_s": _aggregate_metric(episode_results, "inference_latency_mean_s"),
             "inference_latency_p95_s": _aggregate_metric(episode_results, "inference_latency_p95_s"),
@@ -717,6 +985,15 @@ def evaluate_task(
             "queue_underruns": _aggregate_metric(episode_results, "queue_underruns"),
             "queue_wait_s": _aggregate_metric(episode_results, "queue_wait_s"),
             "async_replan_delays": _aggregate_metric(episode_results, "async_replan_delays"),
+            "cfg_value_mean": _aggregate_metric(episode_results, "cfg_value_mean"),
+            "cfg_value_min": _aggregate_metric(episode_results, "cfg_value_min"),
+            "cfg_value_max": _aggregate_metric(episode_results, "cfg_value_max"),
+            "cfg_gate_g_fire_fraction": _aggregate_metric(
+                episode_results, "cfg_gate_g_fire_fraction"
+            ),
+            "cfg_guided_chunk_fraction": _aggregate_metric(
+                episode_results, "cfg_guided_chunk_fraction"
+            ),
         },
         "episode_results": episode_results,
     }

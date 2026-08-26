@@ -1,0 +1,13 @@
+# Frozen DEWO v9 inference prompts. Mix subtracts ε_base (same as v6).
+# The positive branch is Successful (action CFG); cfg_base_prompt is the
+# task-only S0 channel. Video stays base.
+# Prefer `--cfg-gate-mode value_growth` with a small CFG_SCALE (e.g. 1.1):
+# from replan>=2 fire when (V-V_prev)/|V_prev| < tau (default 0.05).
+# Drop-edge (`value`) rarely fires on progress V; keep only for ablation.
+env_name: water_plant
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Grasp the watering can and apply water to the plant. Successful execution."
+cfg_base_prompt: "Grasp the watering can and apply water to the plant."
+robot_type: single_arm

@@ -1,0 +1,133 @@
+# @package _global_
+# DEWO v9: v5 frozen-adapter shell + v6 pool + VideoDiT-encoded value head.
+# Mix is still ε_cfg = ε_0 + g w (ε_+ − ε_0) (subtract base, not v7 fail).
+# One shuffle pool:
+#   D0 = one episode per 4/4 all-success seed (base text, video+action BC,
+#        action residual lock / idle)
+#   D+ = full-horizon success stitch (prefix 0..t + continuation; Successful
+#        suffix, v5 dropout 0.9/0/0.1, action BC, video identity lock;
+#        video text pinned to S0 base)
+#   D_fail = fail cliff only [t, M+24) (Failed suffix, video BC, no action BC)
+# Value head: Huber on σ(V) vs progress return G_t=γ^{T-t} (fail=0). No
+# event-floor / ranking margin. Gate at eval is drop-only once-fire
+# (V_{t-1}-V_t > δ); v_high is unset. INIT=s0 only.
+# Windows match FastWAM: num_frames=33, global_sample_stride=1, a clip
+# starting at every frame (episode/event_sample_stride=1). Not replan=24.
+# Weights stay `dewo_v5_uncond_adapter_v1` with recipe=v9.
+
+defaults:
+  - override /data: dewo_v2_eve_jump_fast_cfg
+  - override /model: fastwam
+  - _self_
+
+output_dir: ${oc.env:DEWO_OUTPUT_DIR,./runs/dexjoco_dewo_v9}/${oc.env:RUN_ID}
+
+train_mode: dewo_v9_uncond_adapter
+
+batch_size: 16
+num_workers: 4
+role_balanced_sampling:
+  enabled: false
+  seed: ${seed}
+
+data:
+  train:
+    unit_filter: dewo_v9_pool
+    # FastWAM dense windows: 33-frame clip starting at every frame.
+    episode_sample_stride: 1
+    event_sample_stride: 1
+    value_gamma: 0.99
+  val:
+    unit_filter: dewo_v9_pool
+    episode_sample_stride: 1
+    event_sample_stride: 1
+    value_gamma: 0.99
+
+model:
+  load_vae: false
+  fill_vae_latent_cache: false
+  proprio_dim: ${data.train.processor.proprio_output_dim}
+  state_dit_config: null
+  skip_dit_load_from_pretrain: true
+  action_dit_pretrained_path: null
+  video_dit_config:
+    use_gradient_checkpointing: true
+  action_dit_config:
+    use_gradient_checkpointing: true
+  loss:
+    lambda_video: 0.0
+    lambda_action: 1.0
+    lambda_state: 1.0
+  uncond_adapter:
+    enabled: true
+    rank: ${oc.decode:${oc.env:ADAPTER_RANK,16}}
+    alpha: ${oc.decode:${oc.env:ADAPTER_ALPHA,16}}
+    pin_video_context_to_base: true
+    identity_lock_lambda: 0.1
+    action_residual_lock_lambda: 0.05
+    video_bc_on_zero_action: true
+    recipe: v9
+    target_modules:
+      - cross_attn.k
+      - cross_attn.v
+    experts:
+      - video
+      - action
+    value_head:
+      enabled: true
+      encoder: video_dit
+      in_channels: 3072
+      hidden: 256
+      loss: huber
+      gamma: 0.99
+      lambda_value: 1.0
+      lambda_cliff: 0.0
+      cliff_margin: 0.2
+      v_high: null
+      drop_delta: 0.15
+
+lr_scheduler_type: cosine
+learning_rate: 1.0e-4
+num_epochs: 100
+max_steps: 10000
+log_every: 10
+save_every: 2500
+save_weights_every: 2500
+save_weight_steps: []
+save_state_every: 0
+state_keep_last: 1
+eval_every: 0
+eval_num_inference_steps: 10
+eval_num_samples: 8
+eval_seed: 20260812
+best_metric: val_base_loss
+best_metric_mode: min
+
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+seed: 42
+max_grad_norm: 1.0
+weight_decay: 0.01
+resume: ${oc.env:FASTWAM_RESUME}
+resume_experts: null
+
+experiment_provenance:
+  protocol: ${oc.env:DEWO_PROTOCOL,dewo_v9_uncond_adapter_isolated}
+  variant: ${oc.env:FITWAM_VARIANT,B1-jump-fast-v9-uncond-adapter}
+  stack: opensource_224_zscore
+  source_checkpoint_sha256: ${oc.env:FASTWAM_RESUME_SHA256}
+  source_config_sha256: ${oc.env:FASTWAM_SOURCE_CONFIG_SHA256}
+  manifest_sha256: ${oc.env:EVE_MANIFEST_SHA256}
+  selection_manifest_sha256: ${oc.env:EVE_VAL_MANIFEST_SHA256}
+  code_snapshot_sha256: ${oc.env:FITWAM_CODE_SNAPSHOT_SHA256}
+  normalization_kind: ${oc.env:NORM_STATS_SOURCE}
+  normalization_bundle_sha256: ${oc.env:NORM_STATS_BUNDLE_SHA256}
+  text_embedding_cache_sha256: ${oc.env:TEXT_EMBEDDING_CACHE_SHA256}
+
+wandb:
+  enabled: true
+  workspace: ${oc.env:WANDB_ENTITY,null}
+  project: ${oc.env:WANDB_PROJECT,fitwam}
+  name: ${oc.env:WANDB_RUN_NAME}
+  group: ${oc.env:FITWAM_WANDB_GROUP,dewo_v9_opensource}
+  mode: online

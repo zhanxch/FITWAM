@@ -65,6 +65,9 @@ train:
   vae_latent_cache_dir: ${oc.env:VAE_LATENT_CACHE_DIR,null}
   require_vae_latent_cache: ${oc.env:REQUIRE_VAE_LATENT_CACHE,false}
   drop_video_when_latents_cached: true
+  unit_filter: null
+  event_sample_stride: null
+  episode_sample_stride: null
 
 val:
   _target_: fastwam.datasets.eve.manifest_dataset.EveManifestRobotVideoDataset
@@ -92,3 +95,6 @@ val:
   vae_latent_cache_dir: ${data.train.vae_latent_cache_dir}
   require_vae_latent_cache: ${data.train.require_vae_latent_cache}
   drop_video_when_latents_cached: ${data.train.drop_video_when_latents_cached}
+  unit_filter: null
+  event_sample_stride: ${data.train.event_sample_stride}
+  episode_sample_stride: ${data.train.episode_sample_stride}
