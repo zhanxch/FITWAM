@@ -111,7 +111,7 @@ def select_one_per_all_success_seed(
     leftover.sort(key=lambda r: int(r["episode_index"]))
     failures.sort(key=lambda r: int(r["episode_index"]))
     if not primary:
-        raise SystemExit("No 4/4 all-success seeds found for DEWO v8 D0.")
+        raise SystemExit("No 4/4 all-success seeds found for DEWO v9 D0.")
     return primary, leftover, failures
 
 
@@ -160,7 +160,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="random_n",
         help=(
             "random_n: sample --n complete successes (v2/v7). "
-            "one_per_all_success_seed: locked v8 D0 (one episode per 4/4 seed)."
+            "one_per_all_success_seed: locked v9 D0 (one episode per 4/4 seed)."
         ),
     )
     p.add_argument("--seed", type=int, default=20260820)

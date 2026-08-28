@@ -1,0 +1,11 @@
+# Frozen DEWO v9 inference prompts. Mix subtracts ε_base.
+# Failure suffix is train-only (' Failed execution.'); this eval yaml does
+# not need cfg_failure_prompt because v9 does not subtract ε_-.
+# Prefer `--cfg-gate-mode value_growth` with a small CFG_SCALE (e.g. 1.1).
+env_name: fold_glasses
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Fold the glasses and place them into the case. Successful execution."
+cfg_base_prompt: "Fold the glasses and place them into the case."
+robot_type: single_arm

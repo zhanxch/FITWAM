@@ -13,6 +13,7 @@ from .helpers.loader import load_wan22_ti2v_5b_components
 from .mot import MoT
 from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
 from .state_dit import StateDiT
+from .value_head import low_value_growth_gate, relative_growth
 
 logger = get_logger(__name__)
 
@@ -1237,9 +1238,9 @@ class FastWAM(torch.nn.Module):
         action_lock_mse = None
         action_lock_w = primary_lock_w
         adapter_recipe = str(
-            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v5"
+            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v9"
         )
-        if adapter_recipe in {"v8", "v9"}:
+        if adapter_recipe == "v9":
             # Idle the residual on D0 only (action BC and video BC both on).
             action_w = sample.get("action_loss_weight", None)
             if action_w is not None and video_w is not None:
@@ -1885,6 +1886,9 @@ class FastWAM(torch.nn.Module):
         cfg_replan_index: Optional[int] = None,
         cfg_growth_tau: Optional[float] = None,
         cfg_growth_start_replan: Optional[int] = None,
+        cfg_growth_stop_replan: Optional[int] = None,
+        cfg_low_value_threshold: Optional[float] = None,
+        cfg_growth_delta: Optional[float] = None,
     ) -> dict[str, Any]:
         self.eval()
         text_cfg_scale = float(text_cfg_scale)
@@ -2111,7 +2115,7 @@ class FastWAM(torch.nn.Module):
 
         adapter_injected = bool(getattr(self, "uncond_adapter_injected", False))
         adapter_recipe = str(
-            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v5"
+            (getattr(self, "uncond_adapter_config", {}) or {}).get("recipe") or "v9"
         )
         mix_subtract = cfg_mix_subtract_branch(adapter_recipe)
         if mix_subtract == CFG_MIX_SUBTRACT_FAIL and use_text_cfg and not have_failure:
@@ -2366,7 +2370,6 @@ class FastWAM(torch.nn.Module):
                     from fastwam.models.wan22.value_head import (
                         DEFAULT_VALUE_GROWTH_START_REPLAN,
                         DEFAULT_VALUE_GROWTH_TAU,
-                        relative_growth,
                         relative_growth_gate,
                     )
 
@@ -2390,6 +2393,11 @@ class FastWAM(torch.nn.Module):
                             if cfg_growth_start_replan is None
                             else int(cfg_growth_start_replan)
                         )
+                        stop_replan = (
+                            None
+                            if cfg_growth_stop_replan is None
+                            else int(cfg_growth_stop_replan)
+                        )
                         replan_index = (
                             0 if cfg_replan_index is None else int(cfg_replan_index)
                         )
@@ -2400,9 +2408,22 @@ class FastWAM(torch.nn.Module):
                             tau=tau,
                             replan_index=replan_index,
                             start_replan=start_replan,
+                            stop_replan=stop_replan,
+                            fired=bool(cfg_gate_fired),
                         )
                         frozen_mix_weight = float(cfg_gate_g) * float(text_cfg_scale)
                     mix_weight = frozen_mix_weight
+                elif gate_mode in {"low_value_growth", "low_growth"}:
+                    if value_head is None:
+                        raise ValueError("`cfg_gate_mode=low_value_growth` requires a trained value_head.")
+                    cfg_value_rel = relative_growth(v_prev, float(cfg_value))
+                    cfg_gate_g = low_value_growth_gate(
+                        v_prev, float(cfg_value),
+                        v_low=0.10 if cfg_low_value_threshold is None else float(cfg_low_value_threshold),
+                        delta=0.01 if cfg_growth_delta is None else float(cfg_growth_delta),
+                        fired=bool(cfg_gate_fired),
+                    )
+                    frozen_mix_weight = float(cfg_gate_g) * float(text_cfg_scale)
                 elif adaptive_tau is not None:
                     token_e = action_cfg_residual_energy(delta)
                     step_exec_rms = float(token_e[0, :exec_horizon].mean().item())

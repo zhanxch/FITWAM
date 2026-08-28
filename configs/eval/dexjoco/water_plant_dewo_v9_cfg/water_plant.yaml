@@ -1,9 +1,9 @@
-# Frozen DEWO v9 inference prompts. Mix subtracts ε_base (same as v6).
+# Frozen DEWO v9 inference prompts. Mix subtracts ε_base.
 # The positive branch is Successful (action CFG); cfg_base_prompt is the
-# task-only S0 channel. Video stays base.
-# Prefer `--cfg-gate-mode value_growth` with a small CFG_SCALE (e.g. 1.1):
-# from replan>=2 fire when (V-V_prev)/|V_prev| < tau (default 0.05).
-# Drop-edge (`value`) rarely fires on progress V; keep only for ablation.
+# task-only S0 channel. Video stays base. Failure suffix is used at train
+# time on D_fail windows (' Failed execution.'); this eval yaml does not
+# need cfg_failure_prompt because v9 does not subtract ε_-.
+# Prefer `--cfg-gate-mode value_growth` with a small CFG_SCALE (e.g. 1.1).
 env_name: water_plant
 camera_mapping:
   base: front

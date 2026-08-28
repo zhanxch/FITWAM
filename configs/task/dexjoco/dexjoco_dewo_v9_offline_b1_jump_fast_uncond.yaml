@@ -1,22 +1,15 @@
 # @package _global_
-# DEWO v9: v5 frozen-adapter shell + v6 pool + VideoDiT-encoded value head.
-# Mix is still ε_cfg = ε_0 + g w (ε_+ − ε_0) (subtract base, not v7 fail).
+# DEWO v9: frozen mixed-S0 MoT + text-side K/V adapter + VideoDiT value head.
+# Mix is ε_cfg = ε_0 + g w (ε_+ − ε_0) (subtract base).
 # One shuffle pool:
-#   D0 = one episode per 4/4 all-success seed (base text, video+action BC,
-#        action residual lock / idle)
-#   D+ = full-horizon success stitch (prefix 0..t + continuation; Successful
-#        suffix, v5 dropout 0.9/0/0.1, action BC, video identity lock;
-#        video text pinned to S0 base)
-#   D_fail = fail cliff only [t, M+24) (Failed suffix, video BC, no action BC)
-# Value head: Huber on σ(V) vs progress return G_t=γ^{T-t} (fail=0). No
-# event-floor / ranking margin. Gate at eval is drop-only once-fire
-# (V_{t-1}-V_t > δ); v_high is unset. INIT=s0 only.
-# Windows match FastWAM: num_frames=33, global_sample_stride=1, a clip
-# starting at every frame (episode/event_sample_stride=1). Not replan=24.
-# Weights stay `dewo_v5_uncond_adapter_v1` with recipe=v9.
+#   D0 = one episode per 4/4 all-success seed (base text, video+action BC)
+#   D+ = full-horizon success stitch (Successful suffix, 0.9/0/0.1, action BC)
+#   D_fail = fail cliff [t, M+24) (Failed suffix, video BC, no action BC)
+# Value head: Huber on σ(V) vs G_t=γ^{T-t} (fail=0). No event floor.
+# INIT=s0 only. Weights stay `dewo_v5_uncond_adapter_v1` with recipe=v9.
 
 defaults:
-  - override /data: dewo_v2_eve_jump_fast_cfg
+  - override /data: dewo_v9_eve_cfg
   - override /model: fastwam
   - _self_
 
@@ -130,4 +123,4 @@ wandb:
   project: ${oc.env:WANDB_PROJECT,fitwam}
   name: ${oc.env:WANDB_RUN_NAME}
   group: ${oc.env:FITWAM_WANDB_GROUP,dewo_v9_opensource}
-  mode: online
+  mode: ${oc.env:WANDB_MODE,offline}

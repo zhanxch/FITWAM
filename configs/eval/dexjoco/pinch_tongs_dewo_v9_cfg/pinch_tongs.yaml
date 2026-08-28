@@ -1,0 +1,8 @@
+# Frozen DEWO v9 inference prompts. Mix subtracts ε_base.
+env_name: pinch_tongs
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Grasp the tongs and perform three consecutive open-close motions. Successful execution."
+cfg_base_prompt: "Grasp the tongs and perform three consecutive open-close motions."
+robot_type: single_arm

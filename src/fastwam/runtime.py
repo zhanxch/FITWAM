@@ -254,12 +254,12 @@ def create_fastwam(
         adapter_cfg["video_bc_on_zero_action"] = bool(
             uncond_adapter_cfg.get("video_bc_on_zero_action", False)
         )
-        adapter_cfg["recipe"] = str(uncond_adapter_cfg.get("recipe") or "v5")
+        adapter_cfg["recipe"] = str(uncond_adapter_cfg.get("recipe") or "v9")
         adapter_cfg["value_head"] = dict(uncond_adapter_cfg.get("value_head") or {})
         model.uncond_adapter_config = adapter_cfg
         value_head_cfg = adapter_cfg["value_head"]
         recipe = str(adapter_cfg["recipe"])
-        if recipe in {"v8", "v9"} or bool(value_head_cfg.get("enabled", False)):
+        if recipe == "v9" or bool(value_head_cfg.get("enabled", False)):
             from fastwam.models.wan22.value_head import attach_recoverability_value_head
 
             attach_recoverability_value_head(model, value_head_cfg, recipe=recipe)

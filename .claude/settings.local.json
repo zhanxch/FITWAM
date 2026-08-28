@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(python *)",
-      "Bash(grep -RInE 'num_frames: 33|num_frames: \\\\$\\\\{data\\\\.train\\\\.num_frames\\\\}|num_obs_steps: \\\\$\\\\{data\\\\.train\\\\.num_frames\\\\}|frame_stride|random.*sample|sample.*start|fixed.*start|temporal.*crop|window.*sample|episode.*window|getitem|__getitem__|Dataset|DataLoader' /data_all/xiangchengzhan/FastWAM/configs/data /data_all/xiangchengzhan/FastWAM/scripts /data_all/xiangchengzhan/FastWAM/fastwam /data_all/xiangchengzhan/FastWAM/src)"
+      "Bash(grep -RInE 'num_frames: 33|num_frames: \\\\$\\\\{data\\\\.train\\\\.num_frames\\\\}|num_obs_steps: \\\\$\\\\{data\\\\.train\\\\.num_frames\\\\}|frame_stride|random.*sample|sample.*start|fixed.*start|temporal.*crop|window.*sample|episode.*window|getitem|__getitem__|Dataset|DataLoader' /data_all/xiangchengzhan/FastWAM/configs/data /data_all/xiangchengzhan/FastWAM/scripts /data_all/xiangchengzhan/FastWAM/src/fastwam /data_all/xiangchengzhan/FastWAM/src)"
     ]
   }
 }

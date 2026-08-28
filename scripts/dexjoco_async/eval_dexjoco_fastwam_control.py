@@ -145,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cfg-gate-mode",
-        choices=("off", "probe", "schedule", "value", "value_growth"),
+        choices=("off", "probe", "schedule", "value", "value_growth", "low_value_growth"),
         default="off",
         help=(
             "off: no per-replan CFG override. "
@@ -154,8 +154,9 @@ def parse_args() -> argparse.Namespace:
             "schedule: force guided CFG once at the replan index from "
             "--cfg-intervene-schedule (key eval_repeat:seed); other replans probe. "
             "value: drop-edge once-fire (V_prev-V_curr > delta). Not σ(V−τ). "
-            "value_growth: per-replan; from --cfg-growth-start-replan fire CFG "
-            "when (V-V_prev)/|V_prev| < --cfg-growth-tau. Not once-fire."
+            "value_growth: from --cfg-growth-start-replan fire CFG "
+            "when (V-V_prev)/|V_prev| < --cfg-growth-tau. Per-replan unless "
+            "--cfg-growth-once / --cfg-growth-stop-replan."
         ),
     )
     parser.add_argument(
@@ -198,6 +199,26 @@ def parse_args() -> argparse.Namespace:
         help=(
             "0-based replan index before which value_growth never fires "
             "(default 2 = third node / t=48 with replan_steps=24)."
+        ),
+    )
+    parser.add_argument(
+        "--cfg-growth-stop-replan",
+        type=int,
+        default=None,
+        help=(
+            "0-based replan index after which value_growth never fires. "
+            "Unset = no stop (water_plant). fold_glasses uses 3 (t=72)."
+        ),
+    )
+    parser.add_argument("--cfg-low-value-threshold", type=float, default=0.10)
+    parser.add_argument("--cfg-growth-delta", type=float, default=0.01)
+    parser.add_argument(
+        "--cfg-growth-once",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Once-fire relative-growth: after the first g=1, later replans stay 本体. "
+            "Default off keeps per-replan growth (water_plant)."
         ),
     )
     parser.add_argument("--noise-seed-base", type=int, default=None,
@@ -678,6 +699,20 @@ def run_episode(
                     "cfg_growth_start_replan": int(
                         getattr(args, "cfg_growth_start_replan", 2)
                     ),
+                }
+                stop_replan = getattr(args, "cfg_growth_stop_replan", None)
+                if stop_replan is not None:
+                    extra_options["cfg_growth_stop_replan"] = int(stop_replan)
+                if bool(getattr(args, "cfg_growth_once", False)):
+                    extra_options["cfg_gate_fired"] = bool(value_fired)
+                if value_prev is not None:
+                    extra_options["cfg_value_prev"] = float(value_prev)
+            elif gate_mode in {"low_value_growth", "low_growth"}:
+                extra_options = {
+                    "cfg_gate_mode": "low_value_growth",
+                    "cfg_gate_fired": bool(value_fired),
+                    "cfg_low_value_threshold": float(getattr(args, "cfg_low_value_threshold", 0.10)),
+                    "cfg_growth_delta": float(getattr(args, "cfg_growth_delta", 0.01)),
                 }
                 if value_prev is not None:
                     extra_options["cfg_value_prev"] = float(value_prev)

@@ -101,14 +101,11 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             self.unit_filter = None
         elif str(self.unit_filter) not in {
             "recoverability_events",
-            "dewo_v6_pool",
-            "dewo_v7_pool",
-            "dewo_v8_pool",
             "dewo_v9_pool",
         }:
             raise ValueError(
                 "`unit_filter` must be null, 'all', 'recoverability_events', "
-                "'dewo_v6_pool', 'dewo_v7_pool', 'dewo_v8_pool', or 'dewo_v9_pool', "
+                "or 'dewo_v9_pool', "
                 f"got {self.unit_filter!r}."
             )
         else:
@@ -252,15 +249,11 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         failure events (D_fail). Ordinary success episodes and aux_success
         duplicates are dropped.
 
-        ``dewo_v6_pool`` / ``dewo_v7_pool`` / ``dewo_v8_pool`` /
-        ``dewo_v9_pool`` keep success episodes (D0), success-event
+        ``dewo_v9_pool`` keeps success episodes (D0), success-event
         primaries (D+), and failure events (D_fail). aux_success copies
         and full failure episodes are dropped. Sampling is a single
-        shuffle. Loss weights differ: v7 turns on action BC for D_fail
-        and turns off its video BC. v8 uses v6 loss weights plus a
-        binary value-head target. v9 uses the same pool with a progress
-        return \(G_t=\gamma^{T-t}\) (fail frames 0); it does not floor
-        \(V\) near the event.
+        shuffle. D_fail is video BC only. Value target is the progress
+        return \(G_t=\gamma^{T-t}\) (fail frames 0).
         """
 
         filt = getattr(self, "unit_filter", None)
@@ -270,11 +263,11 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
             if unit.get("sample_type") != "event":
                 return False
             return self._sampling_role(unit) in {"primary", "auxiliary"}
-        if filt in {"dewo_v6_pool", "dewo_v7_pool", "dewo_v8_pool", "dewo_v9_pool"}:
-            return self._passes_dewo_v6_pool_filter(unit)
+        if filt == "dewo_v9_pool":
+            return self._passes_dewo_v9_pool_filter(unit)
         raise ValueError(f"Unknown Eve `unit_filter` {filt!r}.")
 
-    def _passes_dewo_v6_pool_filter(self, unit: dict[str, Any]) -> bool:
+    def _passes_dewo_v9_pool_filter(self, unit: dict[str, Any]) -> bool:
         role = self._sampling_role(unit)
         if role == "auxiliary_success":
             return False
@@ -443,7 +436,7 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         unit: dict[str, Any],
         unit_filter: Optional[str] = None,
     ) -> str:
-        if unit_filter in {"dewo_v6_pool", "dewo_v7_pool", "dewo_v8_pool", "dewo_v9_pool"} and unit.get("sample_type") == "episode":
+        if unit_filter == "dewo_v9_pool" and unit.get("sample_type") == "episode":
             return "base"
         role = cls._sampling_role(unit)
         if role == "primary":
@@ -453,34 +446,17 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         return "aux_success"
 
     @classmethod
-    def _v6_action_loss_weight(cls, unit: dict[str, Any]) -> float:
+    def _v9_action_loss_weight(cls, unit: dict[str, Any]) -> float:
         return 1.0 if cls._sampling_role(unit) == "primary" else 0.0
 
     @classmethod
-    def _v6_video_loss_weight(cls, unit: dict[str, Any]) -> float:
+    def _v9_video_loss_weight(cls, unit: dict[str, Any]) -> float:
         role = cls._sampling_role(unit)
         if role == "auxiliary":
             return 1.0
         if unit.get("sample_type") == "episode" and role == "primary":
             return 1.0
         return 0.0
-
-    @classmethod
-    def _v7_action_loss_weight(cls, unit: dict[str, Any]) -> float:
-        return 1.0 if cls._sampling_role(unit) in {"primary", "auxiliary"} else 0.0
-
-    @classmethod
-    def _v7_video_loss_weight(cls, unit: dict[str, Any]) -> float:
-        role = cls._sampling_role(unit)
-        if unit.get("sample_type") == "episode" and role == "primary":
-            return 1.0
-        return 0.0
-
-    @classmethod
-    def _v8_value_target(cls, unit: dict[str, Any]) -> float:
-        """D0/D+ → 1, truncated D_fail near M → 0. Shared prefixes stay one-label."""
-
-        return 0.0 if cls._sampling_role(unit) == "auxiliary" else 1.0
 
     @classmethod
     def _v9_value_target(
@@ -565,29 +541,16 @@ class EveManifestRobotVideoDataset(RobotVideoDataset):
         )
 
         unit_filter = getattr(self, "unit_filter", None)
-        if unit_filter == "dewo_v6_pool":
-            action_w = self._v6_action_loss_weight(unit)
-            video_w = self._v6_video_loss_weight(unit)
-        elif unit_filter == "dewo_v8_pool":
-            action_w = self._v6_action_loss_weight(unit)
-            video_w = self._v6_video_loss_weight(unit)
-        elif unit_filter == "dewo_v9_pool":
-            action_w = self._v6_action_loss_weight(unit)
-            video_w = self._v6_video_loss_weight(unit)
-        elif unit_filter == "dewo_v7_pool":
-            action_w = self._v7_action_loss_weight(unit)
-            video_w = self._v7_video_loss_weight(unit)
+        if unit_filter == "dewo_v9_pool":
+            action_w = self._v9_action_loss_weight(unit)
+            video_w = self._v9_video_loss_weight(unit)
         else:
             action_w = self._action_loss_weight(unit)
             video_w = None
         data["action_loss_weight"] = torch.tensor(action_w, dtype=torch.float32)
         if video_w is not None:
             data["video_loss_weight"] = torch.tensor(video_w, dtype=torch.float32)
-        if unit_filter == "dewo_v8_pool":
-            data["value_target"] = torch.tensor(
-                self._v8_value_target(unit), dtype=torch.float32
-            )
-        elif unit_filter == "dewo_v9_pool":
+        if unit_filter == "dewo_v9_pool":
             data["value_target"] = torch.tensor(
                 self._v9_value_target(
                     unit,

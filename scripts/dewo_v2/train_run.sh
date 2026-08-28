@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Internal DEWO v2 tmux worker. Prefer:
-#   TASK=... INIT=scratch|s0 GPUS=... ENV_FILE=... bash scripts/dewo_v2/train.sh
+# Internal DEWO v9 tmux worker. Prefer:
+#   TASK=... INIT=s0 GPUS=... ENV_FILE=... bash scripts/dewo_v2/train.sh
 #
-# Full DiT only. There is no LoRA recipe.
-#
-# CFG env vars from prepare are forwarded into Hydra. Extra hydra knobs:
-#   DEWO_HYDRA_OVERRIDES='eval_every=0'
+# CFG mixing is set by train.sh, then forwarded into Hydra via oc.env.
 set -euo pipefail
 
 # Resolve the repository from this file, never from the caller's CWD. The
@@ -27,8 +24,8 @@ dewo_v2_require_gpus
 dewo_v2_align_opensource_stack
 dewo_v2_assert_not_lora DEWO_TASK "${DEWO_TASK:-}"
 dewo_v2_assert_not_lora DEWO_VARIANT "${DEWO_VARIANT:-}"
-TMUX_SESSION="${TMUX_SESSION:-${TASK}_dewo_v2_train}"
-EXP_ROOT="${B1_VIDEO_EXPERIMENT_ROOT:-${ROOT_DIR}/data/${TASK}_dewo_v2_opensource}"
+TMUX_SESSION="${TMUX_SESSION:-${TASK}_dewo_v9_train}"
+EXP_ROOT="${B1_VIDEO_EXPERIMENT_ROOT:-${ROOT_DIR}/data/${TASK}_dewo_v9_opensource}"
 LOG_DIR="${LOG_DIR:-${EXP_ROOT}/logs}"
 # Default: pre-encode VAE cache. Opt-out: USE_VAE_LATENT_CACHE=0.
 dewo_v2_apply_vae_policy
@@ -64,15 +61,15 @@ export REQUIRE_VAE_LATENT_CACHE
 export FILL_VAE_LATENT_CACHE
 export SKIP_VAE_PREENCODE
 export CUDA_VISIBLE_DEVICES="${GPUS}"
-export DEWO_TASK="${DEWO_TASK:-dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4}"
-export DEWO_VARIANT="${DEWO_VARIANT:-B1-jump-fast-full-1e-4-scratch}"
+export DEWO_TASK="${DEWO_TASK:-dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond}"
+export DEWO_VARIANT="${DEWO_VARIANT:-B1-jump-fast-v9-uncond-adapter}"
 dewo_v2_assert_not_lora DEWO_TASK "${DEWO_TASK}"
 dewo_v2_assert_not_lora DEWO_VARIANT "${DEWO_VARIANT}"
-export DEWO_OUTPUT_DIR="${DEWO_OUTPUT_DIR:-./runs/dexjoco_${TASK}_dewo_v2}"
-export FITWAM_WANDB_GROUP="${FITWAM_WANDB_GROUP:-${TASK}_dewo_v2_opensource}"
-export WANDB_MODE="${WANDB_MODE:-online}"
+export DEWO_OUTPUT_DIR="${DEWO_OUTPUT_DIR:-./runs/dexjoco_${TASK}_dewo_v9}"
+export FITWAM_WANDB_GROUP="${FITWAM_WANDB_GROUP:-${TASK}_dewo_v9_opensource}"
+export WANDB_MODE="${WANDB_MODE:-offline}"
 export RUN_ID="${RUN_ID:-$(date +%Y-%m-%d_%H-%M-%S)_${DEWO_VARIANT}}"
-export WANDB_RUN_NAME="${WANDB_RUN_NAME:-${TASK}_dewo_v2_${RUN_ID}}"
+export WANDB_RUN_NAME="${WANDB_RUN_NAME:-${TASK}_dewo_v9_${RUN_ID}}"
 export DEWO_HYDRA_OVERRIDES
 
 WORKER="${LOG_DIR}/tmux_train_${RUN_ID}.sh"
@@ -125,22 +122,19 @@ export WANDB_MODE="${WANDB_MODE}"
 export RUN_ID="${RUN_ID}"
 export WANDB_RUN_NAME="${WANDB_RUN_NAME}"
 export DEWO_HYDRA_OVERRIDES="${DEWO_HYDRA_OVERRIDES}"
-export DEWO_VERSION="${DEWO_VERSION:-v2}"
+export DEWO_VERSION="${DEWO_VERSION:-v9}"
 export CFG_SUCCESS_SUFFIX="${CFG_SUCCESS_SUFFIX:- Successful execution.}"
-export CFG_FAILURE_SUFFIX="${CFG_FAILURE_SUFFIX:-null}"
+export CFG_FAILURE_SUFFIX="${CFG_FAILURE_SUFFIX:- Failed execution.}"
 export CFG_DROPOUT="${CFG_DROPOUT:-0.0}"
-export CFG_PRIMARY_OUTCOME="${CFG_PRIMARY_OUTCOME:-0.5}"
+export CFG_PRIMARY_OUTCOME="${CFG_PRIMARY_OUTCOME:-0.9}"
 export CFG_PRIMARY_FAST="${CFG_PRIMARY_FAST:-0.0}"
-export CFG_PRIMARY_BASE="${CFG_PRIMARY_BASE:-0.5}"
-export CFG_AUX_SUCCESS_OUTCOME="${CFG_AUX_SUCCESS_OUTCOME:-0.4}"
-export CFG_AUX_SUCCESS_FAST="${CFG_AUX_SUCCESS_FAST:-0.2}"
-export CFG_AUX_SUCCESS_BASE="${CFG_AUX_SUCCESS_BASE:-0.4}"
-export CFG_AUX_FAIL_OUTCOME="${CFG_AUX_FAIL_OUTCOME:-0.0}"
-export CFG_AUX_FAIL_FAST="${CFG_AUX_FAIL_FAST:-0.2}"
-export CFG_AUX_FAIL_BASE="${CFG_AUX_FAIL_BASE:-0.4}"
-export CFG_FAST_MODEL_ID="${CFG_FAST_MODEL_ID:-physical-intelligence/fast}"
-export CFG_FAST_MAX_TOKENS="${CFG_FAST_MAX_TOKENS:-32}"
-export CFG_FAST_FAIL_CLOSED="${CFG_FAST_FAIL_CLOSED:-true}"
+export CFG_PRIMARY_BASE="${CFG_PRIMARY_BASE:-0.1}"
+export CFG_AUX_SUCCESS_OUTCOME="${CFG_AUX_SUCCESS_OUTCOME:-1.0}"
+export CFG_AUX_SUCCESS_FAST="${CFG_AUX_SUCCESS_FAST:-0.0}"
+export CFG_AUX_SUCCESS_BASE="${CFG_AUX_SUCCESS_BASE:-0.0}"
+export CFG_AUX_FAIL_OUTCOME="${CFG_AUX_FAIL_OUTCOME:-1.0}"
+export CFG_AUX_FAIL_FAST="${CFG_AUX_FAIL_FAST:-0.0}"
+export CFG_AUX_FAIL_BASE="${CFG_AUX_FAIL_BASE:-0.0}"
 
 log() { echo "[dewo-v2-tmux \$(date -Is)] \$*" | tee -a "${MASTER_LOG}"; }
 
@@ -219,15 +213,15 @@ else
   log "REQUIRE_VAE_LATENT_CACHE=0; skipping cache file preflight"
 fi
 
-if [[ "${DEWO_VERSION:-v2}" == "v6" || "${DEWO_VERSION:-v2}" == "v7" || "${DEWO_VERSION:-v2}" == "v8" || "${DEWO_VERSION:-v2}" == "v9" ]]; then
-  log "${DEWO_VERSION}: precompute Successful/Failed text embeds (overwrite=false)"
+if [[ "${DEWO_VERSION:-v9}" == "v9" ]]; then
+  log "v9: precompute Successful/Failed text embeds (overwrite=false)"
   python "${ROOT_DIR}/scripts/precompute_text_embeds.py" \\
     "task=${DEWO_TASK}" \\
     "+overwrite=false" \\
-    2>&1 | tee -a "${LOG_DIR}/precompute_text_embeds_${DEWO_VERSION}.log"
+    2>&1 | tee -a "${LOG_DIR}/precompute_text_embeds_v9.log"
   python "${ROOT_DIR}/scripts/export_text_embed_cache_npz.py" \\
     --cache-dir "\${TEXT_EMBEDDING_CACHE_DIR}" \\
-    2>&1 | tee -a "${LOG_DIR}/export_text_embed_cache_npz_${DEWO_VERSION}.log"
+    2>&1 | tee -a "${LOG_DIR}/export_text_embed_cache_npz_v9.log"
 fi
 
 log "root=${ROOT_DIR}"

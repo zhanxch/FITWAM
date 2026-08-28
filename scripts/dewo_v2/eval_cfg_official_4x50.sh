@@ -1,21 +1,13 @@
 #!/usr/bin/env bash
-# Official 4×50 DEWO v2/v5/v6/v7 CFG eval. Opensource 224 / z-score.
-#   TASK=water_plant RUN_DIR=... CKPT=... GPUS=4,5,6,7 CFG_SCALE=1.2 \
-#     bash scripts/dewo_v2/eval_cfg_official_4x50.sh
+# Official 4×50 DEWO v9 CFG eval. Opensource 224 / z-score.
+#   TASK=fold_glasses RUN_DIR=... CKPT=... GPUS=4,5,6,7 CFG_SCALE=1.1 \
+#     CFG_GATE_MODE=value_growth bash scripts/dewo_v2/eval_cfg_official_4x50.sh
 #
-# CFG terminology:
+# CFG terminology (v9 mix subtracts ε_base):
 #   text_cfg_scale=1  → 本体 bypass (adapter off + cfg_base_prompt). Not mix w=1.
 #   mix w=0           → ε_base, same policy as the bypass after both branches run.
-#   v5/v6 mix w=1     → ε_posi (adapter on + success). Not 本体.
-#   v7 mix w=1        → ε_base + (ε_posi − ε_fail). Not ε_posi. Never execute ε_fail.
-#   CFG_SCALE=2       → v5/v6: ε_base + 2(ε_posi-ε_base); v7: ε_base + 2(ε_posi-ε_fail).
-# Adaptive (optional): ADAPTIVE_CFG_TAU=0.05 with CFG_SCALE!=1
-#   NFE0 exec RMS E>tau → mix w=CFG_SCALE; else mix w=0 (本体).
-#   v7 energy is RMS(ε_posi − ε_fail), not RMS(ε_posi − ε_base).
-#   ADAPTIVE_CFG_TAU=auto reads RUN_DIR/adaptive_cfg_tau.json; skips adaptive
-#   if the file is missing or separable=false. Do not treat 0.05 as a v6/v7 prior.
-# Residual trust region (optional): CFG_EPSILON_L=0.03 bounds the action
-# residual before CFG_SCALE; CFG_RESIDUAL_CLIP_MODE is rms or elementwise.
+#   mix w=1           → ε_posi (adapter on + Successful). Not 本体.
+# Prefer CFG_GATE_MODE=value_growth with a small CFG_SCALE (e.g. 1.1).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -32,28 +24,27 @@ CALLER_CFG_TASK_DIR="${CFG_TASK_DIR:-}"
 CALLER_UNCOND_ADAPTER="${UNCOND_ADAPTER:-}"
 CALLER_BACKBONE_CKPT="${BACKBONE_CKPT:-}"
 CALLER_REPEATS="${REPEATS:-}"
+CALLER_REPLAN_STEPS="${REPLAN_STEPS:-}"
 CALLER_CFG_EPSILON_L="${CFG_EPSILON_L:-}"
 CALLER_CFG_CLIP_MODE="${CFG_RESIDUAL_CLIP_MODE:-}"
 dewo_v2_load_task "${TASK}"
 
-RUN_DIR="${RUN_DIR:?Set RUN_DIR to the DEWO v2 training run directory}"
+RUN_DIR="${RUN_DIR:?Set RUN_DIR to the DEWO v9 training run directory}"
 CKPT="${CALLER_CKPT:-${CKPT:-${RUN_DIR}/checkpoints/weights/step_002500.pt}}"
 UNCOND_ADAPTER="${CALLER_UNCOND_ADAPTER:-}"
 BACKBONE_CKPT="${CALLER_BACKBONE_CKPT:-}"
 PRETRAINED_NORM_STATS="${CALLER_STATS:-${PRETRAINED_NORM_STATS:-${STATS}}}"
 dewo_v2_align_opensource_stack
-TEXT_EMBEDDING_CACHE_DIR="${TEXT_EMBEDDING_CACHE_DIR:?Set TEXT_EMBEDDING_CACHE_DIR}"
-if [[ -z "${CALLER_CFG_TASK_DIR}" ]] && grep -q 'dewo_v9_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  CFG_TASK_DIR="${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v9_cfg"
-elif [[ -z "${CALLER_CFG_TASK_DIR}" ]] && grep -q 'dewo_v8_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  CFG_TASK_DIR="${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v8_cfg"
-elif [[ -z "${CALLER_CFG_TASK_DIR}" ]] && grep -q 'dewo_v7_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  CFG_TASK_DIR="${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v7_cfg"
-elif [[ -z "${CALLER_CFG_TASK_DIR}" ]] && grep -q 'dewo_v6_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  CFG_TASK_DIR="${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v6_cfg"
-else
-  CFG_TASK_DIR="${CALLER_CFG_TASK_DIR:-${CFG_TASK_DIR:-${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v2_cfg}}"
+# DEWO v9 trains on mixed-S0 z-score; per-task OPEN stats mismatch collapses poses at infer.
+if [[ -z "${CALLER_STATS}" && -n "${BACKBONE_CKPT}" && "${BACKBONE_CKPT}" == *mixed_5task* ]]; then
+  _mixed_stats="${ROOT_DIR}/artifacts/mixed_5task/dataset_stats.json"
+  if [[ -f "${_mixed_stats}" ]]; then
+    PRETRAINED_NORM_STATS="${_mixed_stats}"
+    export PRETRAINED_NORM_STATS STATS="${_mixed_stats}"
+  fi
 fi
+TEXT_EMBEDDING_CACHE_DIR="${TEXT_EMBEDDING_CACHE_DIR:?Set TEXT_EMBEDDING_CACHE_DIR}"
+CFG_TASK_DIR="${CALLER_CFG_TASK_DIR:-${CFG_TASK_DIR:-${ROOT_DIR}/configs/eval/dexjoco/${TASK}_dewo_v9_cfg}}"
 DEXJOCO_PY_ROOT="${DEXJOCO_PY_ROOT:-${ROOT_DIR}/third_party/dexjoco/dexjoco}"
 
 CFG_SCALE="${CFG_SCALE:-2.0}"
@@ -93,7 +84,7 @@ INFERENCE_SEED="${INFERENCE_SEED:-20260812}"
 # same diffusion noise as a prior 0–49 screen (client seed, not --inference-seed).
 SCREEN_EVAL_REPEAT="${SCREEN_EVAL_REPEAT:-0}"
 NOISE_SEED_BASE="${NOISE_SEED_BASE:-}"
-REPLAN_STEPS="${REPLAN_STEPS:-24}"
+REPLAN_STEPS="${CALLER_REPLAN_STEPS:-${REPLAN_STEPS:-24}}"
 MAX_ENV_STEPS="${MAX_ENV_STEPS:-${MAX_STEPS}}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-10}"
 ACTION_HORIZON="${ACTION_HORIZON:-32}"
@@ -111,11 +102,18 @@ else
   _CFG_OUT_TAG="cfg${CFG_SCALE}"
 fi
 if [[ "${CFG_GATE_MODE:-}" == "value_growth" || "${CFG_GATE_MODE:-}" == "growth" ]]; then
-  _CFG_OUT_TAG="value_growth_tau${CFG_GROWTH_TAU:-0.05}_start${CFG_GROWTH_START_REPLAN:-2}_${_CFG_OUT_TAG}"
+  _GROWTH_TAG="value_growth_tau${CFG_GROWTH_TAU:-0.05}_start${CFG_GROWTH_START_REPLAN:-2}"
+  if [[ -n "${CFG_GROWTH_STOP_REPLAN:-}" ]]; then
+    _GROWTH_TAG="${_GROWTH_TAG}_stop${CFG_GROWTH_STOP_REPLAN}"
+  fi
+  if [[ "${CFG_GROWTH_ONCE:-}" == "1" || "${CFG_GROWTH_ONCE:-}" == "true" ]]; then
+    _GROWTH_TAG="${_GROWTH_TAG}_once"
+  fi
+  _CFG_OUT_TAG="${_GROWTH_TAG}_${_CFG_OUT_TAG}"
 elif [[ "${CFG_GATE_MODE:-}" == "value" ]]; then
   _CFG_OUT_TAG="value_gate_${_CFG_OUT_TAG}"
 fi
-OUT_ROOT="${OUT_ROOT:-${ROOT_DIR}/evaluate_results/dexjoco/${TASK}_dewo_v2_pair_${CKPT_TAG}_${_CFG_OUT_TAG}_4x50_${STAMP}}"
+OUT_ROOT="${OUT_ROOT:-${ROOT_DIR}/evaluate_results/dexjoco/${TASK}_dewo_v9_${CKPT_TAG}_${_CFG_OUT_TAG}_4x50_${STAMP}}"
 
 dewo_v2_activate_fastwam
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
@@ -125,13 +123,10 @@ mkdir -p "${OUT_ROOT}/logs"
 LOG="${OUT_ROOT}/logs/orchestrator.log"
 log() { echo "[dewo-v2-cfg-4x50 ${TASK} $(date -Is)] $*" | tee -a "${LOG}"; }
 
-if grep -q 'dewo_v7_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null \
-  && [[ ! -f "${CFG_TASK_DIR}/${TASK}.yaml" ]]; then
+if [[ ! -f "${CFG_TASK_DIR}/${TASK}.yaml" ]]; then
   mkdir -p "${CFG_TASK_DIR}"
-  CFG_SUCCESS_SUFFIX="${CFG_SUCCESS_SUFFIX:- Successful execution.}" \
-  CFG_FAILURE_SUFFIX="${CFG_FAILURE_SUFFIX:- Failed execution.}" \
-    python "${ROOT_DIR}/scripts/dewo_v2/tasks.py" write-eval-yaml \
-      --task "${TASK}" --output "${CFG_TASK_DIR}/${TASK}.yaml"
+  python "${ROOT_DIR}/scripts/dewo_v2/tasks.py" write-eval-yaml \
+    --task "${TASK}" --output "${CFG_TASK_DIR}/${TASK}.yaml"
   log "wrote ${CFG_TASK_DIR}/${TASK}.yaml"
 fi
 
@@ -159,16 +154,14 @@ if [[ "${WAIT_IDLE}" == "1" ]]; then
   dewo_v2_wait_gpus_idle "${LOG}" "dewo-v2-cfg-4x50"
 fi
 
-if [[ "${REPEATS}" == "1" ]]; then
-  PROTOCOL_LABEL="screening_1x50_seeds_0_49_NON_STANDARD"
-else
-  PROTOCOL_LABEL="official_4x50_seeds_0_49"
+if [[ -z "${PROTOCOL_LABEL:-}" ]]; then
+  if [[ "${REPEATS}" == "1" ]]; then
+    PROTOCOL_LABEL="screening_1x50_seeds_0_49_NON_STANDARD"
+  else
+    PROTOCOL_LABEL="official_4x50_seeds_0_49"
+  fi
 fi
-if grep -q 'dewo_v7_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  log "CFG terminology: text_cfg_scale=1 is 本体 remap; v7 mix w=1 is ε_base+(ε_posi-ε_fail), not ε_posi."
-else
-  log "CFG terminology: text_cfg_scale=1 is 本体 remap (adapter off + cfg_base_prompt); mix w=1 would be ε_posi, not 本体."
-fi
+log "CFG terminology: text_cfg_scale=1 is 本体 remap (adapter off + cfg_base_prompt); mix subtracts ε_base."
 if [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
   log "adaptive CFG tau=${ADAPTIVE_CFG_TAU}: NFE0 exec RMS E>tau mix w=${CFG_SCALE}; else mix w=0 (本体)"
 else
@@ -224,47 +217,31 @@ fi
 if [[ -n "${CFG_GROWTH_START_REPLAN:-}" ]]; then
   EXTRA_EVAL_ARGS+=(--cfg-growth-start-replan "${CFG_GROWTH_START_REPLAN}")
 fi
+if [[ -n "${CFG_GROWTH_STOP_REPLAN:-}" ]]; then
+  EXTRA_EVAL_ARGS+=(--cfg-growth-stop-replan "${CFG_GROWTH_STOP_REPLAN}")
+fi
+if [[ -n "${CFG_LOW_VALUE_THRESHOLD:-}" ]]; then
+  EXTRA_EVAL_ARGS+=(--cfg-low-value-threshold "${CFG_LOW_VALUE_THRESHOLD}")
+fi
+if [[ -n "${CFG_GROWTH_DELTA:-}" ]]; then
+  EXTRA_EVAL_ARGS+=(--cfg-growth-delta "${CFG_GROWTH_DELTA}")
+fi
+if [[ "${CFG_GROWTH_ONCE:-}" == "1" || "${CFG_GROWTH_ONCE:-}" == "true" ]]; then
+  EXTRA_EVAL_ARGS+=(--cfg-growth-once)
+fi
 if [[ -n "${CFG_INTERVENE_SCHEDULE:-}" ]]; then
   EXTRA_EVAL_ARGS+=(--cfg-intervene-schedule "${CFG_INTERVENE_SCHEDULE}")
 fi
-if grep -q 'dewo_v9_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  if [[ "${CFG_GATE_MODE:-}" == "value_growth" || "${CFG_GATE_MODE:-}" == "growth" ]]; then
-    METHOD="${METHOD:-dewo_v9_uncond_adapter_value_growth}"
-  elif [[ "${CFG_GATE_MODE:-}" == "value" ]]; then
-    METHOD="${METHOD:-dewo_v9_uncond_adapter_value_gate}"
-  elif [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
-    METHOD="${METHOD:-dewo_v9_uncond_adapter_adaptive_cfg}"
-  else
-    METHOD="${METHOD:-dewo_v9_uncond_adapter_cfg}"
-  fi
-elif grep -q 'dewo_v8_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  if [[ "${CFG_GATE_MODE:-}" == "value" ]]; then
-    METHOD="${METHOD:-dewo_v8_uncond_adapter_value_gate}"
-  elif [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
-    METHOD="${METHOD:-dewo_v8_uncond_adapter_adaptive_cfg}"
-  else
-    METHOD="${METHOD:-dewo_v8_uncond_adapter_cfg}"
-  fi
-elif grep -q 'dewo_v7_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  if [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
-    METHOD="${METHOD:-dewo_v7_uncond_adapter_adaptive_cfg}"
-  else
-    METHOD="${METHOD:-dewo_v7_uncond_adapter_cfg}"
-  fi
-elif grep -q 'dewo_v6_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  if [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
-    METHOD="${METHOD:-dewo_v6_uncond_adapter_adaptive_cfg}"
-  else
-    METHOD="${METHOD:-dewo_v6_uncond_adapter_cfg}"
-  fi
-elif grep -q 'dewo_v5_uncond_adapter' "${RUN_DIR}/config.yaml" 2>/dev/null; then
-  if [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
-    METHOD="${METHOD:-dewo_v5_uncond_adapter_adaptive_cfg}"
-  else
-    METHOD="${METHOD:-dewo_v5_uncond_adapter_cfg}"
-  fi
+if [[ "${CFG_GATE_MODE:-}" == "value_growth" || "${CFG_GATE_MODE:-}" == "growth" ]]; then
+  METHOD="${METHOD:-dewo_v9_uncond_adapter_value_growth}"
+elif [[ "${CFG_GATE_MODE:-}" == "value" ]]; then
+  METHOD="${METHOD:-dewo_v9_uncond_adapter_value_gate}"
+elif [[ "${CFG_GATE_MODE:-}" == "low_value_growth" || "${CFG_GATE_MODE:-}" == "low_growth" ]]; then
+  METHOD="${METHOD:-dewo_v9_uncond_adapter_low_value_growth}"
+elif [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
+  METHOD="${METHOD:-dewo_v9_uncond_adapter_adaptive_cfg}"
 else
-  METHOD="${METHOD:-dewo_v2_success_vs_base_cfg}"
+  METHOD="${METHOD:-dewo_v9_uncond_adapter_cfg}"
 fi
 if [[ -n "${ADAPTIVE_CFG_TAU}" ]]; then
   if ! "${ENV_PREFIX}/bin/python" - "${CFG_SCALE}" <<'PY'

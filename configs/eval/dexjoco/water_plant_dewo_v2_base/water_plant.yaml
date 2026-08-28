@@ -1,8 +1,0 @@
-# Task-only (base) prompts for water_plant DEWO v2 scale/ablation eval.
-env_name: water_plant
-camera_mapping:
-  base: front
-  wrist: wrist
-prompt: "Grasp the watering can and apply water to the plant."
-cfg_base_prompt: "Grasp the watering can and apply water to the plant."
-robot_type: single_arm

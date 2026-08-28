@@ -245,7 +245,7 @@ class Wan22Trainer:
         self.output_dir = str(cfg.output_dir)
         self.learning_rate = float(cfg.learning_rate)
         self.train_mode = str(cfg.get("train_mode", "full_dit")).strip()
-        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+        from fastwam.models.wan22.dewo_v9_train_mode import UNCOND_ADAPTER_TRAIN_MODES
 
         if self.train_mode not in {"full_dit", *UNCOND_ADAPTER_TRAIN_MODES}:
             raise ValueError(
@@ -385,38 +385,21 @@ class Wan22Trainer:
         # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
         self._apply_dit_only_train_mode(self.model)
         train_mode = getattr(self, "train_mode", "full_dit")
-        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+        from fastwam.models.wan22.dewo_v9_train_mode import UNCOND_ADAPTER_TRAIN_MODES
 
         if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
-            if train_mode in {"dewo_v8_uncond_adapter", "dewo_v9_uncond_adapter"}:
-                from fastwam.models.wan22.dewo_v8_train_mode import (
-                    collect_dewo_v8_param_groups,
-                )
+            from fastwam.models.wan22.dewo_v9_train_mode import (
+                collect_dewo_v9_param_groups,
+            )
 
-                self.optimizer = torch.optim.AdamW(
-                    collect_dewo_v8_param_groups(
-                        self.model,
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                        value_lr_scale=(
-                            1.0 if train_mode == "dewo_v9_uncond_adapter" else 0.1
-                        ),
-                    ),
-                    betas=(0.9, 0.95),
-                )
-            else:
-                from fastwam.models.wan22.dewo_v5_train_mode import (
-                    collect_dewo_v5_param_groups,
-                )
-
-                self.optimizer = torch.optim.AdamW(
-                    collect_dewo_v5_param_groups(
-                        self.model,
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                    ),
-                    betas=(0.9, 0.95),
-                )
+            self.optimizer = torch.optim.AdamW(
+                collect_dewo_v9_param_groups(
+                    self.model,
+                    lr=self.learning_rate,
+                    weight_decay=self.weight_decay,
+                ),
+                betas=(0.9, 0.95),
+            )
         else:
             trainable_params = [param for param in self.model.parameters() if param.requires_grad]
             if not trainable_params:
@@ -477,40 +460,53 @@ class Wan22Trainer:
         logger.info("Train/val dataset size: %d/%d", len(self.train_dataset), val_size)
 
     def _init_wandb(self):
-        if not self.wandb_enabled or not self.accelerator.is_main_process:
-            return
-        try:
-            import wandb
-        except ImportError as e:
-            raise ImportError(
-                "wandb logging is enabled in config (`wandb.enabled=true`) but wandb is not installed."
-            ) from e
+        # Rank 0 only talks to wandb. Other ranks must wait here: a hanging
+        # wandb.init used to let ranks 1..N enter the first NCCL allreduce
+        # and then stall until the 30-minute watchdog.
+        if self.wandb_enabled and self.accelerator.is_main_process:
+            try:
+                import wandb
+            except ImportError as e:
+                raise ImportError(
+                    "wandb logging is enabled in config (`wandb.enabled=true`) but wandb is not installed."
+                ) from e
 
-        wandb_config = OmegaConf.to_container(self.cfg, resolve=True)
-        workspace = self.cfg.wandb.workspace
-        configured_entity = None if workspace in (None, "null", "") else str(workspace)
-        wandb_entity = os.getenv("WANDB_ENTITY") or configured_entity
-        wandb_project = os.getenv("WANDB_PROJECT") or str(self.cfg.wandb.project)
+            wandb_config = OmegaConf.to_container(self.cfg, resolve=True)
+            workspace = self.cfg.wandb.workspace
+            configured_entity = None if workspace in (None, "null", "") else str(workspace)
+            wandb_entity = os.getenv("WANDB_ENTITY") or configured_entity
+            wandb_project = os.getenv("WANDB_PROJECT") or str(self.cfg.wandb.project)
+            wandb_mode = os.getenv("WANDB_MODE") or str(self.cfg.wandb.mode)
 
-        init_kwargs = {
-            "project": wandb_project,
-            "name": self.cfg.wandb.name,
-            "group": None if self.cfg.wandb.group in (None, "null", "") else str(self.cfg.wandb.group),
-            "mode": self.cfg.wandb.mode,
-            "dir": self.output_dir,
-            "config": wandb_config,
-        }
-        if wandb_entity is not None:
-            init_kwargs["entity"] = wandb_entity
+            init_kwargs = {
+                "project": wandb_project,
+                "name": self.cfg.wandb.name,
+                "group": None if self.cfg.wandb.group in (None, "null", "") else str(self.cfg.wandb.group),
+                "mode": wandb_mode,
+                "dir": self.output_dir,
+                "config": wandb_config,
+            }
+            if wandb_entity is not None:
+                init_kwargs["entity"] = wandb_entity
 
-        self.wandb_run = wandb.init(**init_kwargs)
-
-        logger.info(
-            "Initialized wandb run: workspace=%s project=%s name=%s",
-            wandb_entity or "(default)",
-            wandb_project,
-            self.cfg.wandb.name,
-        )
+            try:
+                self.wandb_run = wandb.init(**init_kwargs)
+            except Exception:
+                logger.warning(
+                    "wandb.init failed (mode=%s); continuing without wandb",
+                    wandb_mode,
+                    exc_info=True,
+                )
+                self.wandb_run = None
+            else:
+                logger.info(
+                    "Initialized wandb run: workspace=%s project=%s name=%s mode=%s",
+                    wandb_entity or "(default)",
+                    wandb_project,
+                    self.cfg.wandb.name,
+                    wandb_mode,
+                )
+        self.accelerator.wait_for_everyone()
 
     def _assert_output_dir_consistent(self) -> None:
         canonical_path = _canonical_output_dir(self.output_dir)
@@ -1068,19 +1064,14 @@ class Wan22Trainer:
             apply_video_lora_training_mode(model)
             return
         train_mode = getattr(self, "train_mode", "full_dit")
-        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+        from fastwam.models.wan22.dewo_v9_train_mode import UNCOND_ADAPTER_TRAIN_MODES
 
         if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
-            if train_mode in {"dewo_v8_uncond_adapter", "dewo_v9_uncond_adapter"}:
-                from fastwam.models.wan22.dewo_v8_train_mode import (
-                    apply_dewo_v8_uncond_adapter_mode,
-                )
+            from fastwam.models.wan22.dewo_v9_train_mode import (
+                apply_dewo_v9_uncond_adapter_mode,
+            )
 
-                apply_dewo_v8_uncond_adapter_mode(model)
-                return
-            from fastwam.models.wan22.dewo_v5_train_mode import apply_dewo_v5_uncond_adapter_mode
-
-            apply_dewo_v5_uncond_adapter_mode(model)
+            apply_dewo_v9_uncond_adapter_mode(model)
             return
 
         model.eval()
@@ -1539,7 +1530,7 @@ class Wan22Trainer:
         if temp_path.exists():
             temp_path.unlink()
         train_mode = getattr(self, "train_mode", "full_dit")
-        from fastwam.models.wan22.dewo_v5_train_mode import UNCOND_ADAPTER_TRAIN_MODES
+        from fastwam.models.wan22.dewo_v9_train_mode import UNCOND_ADAPTER_TRAIN_MODES
 
         if train_mode in UNCOND_ADAPTER_TRAIN_MODES:
             from fastwam.models.wan22.uncond_adapter import uncond_adapter_payload

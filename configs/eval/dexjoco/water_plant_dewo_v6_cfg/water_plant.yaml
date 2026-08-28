@@ -1,9 +1,0 @@
-# Frozen DEWO v6 inference prompts. The positive branch is Successful
-# (action CFG); cfg_base_prompt is the task-only S0 channel. Video stays base.
-env_name: water_plant
-camera_mapping:
-  base: front
-  wrist: wrist
-prompt: "Grasp the watering can and apply water to the plant. Successful execution."
-cfg_base_prompt: "Grasp the watering can and apply water to the plant."
-robot_type: single_arm

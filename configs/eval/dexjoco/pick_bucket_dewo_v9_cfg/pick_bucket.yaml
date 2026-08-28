@@ -1,0 +1,8 @@
+# Frozen DEWO v9 inference prompts. Mix subtracts ε_base.
+env_name: pick_bucket
+camera_mapping:
+  base: front
+  wrist: wrist
+prompt: "Place the boxed food into the bucket and then lift the bucket. Successful execution."
+cfg_base_prompt: "Place the boxed food into the bucket and then lift the bucket."
+robot_type: single_arm

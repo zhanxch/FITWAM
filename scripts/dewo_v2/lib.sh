@@ -1,4 +1,4 @@
-# Shared bash helpers for DexJoCo DEWO v2. Source from other scripts:
+# Shared bash helpers for DexJoCo DEWO v9. Source from other scripts:
 #   source "${ROOT_DIR}/scripts/dewo_v2/lib.sh"
 #   dewo_v2_require_gpus
 #   dewo_v2_load_task "${TASK}"
@@ -13,32 +13,15 @@
 #   Default: SKIP_VAE_PREENCODE=0, REQUIRE=1, FILL=0
 # Val encode is off unless VAE_ENCODE_VAL=true (train eval_every=0).
 #
-# Training recipes: INIT=scratch|s0. DEWO_VERSION=v2 (default), v5, v6, v7, v8, or v9.
-# v5 freezes the whole base and trains a CFG-condition adapter on ordinary
-# success text; CFG mixes adapter-off + base text (S0) with adapter-on + success.
-# v6 keeps the v5 frozen-adapter shell. One shuffle pool: D0 success episodes
-# (base alignment) + D+ success-event windows (Successful, action BC) +
-# D_fail failure events (Failed, video BC). Residual is still ε_+ − ε_0.
-# v7 same pool as v6, but D_fail action BC defines ε_- and the mix is
-# ε_0 + w(ε_+ − ε_-). No Recovered suffix, no 12:4.
-# v8 same pool and mix as v6, plus a frozen-VAE value head that drop-edge
-# gates sparse CFG. D0 is one episode per 4/4 all-success seed.
-# v9 same pool/mix as v8, but V is pooled VideoDiT tokens vs progress
-# return G_t=γ^{T-t} (fail=0). Gate is drop-only (no v_high floor).
-# Pair data is full-horizon success stitch + fail cliff, not 33-frame crops.
+# Only DEWO_VERSION=v9 / INIT=s0 is supported. Frozen mixed-S0 MoT, text-side
+# K/V adapter + VideoDiT value head. Mix ε_cfg = ε_0 + g w (ε_+ − ε_0).
+# D0 = one episode per 4/4 all-success seed. D+ = full-horizon success stitch.
+# D_fail = fail cliff [t, M+24). G_t=γ^{T-t} (fail=0). No FAST.
+# CFG: D+ 0.9/0/0.1, D_fail 1.0/0/0, suffixes Successful / Failed execution.
 #
-# CFG knobs (hammer_nail defaults unless overridden):
-#   CFG_PRIMARY=0.5,0.0,0.5          # outcome,fast,base — primary.fast MUST be 0
-#   CFG_AUX_SUCCESS=0.4,0.2,0.4      # FAST only on aux channels by default
-#   CFG_AUX_FAIL=0.0,0.2,0.4
-#   CFG_SUCCESS_SUFFIX=' Successful execution.'
-#   CFG_FAILURE_SUFFIX=null
-#   CFG_DROPOUT=0.0
-#   CFG_FAST_FAIL_CLOSED=1
+# Protocol .env files are paths/VAE/text-cache only. train.sh owns CFG mixing.
 #
-# Text embeds:
-#   - base + outcome: always needed (expert/primary uses outcome+base)
-#   - FAST: only when any CFG_*_FAST > 0 (expert/primary never uses FAST)
+# Text embeds: base + Successful/Failed outcome. FAST is unused.
 
 dewo_v2_require_gpus() {
   if [[ -z "${GPUS:-}" ]]; then
@@ -56,15 +39,44 @@ dewo_v2_require_task() {
   fi
 }
 
+# Prevent a leaked EXP_ROOT / PAIR_OUT from another TASK overwriting data.
+dewo_v2_assert_path_for_task() {
+  local label="${1:?}"
+  local path="${2:-}"
+  local task="${TASK:?}"
+  if [[ -z "${path}" ]]; then
+    return 0
+  fi
+  case "${path}" in
+    *"${task}"*) return 0 ;;
+    *)
+      echo "[dewo-v2] ERROR: ${label}=${path} does not contain TASK=${task}." >&2
+      echo "  Unset leaked EXP_ROOT / PAIR_OUT / PAIR_DATASET / COLLECT_ROOT from another task." >&2
+      return 2
+      ;;
+  esac
+}
+
+# Protocol env and tasks.py export-env used to dump v2 FAST triples. Drop them
+# so v9 train.sh can install Successful/Failed + 0.9/0/0.1 without leakage.
+dewo_v2_clear_cfg_mix() {
+  unset CFG_PRIMARY CFG_AUX_SUCCESS CFG_AUX_FAIL \
+    CFG_PRIMARY_OUTCOME CFG_PRIMARY_FAST CFG_PRIMARY_BASE \
+    CFG_AUX_SUCCESS_OUTCOME CFG_AUX_SUCCESS_FAST CFG_AUX_SUCCESS_BASE \
+    CFG_AUX_FAIL_OUTCOME CFG_AUX_FAIL_FAST CFG_AUX_FAIL_BASE \
+    CFG_SUCCESS_SUFFIX CFG_FAILURE_SUFFIX CFG_DROPOUT \
+    CFG_RECIPE_NAME CFG_FAST_MODEL_ID CFG_FAST_MAX_TOKENS CFG_FAST_FAIL_CLOSED \
+    || true
+}
+
 # LoRA Hydra tasks / INIT=lora are removed. Full DiT only (scratch | s0).
 dewo_v2_assert_not_lora() {
   local label="${1:-value}"
   local value="${2:-}"
   if [[ "${value}" == *lora* || "${value}" == *LoRA* ]]; then
     echo "[dewo-v2] ERROR: ${label}=${value} is a LoRA path." >&2
-    echo "  LoRA recipes are removed. Use INIT=scratch or INIT=s0 (full DiT)." >&2
-    echo "  Hydra: dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4 (scratch)" >&2
-    echo "         dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_s0 (from S0)" >&2
+    echo "  LoRA recipes are removed. DEWO v9 is INIT=s0 only." >&2
+    echo "  Hydra: dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond (INIT=s0)" >&2
     return 2
   fi
 }

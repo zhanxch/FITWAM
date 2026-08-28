@@ -1,9 +1,0 @@
-# Frozen DEWO v2 inference prompts. The positive branch is the success channel
-# seen during training; cfg_base_prompt is the task-only dropout channel.
-env_name: hammer_nail
-camera_mapping:
-  base: front
-  wrist: wrist
-prompt: "Use the hammer to drive the nail into the wooden board. Successful execution."
-cfg_base_prompt: "Use the hammer to drive the nail into the wooden board."
-robot_type: single_arm

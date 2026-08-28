@@ -1,7 +1,0 @@
-# Frozen task-only condition for the DEWO v2 inference ablation.
-env_name: hammer_nail
-camera_mapping:
-  base: front
-  wrist: wrist
-prompt: "Use the hammer to drive the nail into the wooden board."
-robot_type: single_arm

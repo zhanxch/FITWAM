@@ -11,7 +11,8 @@ v9's progress \(V\) rarely drops 0.15 across a 24-frame replan, so infer may
 instead use **relative growth** (``cfg_gate_mode=value_growth``): from the
 2nd/3rd replan, fire CFG when \((V_t-V_{t-1})/|V_{t-1}| < \tau\). Firing on a
 would-be success is allowed; keep ``text_cfg_scale`` small (e.g. 1.1) so the
-mix is a nudge. Per-replan, not once-fire. Not multi-sample ranking: \(V\) is
+mix is a nudge. Default is per-replan; pass ``fired=True`` and/or
+``stop_replan`` to cut late oscillation. Not multi-sample ranking: \(V\) is
 a function of the current frame only.
 """
 
@@ -34,6 +35,7 @@ DEFAULT_VALUE_V_HIGH = 0.5
 DEFAULT_VALUE_DROP_DELTA = 0.15
 DEFAULT_VALUE_GROWTH_TAU = 0.05
 DEFAULT_VALUE_GROWTH_START_REPLAN = 2
+DEFAULT_VALUE_GROWTH_STOP_REPLAN = None
 DEFAULT_VALUE_GROWTH_EPS = 1e-4
 DEFAULT_VALUE_CLIFF_MARGIN = 0.2
 DEFAULT_VALUE_GAMMA = 0.99
@@ -120,22 +122,43 @@ def relative_growth_gate(
     tau: float = DEFAULT_VALUE_GROWTH_TAU,
     replan_index: int = 0,
     start_replan: int = DEFAULT_VALUE_GROWTH_START_REPLAN,
+    stop_replan: int | None = DEFAULT_VALUE_GROWTH_STOP_REPLAN,
+    fired: bool = False,
     eps: float = DEFAULT_VALUE_GROWTH_EPS,
 ) -> float:
     """Return ``g ∈ {0, 1}``. ``g=1`` means apply CFG this replan.
 
     Skip until ``replan_index >= start_replan`` (0-based; default 2 = third
-    node at ``t=48`` when ``replan_steps=24``). Fire when relative growth is
-    below ``tau``. Not once-fire and not drop-edge. A dip on a success
+    node at ``t=48`` when ``replan_steps=24``). If ``stop_replan`` is set,
+    skip after that index. If ``fired`` is true, stay off (once-fire).
+    Fire when relative growth is below ``tau``. A dip on a success
     trajectory may fire; that is intended.
     """
 
+    if fired:
+        return 0.0
     if int(replan_index) < int(start_replan):
+        return 0.0
+    if stop_replan is not None and int(replan_index) > int(stop_replan):
         return 0.0
     rel = relative_growth(v_prev, v_curr, eps=eps)
     if rel is None:
         return 0.0
     return 1.0 if rel < float(tau) else 0.0
+
+
+def low_value_growth_gate(
+    v_prev: float | None,
+    v_curr: float,
+    *,
+    v_low: float = 0.10,
+    delta: float = 0.01,
+    fired: bool = False,
+) -> float:
+    """Fire once when value is low but has just started rising."""
+    if fired or v_prev is None:
+        return 0.0
+    return 1.0 if float(v_curr) < float(v_low) and float(v_curr) - float(v_prev) > float(delta) else 0.0
 
 
 def recoverability_cliff_loss(
@@ -351,7 +374,7 @@ def attach_recoverability_value_head(
     model: nn.Module,
     value_head_cfg: dict[str, Any] | None = None,
     *,
-    recipe: str = "v8",
+    recipe: str = "v9",
 ) -> RecoverabilityValueHead:
     cfg = normalize_value_head_config(value_head_cfg, recipe=recipe)
     if not cfg["enabled"]:

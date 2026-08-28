@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""DexJoCo DEWO v2 task registry and CFG knobs.
+"""DexJoCo DEWO v9 task registry.
 
-Task identity (prompt, ckpt, expert path) lives here. CFG mixing is a separate
-recipe with hammer_nail defaults, overridable via env for debugging:
-
-  TASK=water_plant
-  CFG_PRIMARY=0.5,0.0,0.5          # outcome,fast,base
-  CFG_AUX_SUCCESS=0.4,0.2,0.4
-  CFG_AUX_FAIL=0.0,0.2,0.4
-  CFG_SUCCESS_SUFFIX=' Successful execution.'
-  CFG_FAILURE_SUFFIX=null
-  CFG_DROPOUT=0.0
-  CFG_FAST_FAIL_CLOSED=1
+Task identity (prompt, ckpt, expert path) lives here. Train CFG mixing is
+owned by ``scripts/dewo_v2/train.sh`` (D+ 0.9/0/0.1 Successful, D_fail
+1.0/0/0 Failed, no FAST). ``export-env`` does not dump mix triples.
 
 Usage:
-  python scripts/dewo_v2/tasks.py export-env --task water_plant
-  python scripts/dewo_v2/tasks.py write-eval-yaml --task water_plant --output ...
+  python scripts/dewo_v2/tasks.py export-env --task fold_glasses
+  python scripts/dewo_v2/tasks.py write-eval-yaml --task fold_glasses --output ...
 """
 
 from __future__ import annotations
@@ -34,16 +26,16 @@ DEFAULT_OPEN_REPO = Path(
     os.environ.get("OPEN_REPO", str(ROOT.parent / "FastWAM-infer-in-DexJoco"))
 )
 
-# Hammer-nail DEWO v2 CFG recipe (formal default for new tasks).
-HAMMER_CFG_SUCCESS_SUFFIX = " Successful execution."
-HAMMER_CFG_FAILURE_SUFFIX: Optional[str] = None
-HAMMER_CFG_DROPOUT = 0.0
-HAMMER_CFG_PRIMARY = (0.5, 0.0, 0.5)  # outcome, fast, base
-HAMMER_CFG_AUX_SUCCESS = (0.4, 0.2, 0.4)
-HAMMER_CFG_AUX_FAIL = (0.0, 0.2, 0.4)
-HAMMER_CFG_FAST_MODEL = "physical-intelligence/fast"
-HAMMER_CFG_FAST_MAX_TOKENS = 32
-HAMMER_CFG_FAST_FAIL_CLOSED = True
+# DEWO v9 CFG (train.sh is the source of truth; dump-cfg-json mirrors this).
+V9_CFG_SUCCESS_SUFFIX = " Successful execution."
+V9_CFG_FAILURE_SUFFIX: Optional[str] = " Failed execution."
+V9_CFG_DROPOUT = 0.0
+V9_CFG_PRIMARY = (0.9, 0.0, 0.1)  # outcome, fast, base
+V9_CFG_AUX_SUCCESS = (1.0, 0.0, 0.0)
+V9_CFG_AUX_FAIL = (1.0, 0.0, 0.0)
+V9_CFG_FAST_MODEL = "physical-intelligence/fast"
+V9_CFG_FAST_MAX_TOKENS = 32
+V9_CFG_FAST_FAIL_CLOSED = True
 
 DEFAULT_SEED_START = 10086
 DEFAULT_SEED_END = 10135
@@ -52,10 +44,8 @@ DEFAULT_MAX_STEPS = 1000
 DEFAULT_ACTION_HORIZON = 32
 DEFAULT_REPLAN_STEPS = 24
 DEFAULT_NFE = 10
-# Prepare / precompute Hydra task: generic full DiT data recipe.
-# Training yaml is chosen by INIT=scratch|s0 in scripts/dewo_v2/train.sh.
-# There is no LoRA recipe.
-DEFAULT_HYDRA_TASK = "dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4"
+# Prepare / precompute Hydra task. Training yaml is INIT=s0 DEWO v9 only.
+DEFAULT_HYDRA_TASK = "dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond"
 
 
 @dataclass(frozen=True)
@@ -81,16 +71,16 @@ class TaskSpec:
 
 @dataclass(frozen=True)
 class CfgRecipe:
-    success_suffix: str = HAMMER_CFG_SUCCESS_SUFFIX
-    failure_suffix: Optional[str] = HAMMER_CFG_FAILURE_SUFFIX
-    dropout: float = HAMMER_CFG_DROPOUT
-    primary: tuple[float, float, float] = HAMMER_CFG_PRIMARY
-    aux_success: tuple[float, float, float] = HAMMER_CFG_AUX_SUCCESS
-    aux_fail: tuple[float, float, float] = HAMMER_CFG_AUX_FAIL
-    fast_model_id: str = HAMMER_CFG_FAST_MODEL
-    fast_max_tokens: int = HAMMER_CFG_FAST_MAX_TOKENS
-    fast_fail_closed: bool = HAMMER_CFG_FAST_FAIL_CLOSED
-    recipe_name: str = "hammer_nail"
+    success_suffix: str = V9_CFG_SUCCESS_SUFFIX
+    failure_suffix: Optional[str] = V9_CFG_FAILURE_SUFFIX
+    dropout: float = V9_CFG_DROPOUT
+    primary: tuple[float, float, float] = V9_CFG_PRIMARY
+    aux_success: tuple[float, float, float] = V9_CFG_AUX_SUCCESS
+    aux_fail: tuple[float, float, float] = V9_CFG_AUX_FAIL
+    fast_model_id: str = V9_CFG_FAST_MODEL
+    fast_max_tokens: int = V9_CFG_FAST_MAX_TOKENS
+    fast_fail_closed: bool = V9_CFG_FAST_FAIL_CLOSED
+    recipe_name: str = "v9"
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -160,7 +150,7 @@ def get_task(name: str) -> TaskSpec:
     key = str(name).strip()
     if key not in TASKS:
         known = ", ".join(sorted(TASKS))
-        raise KeyError(f"Unknown DEWO v2 task {name!r}. Known: {known}")
+        raise KeyError(f"Unknown DEWO v9 task {name!r}. Known: {known}")
     return TASKS[key]
 
 
@@ -197,7 +187,7 @@ def _parse_triple(raw: str, field: str) -> tuple[float, float, float]:
 
 
 def parse_cfg_recipe(env: Optional[Mapping[str, str]] = None) -> CfgRecipe:
-    """Hammer defaults, then env overrides. Compact triples win over per-channel vars."""
+    """v9 defaults, then env overrides. Compact triples win over per-channel vars."""
 
     src = dict(os.environ if env is None else env)
 
@@ -286,6 +276,57 @@ def resolve_expert(task: TaskSpec, *, root: Path = ROOT) -> Path:
     return path
 
 
+def resolve_v9_pair_index(task: TaskSpec, *, root: Path = ROOT) -> Path:
+    path = (root / f"data/{task.name}_dewo_v9_pair_full_lerobot/pair_index.json").resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing v9 pair index for {task.name}: {path}")
+    return path
+
+
+def find_mixed_s0_collect_rollout(task: TaskSpec, *, root: Path = ROOT) -> Path:
+    """Newest ``data/<task>_*_collect_*/rollout_raw_200`` with collection_summary."""
+    candidates: list[Path] = []
+    for path in sorted((root / "data").glob(f"{task.name}_*_collect_*")):
+        rollout = path / "rollout_raw_200"
+        if (rollout / "collection_summary.json").is_file():
+            candidates.append(rollout.resolve())
+    if not candidates:
+        raise FileNotFoundError(
+            f"No mixed-S0 collect rollout_raw_200 for {task.name} under {root / 'data'}"
+        )
+    candidates.sort(key=lambda p: p.parent.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
+def resolve_v9_collect_replay_paths(
+    task: TaskSpec,
+    *,
+    root: Path = ROOT,
+    collect_rollout: Path | None = None,
+) -> dict[str, str]:
+    """Paths for the v9 base CFG collect event replay (oracle-once protocol)."""
+    rollout = (
+        collect_rollout.expanduser().resolve()
+        if collect_rollout is not None
+        else find_mixed_s0_collect_rollout(task, root=root)
+    )
+    scan_root = rollout.parent / "recoverability_pairs_v2"
+    pair_index = resolve_v9_pair_index(task, root=root)
+    mixed_stats = (root / "artifacts/mixed_5task/dataset_stats.json").resolve()
+    if not mixed_stats.is_file():
+        raise FileNotFoundError(f"Missing mixed-S0 stats: {mixed_stats}")
+    text_cache = (root / f"data/text_embeds_cache/{task.name}_dewo_v9_pair").resolve()
+    return {
+        "COLLECT_ROLLOUT": str(rollout),
+        "COLLECT_ROOT": str(rollout.parent),
+        "SCAN_ROOT": str(scan_root),
+        "PAIR_INDEX": str(pair_index),
+        "PREFIX_RESULTS": str(scan_root / "prefix_results.jsonl"),
+        "PRETRAINED_NORM_STATS": str(mixed_stats),
+        "TEXT_CACHE": str(text_cache),
+    }
+
+
 _WRAPPED_PROMPT = (
     "A video recorded from a robot's point of view executing the following instruction: {task}"
 )
@@ -302,20 +343,17 @@ def t5_cache_name(success_prompt: str) -> str:
 
 def eval_task_yaml(task: TaskSpec, cfg: CfgRecipe) -> str:
     pos = f"{task.success_prompt}{cfg.success_suffix}"
-    lines = [
-        "# Generated by scripts/dewo_v2/tasks.py from the active CFG recipe.\n",
-        f"env_name: {task.name}\n",
-        "camera_mapping:\n",
-        "  base: front\n",
-        "  wrist: wrist\n",
-        f"prompt: {json.dumps(pos)}\n",
-        f"cfg_base_prompt: {json.dumps(task.success_prompt)}\n",
-    ]
-    if cfg.failure_suffix:
-        fail = f"{task.success_prompt}{cfg.failure_suffix}"
-        lines.append(f"cfg_failure_prompt: {json.dumps(fail)}\n")
-    lines.append("robot_type: single_arm\n")
-    return "".join(lines)
+    # v9 mix subtracts ε_base, not ε_fail. Failure suffix is train-only.
+    return (
+        "# Generated by scripts/dewo_v2/tasks.py for DEWO v9 CFG eval.\n"
+        f"env_name: {task.name}\n"
+        "camera_mapping:\n"
+        "  base: front\n"
+        "  wrist: wrist\n"
+        f"prompt: {json.dumps(pos)}\n"
+        f"cfg_base_prompt: {json.dumps(task.success_prompt)}\n"
+        "robot_type: single_arm\n"
+    )
 
 
 def _shell_export(key: str, value: Any) -> str:
@@ -330,11 +368,12 @@ def _shell_export(key: str, value: Any) -> str:
 
 def build_exports(
     task: TaskSpec,
-    cfg: CfgRecipe,
+    cfg: CfgRecipe | None = None,
     *,
     root: Path = ROOT,
     open_repo: Path = DEFAULT_OPEN_REPO,
 ) -> dict[str, Any]:
+    del cfg  # Mix triples are not exported; train.sh owns CFG.
     ckpt = resolve_ckpt(task, root=root, open_repo=open_repo)
     expert = resolve_expert(task, root=root)
     artifacts = (open_repo / "artifacts" / task.name).resolve()
@@ -361,29 +400,12 @@ def build_exports(
         "REPLAN_STEPS": task.replan_steps,
         "NUM_INFERENCE_STEPS": task.nfe,
         "DEWO_TASK": task.hydra_task,
-        "DEWO_PROTOCOL": f"{task.name}_dewo_v2_jump_fast_full_opensource",
-        "FITWAM_WANDB_GROUP": f"{task.name}_dewo_v2_opensource",
-        "DEWO_OUTPUT_DIR": f"./runs/dexjoco_{task.name}_dewo_v2",
-        "CFG_TASK_CONFIG_DIR": str(root / "configs" / "eval" / "dexjoco" / f"{task.name}_dewo_v2_cfg"),
-        "CFG_RECIPE_NAME": cfg.recipe_name,
-        "CFG_SUCCESS_SUFFIX": cfg.success_suffix,
-        "CFG_FAILURE_SUFFIX": "null" if cfg.failure_suffix is None else cfg.failure_suffix,
-        "CFG_DROPOUT": cfg.dropout,
-        "CFG_PRIMARY": f"{cfg.primary[0]},{cfg.primary[1]},{cfg.primary[2]}",
-        "CFG_AUX_SUCCESS": f"{cfg.aux_success[0]},{cfg.aux_success[1]},{cfg.aux_success[2]}",
-        "CFG_AUX_FAIL": f"{cfg.aux_fail[0]},{cfg.aux_fail[1]},{cfg.aux_fail[2]}",
-        "CFG_PRIMARY_OUTCOME": cfg.primary[0],
-        "CFG_PRIMARY_FAST": cfg.primary[1],
-        "CFG_PRIMARY_BASE": cfg.primary[2],
-        "CFG_AUX_SUCCESS_OUTCOME": cfg.aux_success[0],
-        "CFG_AUX_SUCCESS_FAST": cfg.aux_success[1],
-        "CFG_AUX_SUCCESS_BASE": cfg.aux_success[2],
-        "CFG_AUX_FAIL_OUTCOME": cfg.aux_fail[0],
-        "CFG_AUX_FAIL_FAST": cfg.aux_fail[1],
-        "CFG_AUX_FAIL_BASE": cfg.aux_fail[2],
-        "CFG_FAST_MODEL_ID": cfg.fast_model_id,
-        "CFG_FAST_MAX_TOKENS": cfg.fast_max_tokens,
-        "CFG_FAST_FAIL_CLOSED": cfg.fast_fail_closed,
+        "DEWO_PROTOCOL": f"{task.name}_dewo_v9_uncond_adapter_isolated",
+        "FITWAM_WANDB_GROUP": f"{task.name}_dewo_v9_opensource",
+        "DEWO_OUTPUT_DIR": f"./runs/dexjoco_{task.name}_dewo_v9",
+        "CFG_TASK_CONFIG_DIR": str(
+            root / "configs" / "eval" / "dexjoco" / f"{task.name}_dewo_v9_cfg"
+        ),
     }
 
 
@@ -398,7 +420,7 @@ def render_shell_exports(values: Mapping[str, Any]) -> str:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    exp = sub.add_parser("export-env", help="Print bash exports for TASK + CFG")
+    exp = sub.add_parser("export-env", help="Print bash exports for TASK identity")
     exp.add_argument("--task", default=os.environ.get("TASK", "water_plant"))
     dump = sub.add_parser("dump-cfg-json", help="Print resolved CFG recipe JSON")
     dump.add_argument("--task", default=os.environ.get("TASK", "water_plant"))
@@ -407,6 +429,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ev.add_argument("--output", type=Path, required=True)
     ls = sub.add_parser("list", help="List registered tasks")
     _ = ls
+    cr = sub.add_parser(
+        "dump-collect-replay-paths",
+        help="JSON paths for v9 collect event replay (oracle-once protocol)",
+    )
+    cr.add_argument("--task", default=os.environ.get("TASK", "water_plant"))
+    cr.add_argument(
+        "--collect-rollout",
+        type=Path,
+        default=None,
+        help="Override rollout_raw_200 (default: newest data/<task>_*_collect_*)",
+    )
     return p.parse_args(argv)
 
 
@@ -430,6 +463,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(eval_task_yaml(task, cfg), encoding="utf-8")
         print(out)
+        return 0
+    if args.cmd == "dump-collect-replay-paths":
+        paths = resolve_v9_collect_replay_paths(
+            task,
+            collect_rollout=args.collect_rollout,
+        )
+        print(json.dumps(paths, indent=2, sort_keys=True))
         return 0
     raise SystemExit(f"unknown cmd {args.cmd}")
 

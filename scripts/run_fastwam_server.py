@@ -292,6 +292,17 @@ class FastWAMPolicy:
                 infer_kwargs["cfg_growth_start_replan"] = int(
                     options["cfg_growth_start_replan"]
                 )
+            if (
+                options.get("cfg_growth_stop_replan") is not None
+                and "cfg_growth_stop_replan" in infer_parameters
+            ):
+                infer_kwargs["cfg_growth_stop_replan"] = int(
+                    options["cfg_growth_stop_replan"]
+                )
+            if options.get("cfg_low_value_threshold") is not None and "cfg_low_value_threshold" in infer_parameters:
+                infer_kwargs["cfg_low_value_threshold"] = float(options["cfg_low_value_threshold"])
+            if options.get("cfg_growth_delta") is not None and "cfg_growth_delta" in infer_parameters:
+                infer_kwargs["cfg_growth_delta"] = float(options["cfg_growth_delta"])
 
         if KEY_CONTEXT in tensors:
             infer_kwargs[KEY_CONTEXT] = tensors[KEY_CONTEXT]

@@ -250,7 +250,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Client CFG gate: off | probe (log E, mix w=0) | "
             "schedule (once at index) | value (drop-edge once-fire) | "
-            "value_growth (relative V growth, per-replan)."
+            "value_growth (relative V growth; optional once/stop)."
         ),
     )
     ev.add_argument(
@@ -282,6 +282,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="0-based replan index before value_growth may fire.",
+    )
+    ev.add_argument(
+        "--cfg-growth-stop-replan",
+        type=int,
+        default=None,
+        help="0-based replan index after which value_growth never fires.",
+    )
+    ev.add_argument(
+        "--cfg-growth-once",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Once-fire relative-growth (after first g=1, later replans stay 本体).",
     )
     ev.add_argument("--clip-max-xyz-step", type=float, default=0.05)
     ev.add_argument("--clip-max-dz-down", type=float, default=0.03)
@@ -475,6 +487,14 @@ def _build_client_argv(args: argparse.Namespace, shard: ShardSpec, shard_out_dir
     cfg_growth_start_replan = getattr(args, "cfg_growth_start_replan", None)
     if cfg_growth_start_replan is not None:
         argv += ["--cfg-growth-start-replan", str(int(cfg_growth_start_replan))]
+    cfg_growth_stop_replan = getattr(args, "cfg_growth_stop_replan", None)
+    if cfg_growth_stop_replan is not None:
+        argv += ["--cfg-growth-stop-replan", str(int(cfg_growth_stop_replan))]
+    cfg_growth_once = getattr(args, "cfg_growth_once", None)
+    if cfg_growth_once is True:
+        argv += ["--cfg-growth-once"]
+    elif cfg_growth_once is False:
+        argv += ["--no-cfg-growth-once"]
     cfg_intervene_schedule = getattr(args, "cfg_intervene_schedule", None)
     if cfg_intervene_schedule is not None:
         argv += [

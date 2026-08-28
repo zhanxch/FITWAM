@@ -215,7 +215,7 @@ def normalize_uncond_adapter_config(uncond_adapter: Any) -> dict[str, Any]:
             "`uncond_adapter.action_residual_lock_lambda` must be finite and >= 0, "
             f"got {action_residual_lock}."
         )
-    recipe = str(uncond_adapter.get("recipe") or "v5").strip() or "v5"
+    recipe = str(uncond_adapter.get("recipe") or "v9").strip() or "v9"
     from fastwam.models.wan22.value_head import normalize_value_head_config
 
     return {
@@ -404,7 +404,7 @@ def uncond_adapter_payload(
         "target_modules": list(cfg.get("target_modules", [])),
         "experts": list(cfg.get("experts", [])),
         "source_checkpoint": source_checkpoint,
-        "recipe": str(cfg.get("recipe") or "v5"),
+        "recipe": str(cfg.get("recipe") or "v9"),
         "uncond_adapter": state,
         "n_tensors": len(state),
         "n_params": int(sum(t.numel() for t in state.values())),
@@ -765,10 +765,9 @@ CFG_MIX_SUBTRACT_FAIL = "fail"
 
 
 def cfg_mix_subtract_branch(recipe: str | None) -> str:
-    """Which score the guided mix subtracts from ε_posi."""
+    """v9 mix always subtracts ε_base. ``recipe`` is kept for checkpoint metadata."""
 
-    if str(recipe or "").strip() == "v7":
-        return CFG_MIX_SUBTRACT_FAIL
+    _ = recipe
     return CFG_MIX_SUBTRACT_BASE
 
 

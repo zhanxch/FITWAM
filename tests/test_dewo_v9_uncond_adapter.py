@@ -7,15 +7,13 @@ from pathlib import Path
 
 import torch
 
-from fastwam.models.wan22.dewo_v5_train_mode import (
+from fastwam.models.wan22.dewo_v9_train_mode import (
     GROUP_ADAPTER,
-    UNCOND_ADAPTER_TRAIN_MODES,
-)
-from fastwam.models.wan22.dewo_v8_train_mode import (
     GROUP_VALUE,
-    apply_dewo_v8_uncond_adapter_mode,
-    classify_dewo_v8_parameter,
-    collect_dewo_v8_param_groups,
+    UNCOND_ADAPTER_TRAIN_MODES,
+    apply_dewo_v9_uncond_adapter_mode,
+    classify_dewo_v9_parameter,
+    collect_dewo_v9_param_groups,
 )
 from fastwam.models.wan22.uncond_adapter import (
     CFG_MIX_SUBTRACT_BASE,
@@ -32,6 +30,7 @@ from fastwam.models.wan22.value_head import (
     progress_return,
     relative_growth,
     relative_growth_gate,
+    low_value_growth_gate,
 )
 from fastwam.datasets.eve.manifest_dataset import EveManifestRobotVideoDataset
 
@@ -123,7 +122,7 @@ class DewoV9UncondAdapterTests(unittest.TestCase):
             drop_edge_gate(0.30, 0.10, v_high=None, delta=0.15, fired=True), 0.0
         )
 
-    def test_v8_v_high_floor_still_optional(self) -> None:
+    def test_optional_v_high_floor(self) -> None:
         self.assertEqual(drop_edge_gate(0.30, 0.10, v_high=0.5, delta=0.15), 0.0)
         self.assertEqual(drop_edge_gate(0.90, 0.40, v_high=0.5, delta=0.15), 1.0)
 
@@ -150,6 +149,35 @@ class DewoV9UncondAdapterTests(unittest.TestCase):
             relative_growth_gate(0.22, 0.215, tau=0.05, replan_index=6, start_replan=2),
             1.0,
         )
+        # Optional once-fire and stop_replan cut later stalls.
+        self.assertEqual(
+            relative_growth_gate(
+                0.10, 0.10, tau=0.05, replan_index=2, start_replan=2, fired=True
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            relative_growth_gate(
+                0.10,
+                0.10,
+                tau=0.05,
+                replan_index=4,
+                start_replan=2,
+                stop_replan=3,
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            relative_growth_gate(
+                0.10,
+                0.10,
+                tau=0.05,
+                replan_index=3,
+                start_replan=2,
+                stop_replan=3,
+            ),
+            1.0,
+        )
 
     def test_value_head_pools_tokens(self) -> None:
         head = RecoverabilityValueHead(in_channels=8, hidden=8)
@@ -174,13 +202,13 @@ class DewoV9UncondAdapterTests(unittest.TestCase):
             },
             recipe="v9",
         )
-        apply_dewo_v8_uncond_adapter_mode(model)
+        apply_dewo_v9_uncond_adapter_mode(model)
         trainable = [
             name for name, param in model.named_parameters() if param.requires_grad
         ]
-        groups = {classify_dewo_v8_parameter(name) for name in trainable}
+        groups = {classify_dewo_v9_parameter(name) for name in trainable}
         self.assertEqual(groups, {GROUP_ADAPTER, GROUP_VALUE})
-        opt_groups = collect_dewo_v8_param_groups(
+        opt_groups = collect_dewo_v9_param_groups(
             model, lr=1e-4, weight_decay=0.01, value_lr_scale=1.0
         )
         self.assertAlmostEqual(opt_groups[0]["lr"], 1e-4)

@@ -6,9 +6,9 @@ ROOT_DIR="$(realpath -e -- "${SCRIPT_DIR}/../..")"
 cd "${ROOT_DIR}"
 
 DEWO_TASK="${DEWO_TASK:-}"
-: "${DEWO_TASK:?Set DEWO_TASK to a Hydra task config, for example dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4}"
+: "${DEWO_TASK:?Set DEWO_TASK to a Hydra task config, for example dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond}"
 if [[ "${DEWO_TASK}" == *lora* || "${DEWO_TASK}" == *LoRA* ]]; then
-  echo "ERROR: LoRA Hydra tasks are removed. Use dexjoco/dexjoco_dewo_v2_offline_b1_jump_fast_full_1e-4 or _full_s0." >&2
+  echo "ERROR: LoRA Hydra tasks are removed. Use dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond." >&2
   exit 2
 fi
 : "${EVE_MANIFEST_PATH:?Set EVE_MANIFEST_PATH to the DEWO training manifest}"

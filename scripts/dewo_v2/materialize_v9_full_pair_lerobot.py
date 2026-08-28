@@ -46,7 +46,6 @@ from v9_pair_geometry import (  # noqa: E402
 )
 
 FAILURE_PHRASE = "Failed to finish the whole process."
-DEFAULT_SUCCESS_PROMPT = "Grasp the watering can and apply water to the plant."
 
 
 def load_rgb_frames(path: Path) -> list[np.ndarray]:
@@ -315,7 +314,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--critic-index", type=Path, required=True)
     parser.add_argument("--source-dataset", type=Path, required=True)
     parser.add_argument("--output-dataset", type=Path, required=True)
-    parser.add_argument("--success-prompt", default=DEFAULT_SUCCESS_PROMPT)
+    parser.add_argument(
+        "--success-prompt",
+        required=True,
+        help="Task instruction text from scripts/dewo_v2/tasks.py (do not default to another task).",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     success_prompt = str(args.success_prompt)

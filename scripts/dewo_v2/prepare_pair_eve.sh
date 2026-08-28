@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Prepare Eve manifests + text/FAST caches for DEWO v2 recoverability pairs.
-#   TASK=water_plant PAIR_DATASET=... EXP_ROOT=... GPUS=4,5,6,7 \
+# Prepare Eve manifests + text/VAE caches for DEWO v9 recoverability pairs.
+#   TASK=fold_glasses PAIR_DATASET=... EXP_ROOT=... GPUS=4,5,6,7 \
 #     bash scripts/dewo_v2/prepare_pair_eve.sh
 set -euo pipefail
 
@@ -11,20 +11,21 @@ source "${ROOT_DIR}/scripts/dewo_v2/lib.sh"
 
 dewo_v2_require_task
 CALLER_DEWO_TASK="${DEWO_TASK:-}"
-CALLER_CFG_SUCCESS_SUFFIX="${CFG_SUCCESS_SUFFIX:-}"
-CALLER_CFG_FAILURE_SUFFIX="${CFG_FAILURE_SUFFIX:-}"
-CALLER_CFG_PRIMARY="${CFG_PRIMARY:-}"
-CALLER_CFG_AUX_SUCCESS="${CFG_AUX_SUCCESS:-}"
-CALLER_CFG_AUX_FAIL="${CFG_AUX_FAIL:-}"
 dewo_v2_load_task "${TASK}"
-if [[ -n "${CALLER_DEWO_TASK}" ]]; then
-  export DEWO_TASK="${CALLER_DEWO_TASK}"
-fi
-[[ -z "${CALLER_CFG_SUCCESS_SUFFIX}" ]] || export CFG_SUCCESS_SUFFIX="${CALLER_CFG_SUCCESS_SUFFIX}"
-[[ -z "${CALLER_CFG_FAILURE_SUFFIX}" ]] || export CFG_FAILURE_SUFFIX="${CALLER_CFG_FAILURE_SUFFIX}"
-[[ -z "${CALLER_CFG_PRIMARY}" ]] || export CFG_PRIMARY="${CALLER_CFG_PRIMARY}"
-[[ -z "${CALLER_CFG_AUX_SUCCESS}" ]] || export CFG_AUX_SUCCESS="${CALLER_CFG_AUX_SUCCESS}"
-[[ -z "${CALLER_CFG_AUX_FAIL}" ]] || export CFG_AUX_FAIL="${CALLER_CFG_AUX_FAIL}"
+export DEWO_TASK="${CALLER_DEWO_TASK:-dexjoco/dexjoco_dewo_v9_offline_b1_jump_fast_uncond}"
+# In-process text-embed recipe for v9. Do not persist CFG into the protocol env.
+export CFG_SUCCESS_SUFFIX=' Successful execution.'
+export CFG_FAILURE_SUFFIX=' Failed execution.'
+export CFG_PRIMARY_OUTCOME=0.9
+export CFG_PRIMARY_FAST=0.0
+export CFG_PRIMARY_BASE=0.1
+export CFG_AUX_SUCCESS_OUTCOME=1.0
+export CFG_AUX_SUCCESS_FAST=0.0
+export CFG_AUX_SUCCESS_BASE=0.0
+export CFG_AUX_FAIL_OUTCOME=1.0
+export CFG_AUX_FAIL_FAST=0.0
+export CFG_AUX_FAIL_BASE=0.0
+unset CFG_PRIMARY CFG_AUX_SUCCESS CFG_AUX_FAIL || true
 
 PRIMARY_KIND="${PRIMARY_KIND:-expert}"
 PRIMARY_N="${PRIMARY_N:-15}"
@@ -48,11 +49,13 @@ export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/scripts:${PYTHONPATH:-}"
 OPEN_REPO="${OPEN_REPO:-${ROOT_DIR}/../FastWAM-infer-in-DexJoco}"
 OPEN_REPO="$(cd "${OPEN_REPO}" && pwd)"
 PAIR_DATASET="${PAIR_DATASET:?Set PAIR_DATASET to the materialized pair LeRobot dataset}"
+dewo_v2_assert_path_for_task PAIR_DATASET "${PAIR_DATASET}"
 SOURCE_CONFIG="${SOURCE_CONFIG:-${OPEN_REPO}/configs/fastwam_dexjoco.yaml}"
-TEXT_CACHE="${TEXT_CACHE:-${ROOT_DIR}/data/text_embeds_cache/${TASK}_dewo_v2_pair}"
+TEXT_CACHE="${TEXT_CACHE:-${ROOT_DIR}/data/text_embeds_cache/${TASK}_dewo_v9_pair}"
 
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
-EXP_ROOT="${EXP_ROOT:-${ROOT_DIR}/data/${TASK}_dewo_v2_pair_${STAMP}}"
+EXP_ROOT="${EXP_ROOT:-${ROOT_DIR}/data/${TASK}_dewo_v9_pair_${STAMP}}"
+dewo_v2_assert_path_for_task EXP_ROOT "${EXP_ROOT}"
 EVE_ROOT="${EVE_ROOT:-${EXP_ROOT}/eve_v02}"
 LOG_DIR="${LOG_DIR:-${EXP_ROOT}/logs}"
 VAE_LATENT_CACHE_DIR="${VAE_LATENT_CACHE_DIR:-${EXP_ROOT}/vae_latent_cache}"
@@ -80,8 +83,7 @@ log "CKPT=${CKPT}"
 log "BASE_DATASET=${BASE_DATASET}"
 log "PAIR_DATASET=${PAIR_DATASET}"
 log "EXP_ROOT=${EXP_ROOT}"
-log "CFG_PRIMARY=${CFG_PRIMARY} AUX_SUCCESS=${CFG_AUX_SUCCESS} AUX_FAIL=${CFG_AUX_FAIL}"
-log "CFG_SUCCESS_SUFFIX=${CFG_SUCCESS_SUFFIX} FAILURE=${CFG_FAILURE_SUFFIX}"
+log "CFG D+ = 0.9/0/0.1 Successful; D_fail = 1.0/0/0 Failed (train.sh owns mix)"
 
 BUNDLE_MANIFEST="${EXP_ROOT}/protocol/opensource_bundle_manifest.txt"
 cat > "${BUNDLE_MANIFEST}" <<EOF
@@ -105,7 +107,7 @@ PAIR_ID="${TASK}_pair_events"
 PRIMARY_MANIFEST_FLAGS=()
 if [[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
   PRIMARY_ID="${TASK}_s0_success_rollouts"
-  PRIMARY_MANIFEST_FLAGS=(--primary-source success_rollouts)
+  PRIMARY_MANIFEST_FLAGS=(--primary-source "${PRIMARY_KIND}")
 else
   PRIMARY_ID="${TASK}_expert_success"
   PRIMARY_MANIFEST_FLAGS=(--primary-source expert)
@@ -113,7 +115,7 @@ fi
 
 if [[ ! -f "${EVE_ROOT}/splits/episode_splits.jsonl" ]]; then
   if [[ "${PRIMARY_KIND}" == "all_success_seeds" ]]; then
-    log "selecting one complete success per 4/4 all-success seed as D0 (v8)"
+    log "selecting one complete success per 4/4 all-success seed as D0 (v9)"
     "${ENV_PREFIX}/bin/python" scripts/dewo_v2/select_success_rollout_primary.py \
       --dataset "${BASE_DATASET}" \
       --dataset-id "${PRIMARY_ID}" \
@@ -185,12 +187,12 @@ if [[ "${PAIR_HORIZON}" == "full" ]]; then
   PAIR_MANIFEST_FLAGS+=(--horizon full --skip-aux-success)
 fi
 log "rewrite-manifest: ${PRIMARY_KIND} primary + dual-role pair events horizon=${PAIR_HORIZON}"
-"${ENV_PREFIX}/bin/python" scripts/fold_glasses/build_dewo_v2_pair_manifest.py \
+"${ENV_PREFIX}/bin/python" scripts/dewo_v2/build_pair_manifest.py \
   --expert-manifest "${primary_manifest}" \
   --pair-dataset "${PAIR_DATASET}" \
   --pair-dataset-id "${PAIR_ID}" \
   --prompt "${SUCCESS_PROMPT}" \
-  --recipe "${TASK}_dewo_v2_recoverability_pairs" \
+  --recipe "${TASK}_dewo_v9_recoverability_pairs" \
   --output "${pair_manifest}" \
   "${PRIMARY_MANIFEST_FLAGS[@]}" \
   "${PAIR_MANIFEST_FLAGS[@]}"
@@ -209,6 +211,8 @@ env_file="${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.env"
 {
   cat <<EOF
 # Generated by scripts/dewo_v2/prepare_pair_eve.sh (opensource 224 / z-score)
+# Paths / VAE / text cache only. CFG mixing is DEWO v9 in scripts/dewo_v2/train.sh
+# (Successful / Failed execution., D+ 0.9/0/0.1, D_fail 1.0/0/0, no FAST).
 export FITWAM_ENV_PREFIX=${ENV_PREFIX}
 export OPEN_REPO=${OPEN_REPO}
 export TASK=${TASK}
@@ -218,8 +222,10 @@ export PAIR_DATASET=${PAIR_DATASET}
 export ROLLOUT_RAW=${ROLLOUT_RAW:-${PRIMARY_DATASET:-${PAIR_DATASET}}}
 export PRIMARY_KIND=${PRIMARY_KIND}
 export PRIMARY_N=${PRIMARY_N}
+export CKPT=${CKPT}
 export INIT_WEIGHTS=${CKPT}
 export SOURCE_CHECKPOINT=${CKPT}
+export STATS=${STATS}
 export FASTWAM_SOURCE_CONFIG=${SOURCE_CONFIG}
 export FASTWAM_SOURCE_CONFIG_SHA256=${src_cfg_sha}
 export SOURCE_BUNDLE_MANIFEST=${BUNDLE_MANIFEST}
@@ -234,61 +240,23 @@ export NORM_STATS_BUNDLE_SHA256=${norm_sha}
 export TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE}
 export CFG_TASK_CONFIG_DIR=${CFG_TASK_CONFIG_DIR}
 export B1_VIDEO_EXPERIMENT_ROOT=${EXP_ROOT}
-# Default train reads pre-encoded VAE latents from prepare (USE_VAE_LATENT_CACHE=1).
 export USE_VAE_LATENT_CACHE=1
 export VAE_LATENT_CACHE_DIR=${VAE_LATENT_CACHE_DIR}
 export REQUIRE_VAE_LATENT_CACHE=1
 export DEWO_TASK=${DEWO_TASK}
-export DEWO_VARIANT=B1-jump-fast-pair
+export DEWO_VARIANT=B1-jump-fast-v9-uncond-adapter
 export DEWO_PROTOCOL=${DEWO_PROTOCOL}
 export DEWO_OUTPUT_DIR=${DEWO_OUTPUT_DIR}
-export FITWAM_WANDB_GROUP=${TASK}_dewo_v2_pair
+export FITWAM_WANDB_GROUP=${TASK}_dewo_v9_opensource
 export SUCCESS_PROMPT=${SUCCESS_PROMPT@Q}
 EOF
-  python "${ROOT_DIR}/scripts/dewo_v2/tasks.py" export-env --task "${TASK}"
 } > "${env_file}"
-# export-env reprints single-task defaults; keep mixed-S0 / rollout-primary overrides.
-{
-  echo "export CKPT=${CKPT}"
-  echo "export INIT_WEIGHTS=${CKPT}"
-  echo "export SOURCE_CHECKPOINT=${CKPT}"
-  echo "export STATS=${STATS}"
-  echo "export PRETRAINED_NORM_STATS=${PRETRAINED_NORM_STATS}"
-  echo "export BASE_DATASET=${BASE_DATASET}"
-  echo "export PRIMARY_KIND=${PRIMARY_KIND}"
-  echo "export ROLLOUT_RAW=${ROLLOUT_RAW:-${PRIMARY_DATASET:-}}"
-  echo "export DEWO_TASK=${DEWO_TASK}"
-  echo "export TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE}"
-  [[ -z "${CFG_SUCCESS_SUFFIX:-}" ]] || echo "export CFG_SUCCESS_SUFFIX=${CFG_SUCCESS_SUFFIX@Q}"
-  [[ -z "${CFG_FAILURE_SUFFIX:-}" ]] || echo "export CFG_FAILURE_SUFFIX=${CFG_FAILURE_SUFFIX@Q}"
-  if [[ -n "${CFG_PRIMARY:-}" ]]; then
-    IFS=',' read -r _o _f _b <<< "${CFG_PRIMARY}"
-    echo "export CFG_PRIMARY=${CFG_PRIMARY}"
-    echo "export CFG_PRIMARY_OUTCOME=${_o}"
-    echo "export CFG_PRIMARY_FAST=${_f}"
-    echo "export CFG_PRIMARY_BASE=${_b}"
-  fi
-  if [[ -n "${CFG_AUX_SUCCESS:-}" ]]; then
-    IFS=',' read -r _o _f _b <<< "${CFG_AUX_SUCCESS}"
-    echo "export CFG_AUX_SUCCESS=${CFG_AUX_SUCCESS}"
-    echo "export CFG_AUX_SUCCESS_OUTCOME=${_o}"
-    echo "export CFG_AUX_SUCCESS_FAST=${_f}"
-    echo "export CFG_AUX_SUCCESS_BASE=${_b}"
-  fi
-  if [[ -n "${CFG_AUX_FAIL:-}" ]]; then
-    IFS=',' read -r _o _f _b <<< "${CFG_AUX_FAIL}"
-    echo "export CFG_AUX_FAIL=${CFG_AUX_FAIL}"
-    echo "export CFG_AUX_FAIL_OUTCOME=${_o}"
-    echo "export CFG_AUX_FAIL_FAST=${_f}"
-    echo "export CFG_AUX_FAIL_BASE=${_b}"
-  fi
-} >> "${env_file}"
 log "wrote ${env_file}"
 
 cat > "${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.json" <<EOF
 {
-  "protocol": "${TASK}_dewo_v2_recoverability_pairs",
-  "variant": "B1-jump-fast-pair",
+  "protocol": "${TASK}_dewo_v9_recoverability_pairs",
+  "variant": "B1-jump-fast-v9-uncond-adapter",
   "stack": "opensource_224_zscore",
   "manifest": "${pair_manifest}",
   "val_manifest": "${val_manifest}",
@@ -298,13 +266,13 @@ cat > "${EVE_ROOT}/protocol/offline_v1_b1_jump_fast.json" <<EOF
   "checkpoint": "${CKPT}",
   "include_s0_success_rollouts": $([[ "${PRIMARY_KIND}" == "success_rollouts" || "${PRIMARY_KIND}" == "all_success_seeds" ]] && echo true || echo false),
   "primary_kind": "${PRIMARY_KIND}",
-  "cfg_recipe": "${EXP_ROOT}/protocol/cfg_recipe.json",
   "cfg": {
-    "success_suffix": $(python -c "import json,os; print(json.dumps(os.environ['CFG_SUCCESS_SUFFIX']))"),
-    "failure_suffix": $(python -c "import json,os; v=os.environ.get('CFG_FAILURE_SUFFIX','null'); print('null' if v in {'null','none',''} else json.dumps(v))"),
-    "primary": "${CFG_PRIMARY}",
-    "aux_success": "${CFG_AUX_SUCCESS}",
-    "aux_fail": "${CFG_AUX_FAIL}"
+    "success_suffix": " Successful execution.",
+    "failure_suffix": " Failed execution.",
+    "primary": "0.9,0.0,0.1",
+    "aux_success": "1.0,0.0,0.0",
+    "aux_fail": "1.0,0.0,0.0",
+    "note": "Owned by scripts/dewo_v2/train.sh; not mixed from this file."
   }
 }
 EOF
@@ -372,26 +340,11 @@ else
   log "VAE pre-encode done files=${n_vae} cache=${VAE_LATENT_CACHE_DIR}"
 fi
 
-# FAST text-emb: only needed when some CFG channel has fast>0.
-# Expert/primary never uses FAST (CFG_PRIMARY_FAST must be 0); default aux still does.
-if [[ "${SKIP_FAST_TEXT_PRECOMPUTE:-0}" == "1" ]]; then
-  log "SKIP_FAST_TEXT_PRECOMPUTE=1; skipping FAST CFG text embeds"
-elif ! dewo_v2_cfg_uses_fast; then
-  log "all CFG_*_FAST=0; skipping FAST CFG text embeds"
+# FAST is unused in v9 (all FAST weights 0).
+if [[ "${USE_FAST_TEXT:-0}" == "1" ]]; then
+  log "USE_FAST_TEXT=1; FAST is not part of the v9 recipe"
 else
-  FAST_PRECOMPUTE_GPUS="${FAST_PRECOMPUTE_GPUS:-${GPUS:?Set GPUS or FAST_PRECOMPUTE_GPUS for FAST text precompute}}"
-  if pgrep -f 'precompute_vae_latents.py' >/dev/null 2>&1 || pgrep -f 'scan_failure_recoverability_frontier.py' >/dev/null 2>&1; then
-    FAST_PRECOMPUTE_GPUS="${FAST_PRECOMPUTE_GPUS_IF_BUSY:-${FAST_PRECOMPUTE_GPUS}}"
-    log "VAE/scan still running; FAST pinned to GPUs ${FAST_PRECOMPUTE_GPUS}"
-  fi
-  log "precomputing FAST CFG text embeds on GPUs ${FAST_PRECOMPUTE_GPUS} (skips primary/expert windows)"
-  IFS=',' read -r -a fast_gpu_array <<< "${FAST_PRECOMPUTE_GPUS}"
-  CUDA_VISIBLE_DEVICES="${FAST_PRECOMPUTE_GPUS}" \
-    torchrun --standalone --nproc_per_node="${#fast_gpu_array[@]}" \
-    scripts/precompute_fast_cfg_text_embeds.py \
-    "task=${DEWO_TASK}" \
-    "+fast_cfg_batch_size=${FAST_CFG_BATCH_SIZE:-64}" \
-    2>&1 | tee -a "${LOG_DIR}/precompute_fast_cfg_text_embeds.log"
+  log "skipping FAST CFG text embeds (v9 has no FAST channel)"
 fi
 log "exporting torch-free base + success contexts for DexJoCo CFG eval"
 "${ENV_PREFIX}/bin/python" scripts/export_text_embed_cache_npz.py \
@@ -412,6 +365,4 @@ PY
 echo "export TEXT_EMBEDDING_CACHE_SHA256=${text_sha}" >> "${env_file}"
 
 log "DONE. Next (pre-encoded VAE cache by default):"
-log "  source ${env_file}"
-log "  TASK=${TASK} INIT=scratch|s0 GPUS=<ids> bash scripts/dewo_v2/train.sh"
-log "  # opt-out online VAE: USE_VAE_LATENT_CACHE=0 TASK=... bash scripts/dewo_v2/train.sh"
+log "  TASK=${TASK} INIT=s0 DEWO_VERSION=v9 GPUS=<ids> ENV_FILE=${env_file} bash scripts/dewo_v2/train.sh"
